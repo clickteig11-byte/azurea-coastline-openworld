@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { RouletteOutcome, VehicleMode } from './worldMath';
 
+export type GamePlayMode = 'FREE_ROAM' | 'BATTLE_ROYALE' | 'GRAND_PRIX' | 'WORLD_TOUR';
+
 export type WeaponId = 'AR' | 'SHOTGUN' | 'SNIPER' | 'MINIGUN' | 'RPG';
 
 export type CharacterArchetype = 'RPM_CUSTOM' | 'MICHELLE_VIP' | 'VANGUARD_SOLDIER';
@@ -327,14 +329,14 @@ export interface BotTarget {
 export const INITIAL_BOT_TARGETS: BotTarget[] = [
   {
     id: 'bot-1',
-    name: 'Vegas_Viper',
+    name: 'Midtown_Viper',
     modelUrl: '/models/human_rifleman.glb',
     gunUrl: '/models/gun_ar.glb',
-    homeX: -12,
-    homeZ: 14,
-    x: -12,
-    y: 7.5,
-    z: 14,
+    homeX: -20,
+    homeZ: 18,
+    x: -20,
+    y: 3.2,
+    z: 18,
     yaw: 0.4,
     hp: 100,
     maxHp: 100,
@@ -352,11 +354,11 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     name: 'Apex_Commander',
     modelUrl: '/models/human_commander.glb',
     gunUrl: '/models/gun_shotgun.glb',
-    homeX: 12,
-    homeZ: 10,
-    x: 12,
-    y: 7.5,
-    z: 10,
+    homeX: 20,
+    homeZ: 16,
+    x: 20,
+    y: 3.2,
+    z: 16,
     yaw: -0.5,
     hp: 100,
     maxHp: 100,
@@ -371,13 +373,13 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
   },
   {
     id: 'bot-3',
-    name: 'Bellagio_Ghost',
+    name: 'Empire_Ghost',
     modelUrl: '/models/human_medic.glb',
     gunUrl: '/models/gun_sniper.glb',
-    homeX: -16,
+    homeX: -21,
     homeZ: -26,
-    x: -16,
-    y: 7.5,
+    x: -21,
+    y: 3.2,
     z: -26,
     yaw: 0.8,
     hp: 100,
@@ -393,13 +395,13 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
   },
   {
     id: 'bot-4',
-    name: 'Sphere_Phantom',
+    name: 'Shibuya_Phantom',
     modelUrl: '/models/human_security.glb',
     gunUrl: '/models/gun_minigun.glb',
-    homeX: 16,
+    homeX: 21,
     homeZ: -32,
-    x: 16,
-    y: 7.5,
+    x: 21,
+    y: 3.2,
     z: -32,
     yaw: -0.9,
     hp: 100,
@@ -415,14 +417,14 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
   },
   {
     id: 'bot-5',
-    name: 'HighRoller_99',
+    name: 'Westminster_99',
     modelUrl: '/models/human_high_roller.glb',
     gunUrl: '/models/gun_ar.glb',
-    homeX: -8,
-    homeZ: 48,
-    x: -8,
-    y: 7.5,
-    z: 48,
+    homeX: -21,
+    homeZ: -68,
+    x: -21,
+    y: 3.2,
+    z: -68,
     yaw: 0.2,
     hp: 100,
     maxHp: 100,
@@ -437,14 +439,14 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
   },
   {
     id: 'bot-6',
-    name: 'Luxor_Wraith',
+    name: 'Colosseum_Wraith',
     modelUrl: '/models/human_rifleman.glb',
     gunUrl: '/models/gun_rpg.glb',
-    homeX: -82,
-    homeZ: 58,
-    x: -82,
-    y: 5.5,
-    z: 58,
+    homeX: -72,
+    homeZ: 64,
+    x: -72,
+    y: 3.2,
+    z: 64,
     yaw: 0,
     hp: 100,
     maxHp: 100,
@@ -462,11 +464,11 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     name: 'Rialto_Stalker',
     modelUrl: '/models/human_commander.glb',
     gunUrl: '/models/gun_ar.glb',
-    homeX: 118,
-    homeZ: -74,
-    x: 118,
+    homeX: 112,
+    homeZ: -68,
+    x: 112,
     y: 3.2,
-    z: -74,
+    z: -68,
     yaw: -1.2,
     hp: 100,
     maxHp: 100,
@@ -484,11 +486,11 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     name: 'Eiffel_Hawk',
     modelUrl: '/models/human_medic.glb',
     gunUrl: '/models/gun_sniper.glb',
-    homeX: 78,
-    homeZ: 45,
-    x: 78,
-    y: 5.2,
-    z: 45,
+    homeX: 74,
+    homeZ: 52,
+    x: 74,
+    y: 3.2,
+    z: 52,
     yaw: -0.7,
     hp: 100,
     maxHp: 100,
@@ -511,14 +513,14 @@ export interface LootCrateNode {
 }
 
 export const INITIAL_LOOT_CRATES: LootCrateNode[] = [
-  { id: 'lc-1', kind: 'LOOT', position: [-18.5, 0, 12], opened: false },
-  { id: 'lc-2', kind: 'AMMO', position: [18.5, 0, 16], opened: false },
-  { id: 'lc-3', kind: 'LOOT', position: [-18.5, 0, -28], opened: false },
-  { id: 'lc-4', kind: 'AMMO', position: [18.5, 0, -34], opened: false },
-  { id: 'lc-5', kind: 'LOOT', position: [0, 0, 56], opened: false },
-  { id: 'lc-6', kind: 'LOOT', position: [-78, 0, 62], opened: false },
-  { id: 'lc-7', kind: 'AMMO', position: [112, 0, -76], opened: false },
-  { id: 'lc-8', kind: 'LOOT', position: [82, 0, 52], opened: false },
+  { id: 'lc-1', kind: 'LOOT', position: [-20.5, 0, 22], opened: false },
+  { id: 'lc-2', kind: 'AMMO', position: [20.5, 0, 22], opened: false },
+  { id: 'lc-3', kind: 'LOOT', position: [-20.5, 0, -28], opened: false },
+  { id: 'lc-4', kind: 'AMMO', position: [20.5, 0, -28], opened: false },
+  { id: 'lc-5', kind: 'LOOT', position: [-20.5, 0, 62], opened: false },
+  { id: 'lc-6', kind: 'LOOT', position: [-76, 0, 64], opened: false },
+  { id: 'lc-7', kind: 'AMMO', position: [108, 0, -68], opened: false },
+  { id: 'lc-8', kind: 'LOOT', position: [76, 0, 56], opened: false },
 ];
 
 export interface ChipNode {
@@ -537,18 +539,20 @@ export interface CheckpointGate {
 }
 
 export const GRAND_PRIX_CHECKPOINTS: CheckpointGate[] = [
-  { id: 'gp-1', name: 'SPHERE PLAZA GATE', position: [0, 7.8, -24], yaw: 0 },
-  { id: 'gp-2', name: 'SOUTH STRIP ARCH', position: [0, 7.6, 52], yaw: 0 },
-  { id: 'gp-3', name: 'NORTH STRIP PLAZA', position: [0, 7.2, -92], yaw: 0 },
-  { id: 'gp-4', name: 'STRATOSPHERE BASE', position: [10, 12.2, -162], yaw: -0.6 },
-  { id: 'gp-5', name: 'VENETIAN RIALTO', position: [110, 2.2, -95], yaw: Math.PI / 2 },
-  { id: 'gp-6', name: 'EIFFEL BOULEVARD', position: [78, 5.2, 35], yaw: 0.4 },
-  { id: 'gp-7', name: 'LUXOR OBELISK GATE', position: [-88, 5.0, 85], yaw: -0.5 },
-  { id: 'gp-8', name: 'AIRPORT RUNWAY SPRINT', position: [-95, 1.9, 155], yaw: Math.PI / 2 },
+  { id: 'gp-1', name: 'MIDTOWN GRAND AVE', position: [0, 0, 25], yaw: Math.PI },
+  { id: 'gp-2', name: 'EMPIRE & TOKYO CROSSING', position: [0, 0, -55], yaw: Math.PI },
+  { id: 'gp-3', name: 'BURJ KHALIFA NORTH AVE', position: [0, 0, -135], yaw: Math.PI },
+  { id: 'gp-4', name: 'GOLDEN GATE BRIDGE APPROACH', position: [0, 0, -185], yaw: 1.2 },
+  { id: 'gp-5', name: 'VENICE RIALTO CANALWAY', position: [110, 0, -95], yaw: 0 },
+  { id: 'gp-6', name: 'PARIS EIFFEL BOULEVARD', position: [72, 0, 35], yaw: -0.6 },
+  { id: 'gp-7', name: 'SYDNEY HARBOR & RIO DRIVE', position: [25, 0, 125], yaw: -1.57 },
+  { id: 'gp-8', name: 'ROME COLOSSEUM & AIRPORT STRAIGHT', position: [-75, 0, 80], yaw: 0.8 },
 ];
 
 export interface GameHudSnapshot {
   mode: VehicleMode;
+  gameMode?: GamePlayMode;
+  startMenuOpen?: boolean;
   speedKmh: number;
   altitude: number;
   chips: number;
@@ -590,25 +594,27 @@ export interface GameHudSnapshot {
 }
 
 export const INITIAL_CHIPS: ChipNode[] = [
-  // Strip & Landmarks
-  { id: 'c1', position: [0, 3.5, 10], value: 100, collected: false, isAerial: false },
-  { id: 'c2', position: [0, 3.5, -15], value: 100, collected: false, isAerial: false },
-  { id: 'c3', position: [-115, 5, 48], value: 250, collected: false, isAerial: false },
-  { id: 'c4', position: [95, 5, 10], value: 250, collected: false, isAerial: false },
-  { id: 'c5', position: [-155, 5, -110], value: 250, collected: false, isAerial: false },
-  { id: 'c6', position: [135, 2.5, -95], value: 300, collected: false, isAerial: false },
-  { id: 'c7', position: [10, 14, -170], value: 350, collected: false, isAerial: false },
+  // Metropolis Avenues & Global Landmarks
+  { id: 'c1', position: [0, 4.4, 8], value: 100, collected: false, isAerial: false },
+  { id: 'c2', position: [0, 4.4, -35], value: 100, collected: false, isAerial: false },
+  { id: 'c3', position: [-78, 4.4, 52], value: 250, collected: false, isAerial: false },
+  { id: 'c4', position: [72, 4.4, 35], value: 250, collected: false, isAerial: false },
+  { id: 'c5', position: [-140, 3.8, -135], value: 250, collected: false, isAerial: false },
+  { id: 'c6', position: [135, 3.2, -95], value: 300, collected: false, isAerial: false },
+  { id: 'c7', position: [0, 4.4, -185], value: 350, collected: false, isAerial: false },
   // Aerial Stunt Rings for Plane / Glider
-  { id: 'a1', position: [-50, 48, 30], value: 500, collected: false, isAerial: true },
-  { id: 'a2', position: [65, 62, -45], value: 500, collected: false, isAerial: true },
-  { id: 'a3', position: [10, 95, -165], value: 750, collected: false, isAerial: true },
-  { id: 'a4', position: [-115, 70, 85], value: 750, collected: false, isAerial: true },
-  { id: 'a5', position: [140, 38, -95], value: 500, collected: false, isAerial: true },
+  { id: 'a1', position: [-52, 62, -18], value: 500, collected: false, isAerial: true },
+  { id: 'a2', position: [54, 78, -135], value: 500, collected: false, isAerial: true },
+  { id: 'a3', position: [0, 58, -205], value: 750, collected: false, isAerial: true },
+  { id: 'a4', position: [-105, 52, 52], value: 750, collected: false, isAerial: true },
+  { id: 'a5', position: [95, 68, 35], value: 500, collected: false, isAerial: true },
 ];
 
 // Mutable high-frequency simulation state (0 React re-renders per frame)
 export const simState = {
   mode: 'CAR' as VehicleMode,
+  gameMode: 'FREE_ROAM' as GamePlayMode,
+  startMenuOpen: false,
   gliding: false,
   chips: 0,
   multiplier: 1,
@@ -658,11 +664,11 @@ export const simState = {
   botTargets: INITIAL_BOT_TARGETS.map((b) => ({ ...b })),
   lootCrates: INITIAL_LOOT_CRATES.map((l) => ({ ...l })),
 
-  playerPos: new THREE.Vector3(4.5, 8, 28),
+  playerPos: new THREE.Vector3(-8.0, 3.3, 28),
   playerVel: new THREE.Vector3(0, 0, 0),
   playerYaw: Math.PI,
 
-  carPos: new THREE.Vector3(6.0, 8, 38),
+  carPos: new THREE.Vector3(6.0, 3.3, 28),
   carVel: new THREE.Vector3(0, 0, 0),
   carYaw: Math.PI,
   carSpeed: 0,
@@ -672,7 +678,7 @@ export const simState = {
   boatYaw: -Math.PI / 2,
   boatSpeed: 0,
 
-  planePos: new THREE.Vector3(-125, 3.8, 155),
+  planePos: new THREE.Vector3(-125, 2.2, 155),
   planeVel: new THREE.Vector3(0, 0, 0),
   planeYaw: Math.PI / 2,
   planePitch: 0,

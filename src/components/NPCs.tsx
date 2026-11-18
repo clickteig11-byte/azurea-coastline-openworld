@@ -206,11 +206,12 @@ function selectHumanModelUrl(index: number): string {
 function createPedestrians(): PedestrianAgent[] {
   const list: PedestrianAgent[] = [];
 
-  // 8 Strip Sidewalk citizens (x = ±23.4, z = -105..105)
-  for (let i = 0; i < 8; i++) {
+  // 10 Grand Central Avenue Sidewalk citizens (x = -20.5 and x = +20.5, z = -140..+140)
+  for (let i = 0; i < 10; i++) {
     const isEast = i % 2 === 0;
-    const laneX = (isEast ? 1 : -1) * (23.4 + ((i * 3) % 5) * 0.16);
-    const zStart = -98 + i * 26;
+    const sidewalkOffset = ((i % 3) - 1) * 0.28;
+    const laneX = (isEast ? 20.5 : -20.5) + sidewalkOffset;
+    const zStart = -126 + i * 28;
     const dir: 1 | -1 = i % 3 === 0 ? -1 : 1;
     list.push({
       kind: 'STRIP',
@@ -219,11 +220,11 @@ function createPedestrians(): PedestrianAgent[] {
       x: laneX,
       z: zStart,
       yaw: dir > 0 ? 0 : Math.PI,
-      speed: 1.45 + (i % 4) * 0.15,
+      speed: 1.5 + (i % 4) * 0.16,
       phase: i * 1.37,
       axisPos: zStart,
-      minBound: -108,
-      maxBound: 108,
+      minBound: -140,
+      maxBound: 140,
       dir,
       laneCoord: laneX,
       ringAngle: 0,
@@ -235,13 +236,13 @@ function createPedestrians(): PedestrianAgent[] {
     });
   }
 
-  // 4 Strip Crosswalk citizens walking back and forth across z = 22 and z = -52
-  const crosswalkZCoords = [22, 22, -52, -52];
-  for (let i = 0; i < 4; i++) {
-    const zCross = crosswalkZCoords[i] + (i % 2 === 0 ? -0.65 : 0.65);
+  // 6 Midtown Crosswalk citizens crossing at z = 0, z = -60, and z = +60 between x = -20.5 and x = +20.5
+  const crosswalkZCoords = [0, 0, -60, -60, 60, 60];
+  for (let i = 0; i < 6; i++) {
+    const zCross = crosswalkZCoords[i] + (i % 2 === 0 ? -0.55 : 0.55);
     const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
-    const xStart = i % 2 === 0 ? -15 + i * 5 : 15 - i * 4;
-    const idx = 8 + i;
+    const xStart = i % 2 === 0 ? -18 + i * 4 : 18 - i * 4;
+    const idx = 10 + i;
     list.push({
       kind: 'CROSSWALK',
       modelUrl: selectHumanModelUrl(idx),
@@ -249,11 +250,11 @@ function createPedestrians(): PedestrianAgent[] {
       x: xStart,
       z: zCross,
       yaw: dir > 0 ? Math.PI / 2 : -Math.PI / 2,
-      speed: 1.55 + (i % 2) * 0.2,
+      speed: 1.65 + (i % 2) * 0.2,
       phase: idx * 1.5,
       axisPos: xStart,
-      minBound: -23.4,
-      maxBound: 23.4,
+      minBound: -20.5,
+      maxBound: 20.5,
       dir,
       laneCoord: zCross,
       ringAngle: 0,
@@ -265,40 +266,11 @@ function createPedestrians(): PedestrianAgent[] {
     });
   }
 
-  // 4 Bellagio Fountain Plaza promenade citizens (around x = 0, z = -10)
-  for (let i = 0; i < 4; i++) {
-    const ringRadius = 14.8 + (i % 2) * 0.9;
-    const ringAngle = (i / 4) * Math.PI * 2;
-    const ringDir: 1 | -1 = i % 2 === 0 ? 1 : -1;
-    const idx = 12 + i;
-    list.push({
-      kind: 'BELLAGIO',
-      modelUrl: selectHumanModelUrl(idx),
-      paletteIndex: idx,
-      x: Math.cos(ringAngle) * ringRadius,
-      z: -10 + Math.sin(ringAngle) * ringRadius,
-      yaw: ringAngle + (ringDir > 0 ? Math.PI : 0),
-      speed: 1.38 + (i % 3) * 0.15,
-      phase: idx * 1.9,
-      axisPos: 0,
-      minBound: 0,
-      maxBound: 0,
-      dir: 1,
-      laneCoord: 0,
-      ringAngle,
-      ringRadius,
-      ringDir,
-      dodgeX: 0,
-      dodgeZ: 0,
-      dodgeAlert: 0,
-    });
-  }
-
   return list;
 }
 
 // ============================================================================
-// 4-Lane Strip AI Traffic Circuits (Inner x = ±6, Outer x = ±14)
+// 4-Lane Grand Central Avenue AI Traffic Circuits (Lanes x = -11.5, -5.5, +5.5, +11.5)
 // ============================================================================
 interface CircuitSample {
   x: number;
@@ -311,44 +283,30 @@ interface BuiltCircuit {
   totalLength: number;
 }
 
-function buildStripCircuit(laneOffset: number, bypassBump: number): BuiltCircuit {
+function buildStripCircuit(laneOffset: number, _bypassBump = 0): BuiltCircuit {
   const rawPts: Array<{ x: number; z: number }> = [];
+  const zSouth = 175;
+  const zNorth = -185;
 
-  for (let i = 0; i < 32; i++) {
-    const t = i / 32;
-    rawPts.push({ x: laneOffset, z: 115 - t * (115 - 9) });
+  // Northbound lane (+laneOffset) from z = +175 to z = -185
+  for (let i = 0; i < 72; i++) {
+    const t = i / 72;
+    rawPts.push({ x: laneOffset, z: zSouth - t * (zSouth - zNorth) });
   }
-  for (let i = 0; i < 28; i++) {
-    const u = i / 28;
-    const z = 9 - u * 38;
-    const bump = 0.5 * (1 - Math.cos(2 * Math.PI * u));
-    rawPts.push({ x: laneOffset + bypassBump * bump, z });
-  }
-  for (let i = 0; i < 28; i++) {
-    const t = i / 28;
-    rawPts.push({ x: laneOffset, z: -29 - t * (115 - 29) });
-  }
+  // Smooth North turnaround loop at z = -185
   for (let i = 0; i < 16; i++) {
     const ang = (i / 16) * Math.PI;
-    rawPts.push({ x: Math.cos(ang) * laneOffset, z: -115 - Math.sin(ang) * laneOffset });
+    rawPts.push({ x: Math.cos(ang) * laneOffset, z: zNorth - Math.sin(ang) * laneOffset });
   }
-  for (let i = 0; i < 28; i++) {
-    const t = i / 28;
-    rawPts.push({ x: -laneOffset, z: -115 + t * (115 - 29) });
+  // Southbound lane (-laneOffset) from z = -185 to z = +175
+  for (let i = 0; i < 72; i++) {
+    const t = i / 72;
+    rawPts.push({ x: -laneOffset, z: zNorth + t * (zSouth - zNorth) });
   }
-  for (let i = 0; i < 28; i++) {
-    const u = i / 28;
-    const z = -29 + u * 38;
-    const bump = 0.5 * (1 - Math.cos(2 * Math.PI * u));
-    rawPts.push({ x: -(laneOffset + bypassBump * bump), z });
-  }
-  for (let i = 0; i < 32; i++) {
-    const t = i / 32;
-    rawPts.push({ x: -laneOffset, z: 9 + t * (115 - 9) });
-  }
+  // Smooth South turnaround loop at z = +175
   for (let i = 0; i < 16; i++) {
     const ang = Math.PI + (i / 16) * Math.PI;
-    rawPts.push({ x: Math.cos(ang) * laneOffset, z: 115 - Math.sin(ang) * laneOffset });
+    rawPts.push({ x: Math.cos(ang) * laneOffset, z: zSouth - Math.sin(ang) * laneOffset });
   }
 
   const samples: CircuitSample[] = [];
@@ -368,8 +326,8 @@ function buildStripCircuit(laneOffset: number, bypassBump: number): BuiltCircuit
   return { samples, totalLength };
 }
 
-const INNER_CIRCUIT = buildStripCircuit(6.0, 9.8);
-const OUTER_CIRCUIT = buildStripCircuit(14.0, 3.6);
+const INNER_CIRCUIT = buildStripCircuit(5.5, 0);
+const OUTER_CIRCUIT = buildStripCircuit(11.5, 0);
 
 function sampleCircuit(circuit: BuiltCircuit, sInput: number, outPos: THREE.Vector3): number {
   const { samples, totalLength } = circuit;
@@ -416,7 +374,7 @@ export interface GlbVehicleSpec {
 export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
   {
     id: 'yellow_cab',
-    label: 'Yellow Taxi Cab',
+    label: 'Metro Yellow Taxi Cab',
     url: '/models/yellow_cab.glb',
     circuitKind: 'INNER',
     halfX: 0.96,
@@ -425,12 +383,12 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.62,
     shadowWidth: 2.3,
     shadowLength: 5.0,
-    baseSpeed: 11.4,
+    baseSpeed: 15.2,
     isTaxi: true,
   },
   {
     id: 'police_cruiser',
-    label: 'Metro Police Cruiser',
+    label: 'Metropolis Police Cruiser',
     url: '/models/police_cruiser.glb',
     circuitKind: 'INNER',
     halfX: 0.98,
@@ -439,25 +397,25 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.64,
     shadowWidth: 2.35,
     shadowLength: 5.2,
-    baseSpeed: 12.6,
+    baseSpeed: 15.8,
     isPolice: true,
   },
   {
-    id: 'stretch_limo',
-    label: 'Vegas VIP Stretch Limousine',
-    url: '/models/stretch_limo.glb',
+    id: 'town_car_inner',
+    label: 'Executive City Sedan',
+    url: '/models/town_car.glb',
     circuitKind: 'INNER',
-    halfX: 1.11,
-    frontZ: 4.24,
-    rearZ: -4.24,
-    lightY: 0.62,
-    shadowWidth: 2.55,
-    shadowLength: 8.9,
-    baseSpeed: 10.2,
+    halfX: 0.99,
+    frontZ: 2.49,
+    rearZ: -2.49,
+    lightY: 0.58,
+    shadowWidth: 2.35,
+    shadowLength: 5.35,
+    baseSpeed: 15.0,
   },
   {
     id: 'gt3_car',
-    label: 'GT3 Gymkhana Race Car',
+    label: 'Sports Coupe',
     url: '/models/gt3_car.glb',
     circuitKind: 'INNER',
     halfX: 1.10,
@@ -466,11 +424,11 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.52,
     shadowWidth: 2.45,
     shadowLength: 5.1,
-    baseSpeed: 13.2,
+    baseSpeed: 16.0,
   },
   {
     id: 'wedge_coupe',
-    label: '80s Wedge Supercar',
+    label: 'Grand Touring Coupe',
     url: '/models/wedge_coupe.glb',
     circuitKind: 'INNER',
     halfX: 0.99,
@@ -479,11 +437,11 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.48,
     shadowWidth: 2.35,
     shadowLength: 4.85,
-    baseSpeed: 12.8,
+    baseSpeed: 15.6,
   },
   {
     id: 'muscle_car',
-    label: '60s Muscle Car',
+    label: 'Classic Fastback Sedan',
     url: '/models/muscle_car.glb',
     circuitKind: 'INNER',
     halfX: 1.00,
@@ -492,11 +450,11 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.56,
     shadowWidth: 2.35,
     shadowLength: 5.1,
-    baseSpeed: 12.0,
+    baseSpeed: 15.4,
   },
   {
     id: 'casino_convertible',
-    label: 'Casino Jackpot Convertible',
+    label: 'City Roadster Convertible',
     url: '/models/casino_convertible.glb',
     circuitKind: 'OUTER',
     halfX: 0.97,
@@ -505,11 +463,11 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.54,
     shadowWidth: 2.3,
     shadowLength: 4.85,
-    baseSpeed: 11.8,
+    baseSpeed: 14.8,
   },
   {
     id: 'convertible',
-    label: 'Cruiser Convertible',
+    label: 'Boulevard Convertible',
     url: '/models/convertible.glb',
     circuitKind: 'OUTER',
     halfX: 1.09,
@@ -518,7 +476,7 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.58,
     shadowWidth: 2.45,
     shadowLength: 5.65,
-    baseSpeed: 11.2,
+    baseSpeed: 14.5,
   },
   {
     id: 'crossover_suv',
@@ -531,11 +489,11 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.78,
     shadowWidth: 2.6,
     shadowLength: 5.0,
-    baseSpeed: 10.8,
+    baseSpeed: 14.4,
   },
   {
     id: 'town_car',
-    label: 'Executive Town Car',
+    label: 'Midtown Commuter Sedan',
     url: '/models/town_car.glb',
     circuitKind: 'OUTER',
     halfX: 0.99,
@@ -544,11 +502,11 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.58,
     shadowWidth: 2.35,
     shadowLength: 5.35,
-    baseSpeed: 11.0,
+    baseSpeed: 14.6,
   },
   {
     id: 'pickup_truck',
-    label: 'Suburban Pickup Truck',
+    label: 'Utility Pickup Truck',
     url: '/models/pickup_truck.glb',
     circuitKind: 'OUTER',
     halfX: 1.00,
@@ -557,11 +515,11 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.76,
     shadowWidth: 2.4,
     shadowLength: 5.95,
-    baseSpeed: 10.6,
+    baseSpeed: 14.2,
   },
   {
     id: 'hatchback',
-    label: 'Compact Hatchback',
+    label: 'Compact City Hatchback',
     url: '/models/hatchback.glb',
     circuitKind: 'OUTER',
     halfX: 0.99,
@@ -570,7 +528,7 @@ export const TRAFFIC_GLB_SPECS: GlbVehicleSpec[] = [
     lightY: 0.58,
     shadowWidth: 2.3,
     shadowLength: 4.4,
-    baseSpeed: 11.6,
+    baseSpeed: 14.9,
   },
 ];
 
@@ -592,9 +550,9 @@ const PARKED_SHOWCASE_SPECS: ParkedShowcaseSpec[] = [
   {
     id: 'parked-gt3',
     url: '/models/gt3_car.glb',
-    x: -20.2,
-    z: -18,
-    yaw: 0.14,
+    x: -25.8,
+    z: -42,
+    yaw: 0.08,
     frontZ: 2.34,
     rearZ: -2.35,
     lightY: 0.52,
@@ -603,58 +561,58 @@ const PARKED_SHOWCASE_SPECS: ParkedShowcaseSpec[] = [
   },
   {
     id: 'parked-casino-conv',
-    url: '/models/casino_convertible.glb',
-    x: -20.2,
-    z: 0,
-    yaw: 0.05,
-    frontZ: 2.21,
-    rearZ: -2.21,
-    lightY: 0.54,
-    shadowWidth: 2.3,
-    shadowLength: 4.85,
+    url: '/models/town_car.glb',
+    x: -25.8,
+    z: -19,
+    yaw: 0.03,
+    frontZ: 2.49,
+    rearZ: -2.49,
+    lightY: 0.58,
+    shadowWidth: 2.35,
+    shadowLength: 5.35,
   },
   {
     id: 'parked-wedge',
-    url: '/models/wedge_coupe.glb',
-    x: -20.2,
-    z: 18,
-    yaw: -0.12,
-    frontZ: 2.23,
-    rearZ: -2.21,
-    lightY: 0.48,
-    shadowWidth: 2.35,
-    shadowLength: 4.85,
+    url: '/models/crossover_suv.glb',
+    x: -25.8,
+    z: 22,
+    yaw: -0.06,
+    frontZ: 2.28,
+    rearZ: -2.28,
+    lightY: 0.78,
+    shadowWidth: 2.6,
+    shadowLength: 5.0,
   },
   {
     id: 'parked-limo',
-    url: '/models/stretch_limo.glb',
-    x: 20.2,
-    z: -18,
-    yaw: Math.PI - 0.08,
-    frontZ: 4.24,
-    rearZ: -4.24,
+    url: '/models/yellow_cab.glb',
+    x: 25.8,
+    z: -42,
+    yaw: Math.PI - 0.05,
+    frontZ: 2.31,
+    rearZ: -2.30,
     lightY: 0.62,
-    shadowWidth: 2.55,
-    shadowLength: 8.9,
+    shadowWidth: 2.3,
+    shadowLength: 5.0,
   },
   {
     id: 'parked-muscle',
-    url: '/models/muscle_car.glb',
-    x: 20.2,
-    z: 0,
-    yaw: Math.PI + 0.06,
-    frontZ: 2.36,
-    rearZ: -2.36,
-    lightY: 0.56,
-    shadowWidth: 2.35,
-    shadowLength: 5.1,
+    url: '/models/pickup_truck.glb',
+    x: 25.8,
+    z: -19,
+    yaw: Math.PI + 0.04,
+    frontZ: 2.79,
+    rearZ: -2.79,
+    lightY: 0.76,
+    shadowWidth: 2.4,
+    shadowLength: 5.95,
   },
   {
     id: 'parked-police',
     url: '/models/police_cruiser.glb',
-    x: 20.2,
-    z: 18,
-    yaw: Math.PI + 0.15,
+    x: 25.8,
+    z: 22,
+    yaw: Math.PI + 0.08,
     frontZ: 2.39,
     rearZ: -2.40,
     lightY: 0.64,
@@ -1263,8 +1221,27 @@ export function LivingWorldNPCs() {
         .catch(() => {});
     });
 
-    // 2. Populate 8 Armed Battle Royale Combat Bots with Smooth PBR Humans + 3D GLB Weapons
+    // 2. Populate 8 Armed Battle Royale Combat Bots on Open Sidewalks/Plazas with Smooth PBR Humans + 3D GLB Weapons
+    const safeBotHomes: Array<{ homeX: number; homeZ: number }> = [
+      { homeX: -21.2, homeZ: 24 },
+      { homeX: 21.2, homeZ: 24 },
+      { homeX: -21.2, homeZ: -38 },
+      { homeX: 21.2, homeZ: -38 },
+      { homeX: -21.2, homeZ: 52 },
+      { homeX: 21.2, homeZ: 52 },
+      { homeX: -21.2, homeZ: -96 },
+      { homeX: 21.2, homeZ: -96 },
+    ];
     simState.botTargets.forEach((bot, idx) => {
+      const safeHome = safeBotHomes[idx % safeBotHomes.length];
+      bot.homeX = safeHome.homeX;
+      bot.homeZ = safeHome.homeZ;
+      if (!bot.parachuting) {
+        bot.x = safeHome.homeX;
+        bot.z = safeHome.homeZ;
+        bot.y = getTerrainHeight(bot.x, bot.z);
+      }
+
       // ~75% ReadyPlayerMe (6 bots) and ~25% Michelle (2 bots)
       const botHumanUrl = idx % 4 === 2 ? '/models/michelle.glb' : '/models/readyplayer_me.glb';
       const isMichelle = botHumanUrl.includes('michelle');
@@ -1552,10 +1529,10 @@ export function LivingWorldNPCs() {
           bot.parachuteY = groundY;
         }
       } else {
-        // Tactical 9m radius patrol around (bot.homeX, bot.homeZ)
+        // Tactical sidewalk/plaza patrol around (bot.homeX, bot.homeZ) — never blocking road lanes or inside landmarks
         const patrolAngle = elapsed * 0.55 + i * 1.15;
-        const targetX = bot.homeX + Math.cos(patrolAngle) * 9.0;
-        const targetZ = bot.homeZ + Math.sin(patrolAngle * 0.85) * 9.0;
+        const targetX = bot.homeX + Math.cos(patrolAngle) * 1.4;
+        const targetZ = bot.homeZ + Math.sin(patrolAngle * 0.85) * 8.5;
 
         const dxPatrol = targetX - bot.x;
         const dzPatrol = targetZ - bot.z;
@@ -1661,31 +1638,26 @@ export function LivingWorldNPCs() {
       const fwdZ = Math.cos(yawPre);
 
       let targetSpeed =
-        minGap < 20 ? Math.min(v.baseSpeed, Math.max(0, leadSpeed * 0.9)) : v.baseSpeed;
-      if (minGap < 10.5) {
-        targetSpeed = 0;
+        minGap < 18 ? Math.min(v.baseSpeed, Math.max(4.0, leadSpeed * 0.95)) : v.baseSpeed;
+      if (minGap < 8.5) {
+        targetSpeed = Math.max(2.0, leadSpeed * 0.75);
       }
 
-      let blockedByObstacle = minGap < 12.5;
+      let blockedByObstacle = false;
       const checkObstacle = (ox: number, oz: number, lateralHalfWidth: number) => {
         const dx = ox - _vecA.x;
         const dz = oz - _vecA.z;
         const forwardDist = dx * fwdX + dz * fwdZ;
         const lateralDist = Math.abs(dx * fwdZ - dz * fwdX);
-        if (forwardDist > -1.0 && forwardDist < 12.0 && lateralDist < lateralHalfWidth) {
+        if (forwardDist > 0.0 && forwardDist < 9.5 && lateralDist < lateralHalfWidth) {
           blockedByObstacle = true;
           targetSpeed = 0;
         }
       };
 
-      checkObstacle(simState.carPos.x, simState.carPos.z, 4.2);
-      checkObstacle(simState.playerPos.x, simState.playerPos.z, 3.8);
-
-      for (let pIdx = 0; pIdx < pedestrians.length; pIdx++) {
-        const cwPed = pedestrians[pIdx];
-        if (cwPed && cwPed.kind === 'CROSSWALK') {
-          checkObstacle(cwPed.x, cwPed.z, 3.2);
-        }
+      checkObstacle(simState.carPos.x, simState.carPos.z, 2.5);
+      if (simState.mode === 'FOOT') {
+        checkObstacle(simState.playerPos.x, simState.playerPos.z, 2.2);
       }
 
       const accelRate = targetSpeed < v.currentSpeed ? 7.5 : 3.2;

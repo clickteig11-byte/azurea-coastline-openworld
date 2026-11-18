@@ -270,20 +270,27 @@ export const terrainFragmentShader = /* glsl */ `
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
     vec3 halfVec = normalize(viewDir + sunDir);
 
-    // Road, Cross-Boulevard, Sidewalk & Runway Masks
-    bool onMainStrip = abs(p.x) < 22.0 && abs(p.y) < 126.0;
-    bool onVeniceBlvd = abs(p.y + 85.0) < 10.0 && p.x >= 22.0 && p.x < 145.0;
-    bool onCrossBlvd = (abs(p.y - 87.0) < 11.0 && p.x > -105.0 && p.x <= -22.0) ||
-                       (abs(p.x + 82.0) < 14.0 && p.y >= 32.0 && p.y <= 98.0) ||
-                       (abs(p.y - 35.0) < 10.0 && p.x >= 22.0 && p.x < 102.0);
+    // Full Metropolis Street Grid Mask (Avenues, Cross Boulevards, Sidewalks & Runway)
+    bool inCanalCut = abs(p.y + 95.0) < 21.0 && p.x > 72.0;
+    bool onGrandCentral = abs(p.x) < 18.0 && p.y > -225.0 && p.y < 195.0;
+    bool onNorthCross = abs(p.y + 120.0) < 10.0 && abs(p.x) < 145.0;
+    bool onMidtownCross = abs(p.y) < 11.0 && abs(p.x) < 155.0;
+    bool onSouthCross = abs(p.y - 80.0) < 10.0 && abs(p.x) < 155.0;
+    bool onCrossBlvd = (onNorthCross || onMidtownCross || onSouthCross) && !inCanalCut;
     bool onRunway = p.x > -210.0 && p.x < -45.0 && p.y > 135.0 && p.y < 165.0;
-    bool onSidewalk = abs(p.x) >= 22.0 && abs(p.x) < 30.0 && abs(p.y) < 126.0 && !onVeniceBlvd && !onCrossBlvd;
+    bool onRoad = onGrandCentral || onCrossBlvd || onRunway;
+
+    bool onGrandSidewalk = abs(p.x) >= 18.0 && abs(p.x) < 24.0 && p.y > -225.0 && p.y < 195.0;
+    bool onNorthSidewalk = abs(p.y + 120.0) >= 10.0 && abs(p.y + 120.0) < 14.0 && abs(p.x) < 145.0;
+    bool onMidtownSidewalk = abs(p.y) >= 11.0 && abs(p.y) < 15.0 && abs(p.x) < 155.0;
+    bool onSouthSidewalk = abs(p.y - 80.0) >= 10.0 && abs(p.y - 80.0) < 14.0 && abs(p.x) < 155.0;
+    bool onSidewalk = !onRoad && !inCanalCut && (onGrandSidewalk || onNorthSidewalk || onMidtownSidewalk || onSouthSidewalk);
 
     vec3 albedo = vec3(0.25);
     float specStrength = 0.0;
     float specPower = 24.0;
 
-    if (onMainStrip || onVeniceBlvd || onCrossBlvd || onRunway) {
+    if (onRoad) {
       // Rich dark weathered asphalt base with multi-frequency aggregate sparkle
       float aggCoarse = noise(p * 8.5);
       float aggFine = noise(p * 32.0);
@@ -297,9 +304,9 @@ export const terrainFragmentShader = /* glsl */ `
       asphaltBase = mix(asphaltBase, vec3(0.06, 0.065, 0.075), tarSeam * 0.65);
 
       // Polished dual wheel-track wear lanes
-      float wearTrack1 = exp(-pow((abs(p.x) - 5.5) / 2.2, 2.0));
-      float wearTrack2 = exp(-pow((abs(p.x) - 14.5) / 2.2, 2.0));
-      float tireWear = clamp(wearTrack1 + wearTrack2, 0.0, 1.0) * (onMainStrip ? 1.0 : 0.35);
+      float wearTrack1 = exp(-pow((abs(p.x) - 4.5) / 2.0, 2.0));
+      float wearTrack2 = exp(-pow((abs(p.x) - 12.5) / 2.0, 2.0));
+      float tireWear = clamp(wearTrack1 + wearTrack2, 0.0, 1.0) * (onGrandCentral ? 1.0 : 0.35);
       asphaltBase = mix(asphaltBase, vec3(0.145, 0.155, 0.175), tireWear * 0.42);
 
       // Perturb road normal slightly with micro-aggregate
@@ -308,46 +315,69 @@ export const terrainFragmentShader = /* glsl */ `
       specStrength = 0.12 + tireWear * 0.26 + aggMicro * 0.08;
       specPower = 28.0;
 
-      // Crisp reflective traffic markings on the Strip
-      if (onMainStrip && abs(p.y) < 122.0) {
-        float paintNoise = 0.88 + 0.12 * aggFine;
-        vec3 yellowPaint = vec3(0.96, 0.73, 0.14) * paintNoise;
-        vec3 whitePaint = vec3(0.92, 0.94, 0.96) * paintNoise;
+      float paintNoise = 0.88 + 0.12 * aggFine;
+      vec3 yellowPaint = vec3(0.96, 0.73, 0.14) * paintNoise;
+      vec3 whitePaint = vec3(0.92, 0.94, 0.96) * paintNoise;
 
-        // Crosswalk Zebra Stripes
-        bool inCrosswalk = abs(p.y - 22.0) < 2.4 || abs(p.y + 52.0) < 2.4 ||
-                           abs(p.y - 58.0) < 2.4 || abs(p.y + 92.0) < 2.4;
+      // Intersection box where Grand Central Ave meets Cross Boulevards
+      bool inIntersectionBox = onGrandCentral && onCrossBlvd;
 
+      // Zebra Crosswalks at every intersection (z near 0, -120, +80, -60, +40)
+      bool inGrandZebra =
+        abs(abs(p.y) - 13.5) < 2.2 ||
+        abs(abs(p.y + 120.0) - 12.2) < 2.2 ||
+        abs(abs(p.y - 80.0) - 12.2) < 2.2 ||
+        abs(p.y + 60.0) < 2.2 ||
+        abs(p.y - 40.0) < 2.2;
+
+      bool inCrossZebra = onCrossBlvd && abs(abs(p.x) - 20.2) < 2.2;
+
+      // Crisp reflective traffic markings on Grand Central Avenue
+      if (onGrandCentral && p.y > -220.0 && p.y < 190.0) {
         // Double amber-yellow center line
-        if (abs(abs(p.x) - 0.35) < 0.14 && !inCrosswalk) {
+        if (abs(abs(p.x) - 0.32) < 0.14 && !inGrandZebra && !inIntersectionBox) {
           albedo = yellowPaint;
           specStrength = 0.35;
         }
-        // Dashed white lane dividers
-        if (abs(abs(p.x) - 10.5) < 0.13 && fract(p.y * 0.12) < 0.45 && !inCrosswalk) {
+        // Dashed white lane dividers (4 lanes: ±9.0m)
+        if (abs(abs(p.x) - 9.0) < 0.13 && fract(p.y * 0.12) < 0.45 && !inGrandZebra && !inIntersectionBox) {
           albedo = whitePaint;
           specStrength = 0.35;
         }
         // Solid white shoulder lines
-        if (abs(abs(p.x) - 20.6) < 0.16) {
+        if (abs(abs(p.x) - 16.8) < 0.16 && !inIntersectionBox) {
           albedo = whitePaint;
           specStrength = 0.32;
         }
-        // Crosswalk stripes across main road
-        if (inCrosswalk && abs(p.x) < 20.0) {
+        // Zebra crosswalk stripes across Grand Central Avenue
+        if (inGrandZebra && abs(p.x) < 16.5) {
           float zebra = step(0.45, fract(p.x * 0.65));
           albedo = mix(albedo, whitePaint, zebra * 0.92);
           specStrength = mix(specStrength, 0.34, zebra);
         }
       }
 
-      // Cross-boulevard center lines
-      if ((onVeniceBlvd || onCrossBlvd) && !onMainStrip) {
-        float centerTarget = onVeniceBlvd ? -85.0 : 35.0;
-        if (abs(abs(p.y - centerTarget) - 0.3) < 0.12) {
-          albedo = vec3(0.94, 0.71, 0.15);
-        } else if (abs(abs(p.y - centerTarget) - 8.6) < 0.14) {
-          albedo = vec3(0.90, 0.92, 0.94);
+      // Cross-Boulevard lane markings & crosswalks (North z=-120, Midtown z=0, South z=+80)
+      if (onCrossBlvd && !onGrandCentral) {
+        float centerZ = onNorthCross ? -120.0 : (onMidtownCross ? 0.0 : 80.0);
+        float halfW = onMidtownCross ? 11.0 : 10.0;
+        float dz = abs(p.y - centerZ);
+
+        if (abs(dz - 0.28) < 0.12 && !inCrossZebra) {
+          albedo = yellowPaint;
+          specStrength = 0.35;
+        } else if (abs(dz - 5.0) < 0.12 && fract(p.x * 0.12) < 0.45 && !inCrossZebra) {
+          albedo = whitePaint;
+          specStrength = 0.35;
+        } else if (abs(dz - (halfW - 1.1)) < 0.15) {
+          albedo = whitePaint;
+          specStrength = 0.32;
+        }
+
+        if (inCrossZebra && dz < halfW - 1.2) {
+          float zebra = step(0.45, fract(p.y * 0.65));
+          albedo = mix(albedo, whitePaint, zebra * 0.92);
+          specStrength = mix(specStrength, 0.34, zebra);
         }
       }
 
@@ -368,48 +398,41 @@ export const terrainFragmentShader = /* glsl */ `
       }
 
       // Dark gutter AO crease at curb boundary
-      if (onMainStrip && abs(abs(p.x) - 22.0) < 0.45) {
-        float gutterAO = smoothstep(0.0, 0.45, abs(abs(p.x) - 22.0));
+      if (onGrandCentral && !onCrossBlvd && abs(abs(p.x) - 18.0) < 0.45) {
+        float gutterAO = smoothstep(0.0, 0.45, abs(abs(p.x) - 18.0));
         albedo *= 0.52 + 0.48 * gutterAO;
       }
     } else if (onSidewalk) {
       float ax = abs(p.x);
-      if (ax < 22.6) {
-        // Raised Curb Edge: alternating red/white near corners + warm granite curb
-        bool nearCorner = abs(p.y - 22.0) < 6.0 || abs(p.y + 52.0) < 6.0 ||
-                          abs(p.y - 58.0) < 6.0 || abs(p.y + 92.0) < 6.0;
-        vec3 graniteCurb = vec3(0.76, 0.73, 0.67) + (noise(p * 24.0) - 0.5) * 0.05;
-        if (nearCorner) {
-          float stripe = step(0.5, fract(p.y * 0.55));
-          graniteCurb = mix(vec3(0.78, 0.16, 0.14), vec3(0.92, 0.91, 0.88), stripe);
-        }
-        // Dark gutter crease at 22.0
-        float curbAO = smoothstep(0.0, 0.35, abs(ax - 22.0));
-        albedo = graniteCurb * (0.65 + 0.35 * curbAO);
+      bool isCurbEdge =
+        (onGrandSidewalk && ax < 18.6) ||
+        (onNorthSidewalk && abs(p.y + 120.0) < 10.6) ||
+        (onMidtownSidewalk && abs(p.y) < 11.6) ||
+        (onSouthSidewalk && abs(p.y - 80.0) < 10.6);
+
+      if (isCurbEdge) {
+        // Raised Granite Curb Edge
+        vec3 graniteCurb = vec3(0.76, 0.73, 0.69) + (noise(p * 24.0) - 0.5) * 0.05;
+        albedo = graniteCurb * 0.82;
         specStrength = 0.14;
       } else {
-        // Travertine Stone Sidewalk with crisp mortar grid joints
+        // Brushed Concrete & Travertine Paver Sidewalk with crisp mortar grid joints
         vec2 tileUV = p * 0.85;
         vec2 tileId = floor(tileUV);
         vec2 tileF = fract(tileUV);
-        float tileVar = hash(tileId) * 0.08 - 0.04;
-        float stoneGrain = fbm(p * 6.5) * 0.05;
-        vec3 travertine = vec3(0.83, 0.79, 0.71) + tileVar + stoneGrain;
+        float tileVar = hash(tileId) * 0.06 - 0.03;
+        float stoneGrain = fbm(p * 6.5) * 0.04;
+        vec3 paver = vec3(0.80, 0.79, 0.76) + tileVar + stoneGrain;
 
-        // Mortar joint lines
         float jointX = smoothstep(0.0, 0.045, tileF.x) * smoothstep(0.0, 0.045, 1.0 - tileF.x);
         float jointY = smoothstep(0.0, 0.045, tileF.y) * smoothstep(0.0, 0.045, 1.0 - tileF.y);
         float mortarMask = jointX * jointY;
-        albedo = mix(vec3(0.52, 0.49, 0.44), travertine, mortarMask);
-
-        // Soft outer sidewalk AO
-        float outerAO = 1.0 - 0.25 * smoothstep(29.1, 30.0, ax);
-        albedo *= outerAO;
-        specStrength = 0.16;
+        albedo = mix(vec3(0.50, 0.49, 0.47), paver, mortarMask);
+        specStrength = 0.15;
         specPower = 32.0;
       }
     } else {
-      // Natural Realistic Grass, Coastal Scrub, Limestone Cliffs & Beach Sand
+      // Urban City Blocks (Paved Architectural Plazas & Manicured City Turf) + Coastal Beaches
       float h = vWorldPos.y;
       float slope = 1.0 - n.y;
       float macroN = fbm(p * 0.04);
@@ -418,60 +441,90 @@ export const terrainFragmentShader = /* glsl */ `
       float bladeN2 = noise(p * 48.0);
       float microBlades = bladeN1 * 0.65 + bladeN2 * 0.35;
 
-      // Wet Shoreline Sand (h < 0.75)
-      vec3 wetSand = vec3(0.46, 0.40, 0.31) + (bladeN2 - 0.5) * 0.035;
+      bool inMetropolisBlocks = abs(p.x) < 135.0 && abs(p.y) < 165.0 && !inCanalCut && h > 2.2;
 
-      // Dry Wind-Rippled Beach Sand (0.75 .. 1.85)
-      float ripple = sin(p.x * 3.5 + p.y * 2.2 + noise(p * 0.5) * 4.0) * 0.5 + 0.5;
-      vec3 drySand = vec3(0.82, 0.74, 0.58) + (ripple - 0.5) * 0.045 + (bladeN1 - 0.5) * 0.03;
+      if (inMetropolisBlocks) {
+        // Architectural stone plaza perimeter around buildings + manicured emerald city park lawns
+        vec2 blockUV = p * 0.45;
+        vec2 blockId = floor(blockUV);
+        vec2 blockF = fract(blockUV);
+        float jX = smoothstep(0.0, 0.04, blockF.x) * smoothstep(0.0, 0.04, 1.0 - blockF.x);
+        float jY = smoothstep(0.0, 0.04, blockF.y) * smoothstep(0.0, 0.04, 1.0 - blockF.y);
+        float tileJoint = jX * jY;
+        float tileTone = hash(blockId) * 0.05 - 0.025;
+        vec3 plazaStone = mix(vec3(0.42, 0.44, 0.47), vec3(0.66, 0.68, 0.70) + tileTone, tileJoint);
 
-      // Photorealistic Multi-Tone Grass & Mediterranean Scrub (h >= 1.85)
-      vec3 meadowFescue = vec3(0.16, 0.29, 0.11);
-      vec3 oliveSage = vec3(0.28, 0.39, 0.16);
-      vec3 dryTufts = vec3(0.48, 0.44, 0.22);
-      vec3 darkLoam = vec3(0.18, 0.15, 0.11);
+        // Manicured city park turf strips inside open lawn pockets
+        vec3 cityTurfA = vec3(0.16, 0.36, 0.16);
+        vec3 cityTurfB = vec3(0.22, 0.44, 0.20);
+        float mowStripe = step(0.5, fract((p.x + p.y) * 0.18));
+        vec3 manicuredTurf = mix(cityTurfA, cityTurfB, mowStripe * 0.45 + macroN * 0.55);
+        manicuredTurf *= 0.90 + 0.20 * microBlades;
 
-      vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.28, 0.72, macroN));
-      float sunCuredMask = smoothstep(0.52, 0.82, medN * 0.75 + (1.0 - macroN) * 0.35);
-      grassCol = mix(grassCol, dryTufts, sunCuredMask * 0.65);
-      // Dark soil/loam underlayer in micro-crevices + blade tips brightening
-      float creviceMask = smoothstep(0.42, 0.18, microBlades);
-      grassCol = mix(grassCol, darkLoam, creviceMask * 0.55);
-      grassCol *= 0.88 + 0.26 * microBlades;
-
-      // Sedimentary Limestone Cliff Rock (steep slopes or high peaks)
-      float strata = sin(vWorldPos.y * 4.2 + noise(p * 0.3) * 2.0) * 0.5 + 0.5;
-      vec3 cliffRock = vec3(0.44, 0.41, 0.37) + (strata - 0.5) * 0.09 + (bladeN1 - 0.5) * 0.05;
-      cliffRock = mix(cliffRock, vec3(0.30, 0.28, 0.25), smoothstep(0.65, 0.9, noise(p * 1.4)) * 0.45);
-
-      // Elevation & slope transitions with organic noise breakup
-      float noisyH = h + (medN - 0.5) * 0.32;
-      if (noisyH < 0.75) {
-        float wetToDry = smoothstep(0.45, 0.75, noisyH);
-        albedo = mix(wetSand, drySand, wetToDry);
-        specStrength = mix(0.55, 0.06, wetToDry);
-        specPower = 64.0;
-      } else if (noisyH < 1.85) {
-        float sandToGrass = smoothstep(1.35, 1.85, noisyH);
-        albedo = mix(drySand, grassCol, sandToGrass);
-        specStrength = 0.05;
-        // Perturb normal for grass micro-relief
-        n = normalize(n + vec3((bladeN2 - 0.5) * 0.18, 0.0, (bladeN1 - 0.5) * 0.18) * sandToGrass);
+        // Blend paved stone plazas near avenues (|x| < 68 or near cross boulevards) with park turf
+        float nearAve = max(
+          1.0 - smoothstep(24.0, 42.0, abs(p.x)),
+          max(
+            1.0 - smoothstep(14.0, 28.0, abs(p.y)),
+            1.0 - smoothstep(14.0, 28.0, min(abs(p.y + 120.0), abs(p.y - 80.0)))
+          )
+        );
+        float plazaMask = clamp(nearAve + smoothstep(0.45, 0.68, macroN) * 0.65, 0.0, 1.0);
+        albedo = mix(manicuredTurf, plazaStone, plazaMask);
+        specStrength = mix(0.06, 0.14, plazaMask);
+        specPower = 28.0;
       } else {
-        albedo = grassCol;
-        specStrength = 0.06;
-        n = normalize(n + vec3((bladeN2 - 0.5) * 0.22, 0.0, (bladeN1 - 0.5) * 0.22));
-      }
+        // Wet Shoreline Sand (h < 0.75)
+        vec3 wetSand = vec3(0.46, 0.40, 0.31) + (bladeN2 - 0.5) * 0.035;
 
-      // Blend cliff rock on steep slopes or high elevations
-      float cliffMask = clamp(
-        smoothstep(0.11, 0.22, slope) + smoothstep(7.5, 9.2, h + (macroN - 0.5) * 0.8),
-        0.0,
-        1.0
-      );
-      if (cliffMask > 0.001) {
-        albedo = mix(albedo, cliffRock, cliffMask);
-        specStrength = mix(specStrength, 0.09, cliffMask);
+        // Dry Wind-Rippled Beach Sand (0.75 .. 1.85)
+        float ripple = sin(p.x * 3.5 + p.y * 2.2 + noise(p * 0.5) * 4.0) * 0.5 + 0.5;
+        vec3 drySand = vec3(0.82, 0.74, 0.58) + (ripple - 0.5) * 0.045 + (bladeN1 - 0.5) * 0.03;
+
+        // Lush Coastal Grass & Parkland (h >= 1.85)
+        vec3 meadowFescue = vec3(0.16, 0.32, 0.13);
+        vec3 oliveSage = vec3(0.26, 0.40, 0.17);
+        vec3 dryTufts = vec3(0.42, 0.42, 0.22);
+        vec3 darkLoam = vec3(0.18, 0.15, 0.11);
+
+        vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.28, 0.72, macroN));
+        float sunCuredMask = smoothstep(0.52, 0.82, medN * 0.75 + (1.0 - macroN) * 0.35);
+        grassCol = mix(grassCol, dryTufts, sunCuredMask * 0.45);
+        float creviceMask = smoothstep(0.42, 0.18, microBlades);
+        grassCol = mix(grassCol, darkLoam, creviceMask * 0.45);
+        grassCol *= 0.88 + 0.26 * microBlades;
+
+        // Sedimentary Limestone Cliff Rock (steep slopes or high peaks)
+        float strata = sin(vWorldPos.y * 4.2 + noise(p * 0.3) * 2.0) * 0.5 + 0.5;
+        vec3 cliffRock = vec3(0.44, 0.41, 0.37) + (strata - 0.5) * 0.09 + (bladeN1 - 0.5) * 0.05;
+        cliffRock = mix(cliffRock, vec3(0.30, 0.28, 0.25), smoothstep(0.65, 0.9, noise(p * 1.4)) * 0.45);
+
+        float noisyH = h + (medN - 0.5) * 0.32;
+        if (noisyH < 0.75) {
+          float wetToDry = smoothstep(0.45, 0.75, noisyH);
+          albedo = mix(wetSand, drySand, wetToDry);
+          specStrength = mix(0.55, 0.06, wetToDry);
+          specPower = 64.0;
+        } else if (noisyH < 1.85) {
+          float sandToGrass = smoothstep(1.35, 1.85, noisyH);
+          albedo = mix(drySand, grassCol, sandToGrass);
+          specStrength = 0.05;
+          n = normalize(n + vec3((bladeN2 - 0.5) * 0.18, 0.0, (bladeN1 - 0.5) * 0.18) * sandToGrass);
+        } else {
+          albedo = grassCol;
+          specStrength = 0.06;
+          n = normalize(n + vec3((bladeN2 - 0.5) * 0.22, 0.0, (bladeN1 - 0.5) * 0.22));
+        }
+
+        float cliffMask = clamp(
+          smoothstep(0.11, 0.22, slope) + smoothstep(7.5, 9.2, h + (macroN - 0.5) * 0.8),
+          0.0,
+          1.0
+        );
+        if (cliffMask > 0.001) {
+          albedo = mix(albedo, cliffRock, cliffMask);
+          specStrength = mix(specStrength, 0.09, cliffMask);
+        }
       }
     }
 

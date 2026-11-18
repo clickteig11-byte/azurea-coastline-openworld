@@ -6,7 +6,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { simState, GameHudSnapshot, WEAPON_SPECS } from '../game/store';
 import { getTerrainHeight, getWaveHeight, LANDMARKS, RouletteOutcome } from '../game/worldMath';
 import { soundEngine } from '../game/soundEngine';
-import { createShadowTexture } from './Textures';
+import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
 
 interface Props {
   onHudUpdate: (snap: GameHudSnapshot) => void;
@@ -186,14 +186,19 @@ function autoGroundAndCenter(model: THREE.Object3D, scale = 1, rotY = 0, yOffset
  */
 function createOasisOfAzureaCruiseLiner(): THREE.Group {
   const ship = new THREE.Group();
+  const limestoneTex = createLimestonePBR();
+  const skyscraperPBR = createSkyscraperPBR();
 
   const navyHullMat = new THREE.MeshStandardMaterial({
     color: '#0f172a',
+    map: skyscraperPBR.map,
+    roughnessMap: skyscraperPBR.roughnessMap,
     roughness: 0.25,
     metalness: 0.55,
   });
   const whiteDeckMat = new THREE.MeshStandardMaterial({
     color: '#f8fafc',
+    map: limestoneTex,
     roughness: 0.22,
     metalness: 0.25,
   });
@@ -206,6 +211,8 @@ function createOasisOfAzureaCruiseLiner(): THREE.Group {
   });
   const glassBalconyMat = new THREE.MeshStandardMaterial({
     color: '#38bdf8',
+    map: skyscraperPBR.map,
+    roughnessMap: skyscraperPBR.roughnessMap,
     emissive: '#0284c7',
     emissiveIntensity: 1.35,
     roughness: 0.1,
@@ -220,6 +227,7 @@ function createOasisOfAzureaCruiseLiner(): THREE.Group {
   });
   const teakDeckMat = new THREE.MeshStandardMaterial({
     color: '#b45309',
+    map: limestoneTex,
     roughness: 0.65,
     metalness: 0.1,
   });
@@ -337,6 +345,7 @@ function createOasisOfAzureaCruiseLiner(): THREE.Group {
 
 export function VehicleDirector({ onHudUpdate }: Props) {
   const shadowTex = useMemo(() => createShadowTexture(), []);
+  const canopyDetailTex = useMemo(() => createLimestonePBR(), []);
 
   const playerRef = useRef<THREE.Group>(null);
   const soldierMountRef = useRef<THREE.Group>(null);
@@ -663,6 +672,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (s.startMenuOpen) return;
       if (e.code === 'KeyV' && !e.repeat) {
         cycleHeroCar();
       } else if (e.code === 'KeyB' && !e.repeat) {
@@ -695,6 +705,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     };
     const onFireWeaponEvent = () => fireActiveWeapon();
     const onPointerDown = (e: PointerEvent) => {
+      if (s.startMenuOpen || s.customizerOpen) return;
       if (e.button === 0 && (e.target as HTMLElement | null)?.tagName === 'CANVAS') {
         mouseDownRef.current = true;
         fireActiveWeapon();
@@ -1253,37 +1264,37 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     };
   }, []);
 
-  // Solid AABB & Landmark collision helper for CAR and FOOT modes
+  // Collision-Free Street Corridors & Gentle Off-Street Landmark Radial Pushback for CAR and FOOT modes
   const applyWorldCollisions = (pos: THREE.Vector3, isCar: boolean) => {
     if (!isCar && pos.y > 32) return;
 
-    // 1. All 34 Strip Towers AABB collision
-    for (let i = 0; i < 34; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      const bx = side * (40 + (i % 3) * 18);
-      const bz = -105 + Math.floor(i / 2) * 13;
-      const halfW = (12 + (i % 4) * 2.2) / 2 + 1.5;
-      const halfD = (12 + ((i + 1) % 3) * 2.2) / 2 + 1.5;
-
-      const dx = pos.x - bx;
-      const dz = pos.z - bz;
-      if (Math.abs(dx) < halfW && Math.abs(dz) < halfD) {
-        const overlapX = halfW - Math.abs(dx);
-        const overlapZ = halfD - Math.abs(dz);
-        if (overlapX < overlapZ) {
-          pos.x += dx >= 0 ? overlapX : -overlapX;
-        } else {
-          pos.z += dz >= 0 ? overlapZ : -overlapZ;
-        }
-        if (isCar) simState.carSpeed *= 0.55;
-      }
+    // Rule 1 (Guaranteed Open Street Corridors):
+    // Grand Central Ave (x in -24..+24, z = -230..+200), Midtown Cross Ave (|z| < 15),
+    // North Cross Blvd (|z + 120| < 13), South Cross Blvd (|z - 80| < 13),
+    // and Golden Gate Bridge roadway (-19..+19) are 100% open and never blocked!
+    if (
+      (Math.abs(pos.x) < 24 && Math.abs(pos.z + 205) > 3.6) ||
+      Math.abs(pos.x) < 19.4 ||
+      Math.abs(pos.z) < 15 ||
+      Math.abs(pos.z + 120) < 13 ||
+      Math.abs(pos.z - 80) < 13
+    ) {
+      return;
     }
 
-    // 2. Major Landmarks radial pushback: Sphere (0, -45, r=36.5), Luxor (-115, 85, r=28), Eiffel Piers (95, 35, r=15)
+    // Rule 2 (Updated Off-Street Landmark Radii):
     const landmarks: [number, number, number][] = [
-      [0, -45, 36.5],
-      [-115, 85, 28],
-      [95, 35, 15],
+      [-52, -28, 13],    // Empire State Building
+      [-52, -88, 7],     // Big Ben
+      [95, 35, 14],      // Eiffel Tower
+      [54, -148, 14],    // Burj Khalifa
+      [-105, 45, 26],    // Colosseum
+      [148, 108, 18],    // Sydney Opera House
+      [52, -28, 11],     // Tokyo Tower
+      [-118, -28, 24],   // Giza Pyramid
+      [98, -35, 24],     // Science Sphere
+      [-23, -205, 3.5],  // Golden Gate Bridge West Pier Leg
+      [23, -205, 3.5],   // Golden Gate Bridge East Pier Leg
     ];
     for (const [cx, cz, rad] of landmarks) {
       const ldx = pos.x - cx;
@@ -1293,7 +1304,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         const push = (rad - dist) / dist;
         pos.x += ldx * push;
         pos.z += ldz * push;
-        if (isCar) simState.carSpeed *= 0.55;
+        if (isCar) simState.carSpeed *= 0.85;
       }
     }
   };
@@ -1475,14 +1486,16 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     simState.stormRadius = Math.max(68, simState.stormRadius - dt * 0.85);
 
     const isCustomizerOpen = Boolean(s.customizerOpen);
-    const fwd = !isCustomizerOpen && (keys.has('KeyW') || keys.has('ArrowUp')) ? 1 : 0;
-    const back = !isCustomizerOpen && (keys.has('KeyS') || keys.has('ArrowDown')) ? 1 : 0;
-    const left = keys.has('KeyA') || keys.has('ArrowLeft') ? 1 : 0;
-    const right = keys.has('KeyD') || keys.has('ArrowRight') ? 1 : 0;
-    const boost = !isCustomizerOpen && (keys.has('ShiftLeft') || keys.has('ShiftRight'));
-    const space = !isCustomizerOpen && keys.has('Space');
+    const isStartMenuOpen = Boolean(s.startMenuOpen);
+    const isMenuOpen = Boolean(s.customizerOpen || s.startMenuOpen);
+    const fwd = !isMenuOpen && (keys.has('KeyW') || keys.has('ArrowUp')) ? 1 : 0;
+    const back = !isMenuOpen && (keys.has('KeyS') || keys.has('ArrowDown')) ? 1 : 0;
+    const left = !isStartMenuOpen && (keys.has('KeyA') || keys.has('ArrowLeft')) ? 1 : 0;
+    const right = !isStartMenuOpen && (keys.has('KeyD') || keys.has('ArrowRight')) ? 1 : 0;
+    const boost = !isMenuOpen && (keys.has('ShiftLeft') || keys.has('ShiftRight'));
+    const space = !isMenuOpen && keys.has('Space');
 
-    if (!isCustomizerOpen && (keys.has('KeyF') || mouseDownRef.current)) {
+    if (!isMenuOpen && (keys.has('KeyF') || mouseDownRef.current)) {
       fireActiveWeapon();
     }
 
@@ -1499,12 +1512,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       );
 
       if (simState.parachuting) {
-        const turn = (left - right) * 2.1 * dt;
+        const turn = (left - right) * 2.5 * dt;
         simState.playerYaw += turn;
         const dirX = Math.sin(simState.playerYaw);
         const dirZ = Math.cos(simState.playerYaw);
-        const paraFwdSpeed = fwd > 0 ? 26 : 19;
-        const descentRate = boost ? -22 : space ? -5.5 : -11.0;
+        const paraFwdSpeed = fwd > 0 ? 28 : 20;
+        const descentRate = boost ? -24 : space ? -5.5 : -11.5;
 
         simState.playerPos.x += dirX * paraFwdSpeed * dt;
         simState.playerPos.z += dirZ * paraFwdSpeed * dt;
@@ -1518,12 +1531,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           parachuteRef.current.rotation.z = THREE.MathUtils.lerp(
             parachuteRef.current.rotation.z,
             targetBank,
-            Math.min(1, 8 * dt)
+            Math.min(1, 10 * dt)
           );
           parachuteRef.current.rotation.x = THREE.MathUtils.lerp(
             parachuteRef.current.rotation.x,
             boost ? 0.22 : space ? -0.15 : 0.05,
-            Math.min(1, 8 * dt)
+            Math.min(1, 10 * dt)
           );
         }
 
@@ -1537,9 +1550,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
         speedKmh = Math.round(Math.hypot(paraFwdSpeed, descentRate) * 3.2);
       } else {
-        const turn = (left - right) * 2.8 * dt;
+        const turn = (left - right) * 3.2 * dt;
         simState.playerYaw += turn;
-        const moveSpeed = boost ? 22 : 13;
+        const moveSpeed = boost ? 26 : 16;
         const dirX = Math.sin(simState.playerYaw);
         const dirZ = Math.cos(simState.playerYaw);
         const throttle = fwd - back;
@@ -1654,19 +1667,26 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     }
 
-    // 2. HERO SUPERCAR FLEET (FERRARI 458 / GT3 / WEDGE / MUSCLE / VIP LIMO + DRIFT + AABB COLLISION)
+    // 2. HERO SUPERCAR FLEET (FERRARI 458 / GT3 / WEDGE / MUSCLE / VIP LIMO + DRIFT + SNAPPY PHYSICS)
     if (simState.mode === 'CAR') {
-      const accel = (fwd - back) * (boost || simState.roulette === 'RED' ? 62 : 38);
+      const throttleInput = fwd - back;
+      const accel = throttleInput * (boost || simState.roulette === 'RED' ? 82 : 52);
       simState.carSpeed += accel * dt;
-      simState.carSpeed *= Math.pow(0.28, dt); // rolling drag
 
-      isDrifting = space && left !== right && Math.abs(simState.carSpeed) > 7;
+      // Snappy braking: when reversing/braking against current motion, stop on a dime
+      if (throttleInput * simState.carSpeed < 0) {
+        simState.carSpeed += throttleInput * 95 * dt;
+      }
+
+      simState.carSpeed *= Math.pow(throttleInput === 0 ? 0.18 : 0.28, dt); // rolling drag
+
+      isDrifting = space && left !== right && Math.abs(simState.carSpeed) > 6;
       const driftTurnMult = isDrifting ? 1.55 : 1.0;
       const steer =
         (left - right) *
-        2.4 *
+        3.0 *
         driftTurnMult *
-        Math.min(1, Math.abs(simState.carSpeed) / 10 + 0.25) *
+        Math.min(1, Math.abs(simState.carSpeed) / 7 + 0.35) *
         (simState.carSpeed >= 0 ? 1 : -1);
       simState.carYaw += steer * dt;
 
@@ -1683,7 +1703,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.driftScore = 0;
       }
 
-      // Full Building & Landmark AABB Collision Pushback
+      // Collision-Free Street Corridors & Gentle Off-Street Landmark Pushback
       applyWorldCollisions(simState.carPos, true);
 
       // South Strip Stunt Ramp boost
@@ -1694,13 +1714,13 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       simState.carPos.y = THREE.MathUtils.lerp(
         simState.carPos.y,
         Math.max(groundY + 0.08 + rampBoost, simState.tideOffset + 0.1),
-        12 * dt
+        16 * dt
       );
 
       simState.playerPos.set(
-        simState.carPos.x - 4.5,
+        simState.carPos.x + Math.cos(simState.carYaw) * 5.2,
         simState.carPos.y,
-        simState.carPos.z - 2.2
+        simState.carPos.z - Math.sin(simState.carYaw) * 5.2
       );
       speedKmh = Math.round(Math.abs(simState.carSpeed) * 3.2);
       activePos = simState.carPos;
@@ -1709,10 +1729,13 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     // 3. 6-VESSEL MARITIME & CRUISE LINER FLEET (GERSTNER WAVE BUOYANCY)
     if (simState.mode === 'BOAT') {
-      const accel = (fwd - back) * (boost ? 55 : 34);
+      const accel = (fwd - back) * (boost ? 68 : 44);
       simState.boatSpeed += accel * dt;
+      if ((fwd - back) * simState.boatSpeed < 0) {
+        simState.boatSpeed += (fwd - back) * 60 * dt;
+      }
       simState.boatSpeed *= Math.pow(0.32, dt);
-      simState.boatYaw += (left - right) * 2.1 * dt;
+      simState.boatYaw += (left - right) * 2.5 * dt;
 
       simState.boatPos.x += Math.sin(simState.boatYaw) * simState.boatSpeed * dt;
       simState.boatPos.z += Math.cos(simState.boatYaw) * simState.boatSpeed * dt;
@@ -1729,15 +1752,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     // 4. 6-AIRCRAFT AVIATION FLEET (6-DOF FLIGHT)
     if (simState.mode === 'PLANE') {
-      const targetSpeed = boost ? 78 : space ? 58 : fwd ? 46 : back ? 20 : 36;
-      simState.planeSpeed = THREE.MathUtils.lerp(simState.planeSpeed, targetSpeed, 2.2 * dt);
+      const targetSpeed = boost ? 84 : space ? 62 : fwd ? 50 : back ? 20 : 38;
+      simState.planeSpeed = THREE.MathUtils.lerp(simState.planeSpeed, targetSpeed, 3.0 * dt);
 
-      const pitchInput = (back - fwd) * 1.4;
-      const rollInput = (left - right) * 2.1;
+      const pitchInput = (back - fwd) * 1.65;
+      const rollInput = (left - right) * 2.4;
 
-      simState.planePitch = THREE.MathUtils.clamp(simState.planePitch + pitchInput * dt, -0.75, 0.75);
-      simState.planeRoll = THREE.MathUtils.lerp(simState.planeRoll, rollInput * 0.65, 4 * dt);
-      simState.planeYaw += (left - right) * 1.35 * dt;
+      simState.planePitch = THREE.MathUtils.clamp(simState.planePitch + pitchInput * dt, -0.78, 0.78);
+      simState.planeRoll = THREE.MathUtils.lerp(simState.planeRoll, rollInput * 0.65, 5.5 * dt);
+      simState.planeYaw += (left - right) * 1.65 * dt;
 
       const cosP = Math.cos(simState.planePitch);
       simState.planePos.x += Math.sin(simState.planeYaw) * cosP * simState.planeSpeed * dt;
@@ -2008,8 +2031,27 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     soundEngine.updateEngine(simState.mode, speedKmh);
 
-    // Camera Choreography: Live 3/4 Front-Facing Character Studio Camera OR Smooth Chase Camera
-    if (isCustomizerOpen) {
+    // Camera Choreography: Start Menu Panoramic Orbit, Character Studio Camera, OR Snappy Chase Camera
+    if (isStartMenuOpen) {
+      const orbitAngle = t * 0.16;
+      const radius = 85;
+      const height = 42;
+      const desiredOrbitCam = new THREE.Vector3(
+        Math.sin(orbitAngle) * radius,
+        height,
+        -20 + Math.cos(orbitAngle) * radius
+      );
+      state.camera.position.lerp(desiredOrbitCam, Math.min(1, 6.0 * dt));
+      camTarget.current.lerp(new THREE.Vector3(0, 18, -20), Math.min(1, 8.0 * dt));
+      state.camera.lookAt(camTarget.current);
+
+      if (state.camera instanceof THREE.PerspectiveCamera) {
+        if (Math.abs(state.camera.fov - 56) > 0.05) {
+          state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 56, Math.min(1, 5 * dt));
+          state.camera.updateProjectionMatrix();
+        }
+      }
+    } else if (isCustomizerOpen) {
       const studioDist = 2.55;
       const studioYaw = activeYaw + 0.28;
       const desiredStudioCam = new THREE.Vector3(
@@ -2017,7 +2059,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         activePos.y + 1.25,
         activePos.z + Math.cos(studioYaw) * studioDist
       );
-      state.camera.position.lerp(desiredStudioCam, Math.min(1, 8.5 * dt));
+      state.camera.position.lerp(desiredStudioCam, Math.min(1, 10.5 * dt));
 
       // Offset look target slightly to character's right (screen left) so character stands on the right half while UI drawer is on the left
       const rightOffset = -0.35;
@@ -2026,7 +2068,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         activePos.y + 1.02,
         activePos.z - Math.sin(activeYaw) * rightOffset
       );
-      camTarget.current.lerp(lookTarget, Math.min(1, 10 * dt));
+      camTarget.current.lerp(lookTarget, Math.min(1, 12 * dt));
       state.camera.lookAt(camTarget.current);
 
       if (state.camera instanceof THREE.PerspectiveCamera) {
@@ -2065,11 +2107,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         activePos.y + camHeight,
         activePos.z - Math.cos(activeYaw) * camDist
       );
-      state.camera.position.lerp(desiredCam, Math.min(1, 6.5 * dt));
+      state.camera.position.lerp(desiredCam, Math.min(1, 11.5 * dt));
       const lookYOffset = isPara ? 0.65 : isCruiseShip ? 2.6 : 1.25;
       camTarget.current.lerp(
         new THREE.Vector3(activePos.x, activePos.y + lookYOffset, activePos.z),
-        Math.min(1, 10 * dt)
+        Math.min(1, 15 * dt)
       );
       state.camera.lookAt(camTarget.current);
 
@@ -2077,7 +2119,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (state.camera instanceof THREE.PerspectiveCamera) {
         const targetFov = 60 + Math.min(13, (speedKmh / 160) * 13);
         if (Math.abs(state.camera.fov - targetFov) > 0.05) {
-          state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, targetFov, Math.min(1, 5 * dt));
+          state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, targetFov, Math.min(1, 8 * dt));
           state.camera.updateProjectionMatrix();
         }
       }
@@ -2243,23 +2285,23 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           <group position={[0, 1.95, 0]}>
             <mesh position={[0, 0.18, 0]}>
               <boxGeometry args={[1.05, 0.28, 1.85]} />
-              <meshStandardMaterial color="#0f172a" roughness={0.35} metalness={0.5} />
+              <meshStandardMaterial color="#0f172a" map={canopyDetailTex} roughness={0.35} metalness={0.5} />
             </mesh>
             <mesh position={[-0.95, 0.1, 0]} rotation={[0, 0, 0.14]}>
               <boxGeometry args={[0.98, 0.24, 1.8]} />
-              <meshStandardMaterial color="#0ea5e9" emissive="#0284c7" emissiveIntensity={0.35} roughness={0.3} />
+              <meshStandardMaterial color="#0ea5e9" map={canopyDetailTex} emissive="#0284c7" emissiveIntensity={0.35} roughness={0.3} />
             </mesh>
             <mesh position={[0.95, 0.1, 0]} rotation={[0, 0, -0.14]}>
               <boxGeometry args={[0.98, 0.24, 1.8]} />
-              <meshStandardMaterial color="#0ea5e9" emissive="#0284c7" emissiveIntensity={0.35} roughness={0.3} />
+              <meshStandardMaterial color="#0ea5e9" map={canopyDetailTex} emissive="#0284c7" emissiveIntensity={0.35} roughness={0.3} />
             </mesh>
             <mesh position={[-1.82, -0.06, 0]} rotation={[0, 0, 0.3]}>
               <boxGeometry args={[0.88, 0.2, 1.72]} />
-              <meshStandardMaterial color="#f59e0b" emissive="#d97706" emissiveIntensity={0.45} roughness={0.3} />
+              <meshStandardMaterial color="#f59e0b" map={canopyDetailTex} emissive="#d97706" emissiveIntensity={0.45} roughness={0.3} />
             </mesh>
             <mesh position={[1.82, -0.06, 0]} rotation={[0, 0, -0.3]}>
               <boxGeometry args={[0.88, 0.2, 1.72]} />
-              <meshStandardMaterial color="#f59e0b" emissive="#d97706" emissiveIntensity={0.45} roughness={0.3} />
+              <meshStandardMaterial color="#f59e0b" map={canopyDetailTex} emissive="#d97706" emissiveIntensity={0.45} roughness={0.3} />
             </mesh>
             <mesh position={[-2.2, -0.22, 0]} rotation={[0, 0, 0.28]}>
               <boxGeometry args={[0.08, 0.46, 1.68]} />

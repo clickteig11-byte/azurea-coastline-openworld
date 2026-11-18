@@ -96,9 +96,9 @@ export function App() {
       } else if (simState.mode === 'CAR') {
         simState.parachuting = false;
         simState.gliding = false;
-        // Step out 4.5m to the side of the car so the parked car doesn't block the third-person shooter camera
-        const exitX = prevPos.x - 4.5;
-        const exitZ = prevPos.z - 2.5;
+        // Step out 5.2m perpendicular to the car's heading so the parked car sits to the side and never blocks the camera
+        const exitX = prevPos.x + Math.cos(prevYaw) * 5.2;
+        const exitZ = prevPos.z - Math.sin(prevYaw) * 5.2;
         const groundY = Math.max(getTerrainHeight(exitX, exitZ) + 0.08, simState.tideOffset);
         simState.playerPos.set(exitX, groundY, exitZ);
         simState.playerYaw = prevYaw;
@@ -118,6 +118,14 @@ export function App() {
         simState.carPos.set(prevPos.x, groundY, prevPos.z);
         simState.carYaw = prevYaw;
       }
+    } else if (next === 'BOAT') {
+      simState.parachuting = false;
+      simState.gliding = false;
+      if (getTerrainHeight(simState.boatPos.x, simState.boatPos.z) > 0.2) {
+        simState.boatPos.set(145, 0.5, -95);
+        simState.boatYaw = -Math.PI / 2;
+        simState.boatSpeed = 0;
+      }
     } else if (next === 'PLANE') {
       simState.parachuting = false;
       simState.gliding = false;
@@ -131,11 +139,37 @@ export function App() {
       }
     }
     simState.mode = next;
+    window.dispatchEvent(new CustomEvent('mode-switched', { detail: next }));
   }, []);
 
   useEffect(() => {
+    const s = simState as any;
+    if (typeof window !== 'undefined' && window.location.search.includes('nomenu')) {
+      s.startMenuOpen = false;
+    } else if (typeof window !== 'undefined' && window.location.search.includes('menu')) {
+      s.startMenuOpen = true;
+    }
+    if (!s.gameMode) {
+      s.gameMode = 'FREE_ROAM';
+    }
+
     const onKeyDown = (e: KeyboardEvent) => {
       simState.keys.add(e.code);
+      if (e.code === 'KeyM' || e.code === 'Escape' || e.code === 'Tab') {
+        if (e.code === 'Tab') e.preventDefault();
+        const nextOpen = !Boolean(s.startMenuOpen);
+        s.startMenuOpen = nextOpen;
+        if (nextOpen) {
+          simState.customizerOpen = false;
+        }
+        window.dispatchEvent(new CustomEvent('toggle-start-menu'));
+        return;
+      }
+      if ((e.code === 'Enter' || e.code === 'NumpadEnter') && Boolean(s.startMenuOpen)) {
+        s.startMenuOpen = false;
+        window.dispatchEvent(new CustomEvent('toggle-start-menu'));
+        return;
+      }
       if (e.code === 'Digit1') switchMode('FOOT');
       if (e.code === 'Digit2') switchMode('CAR');
       if (e.code === 'Digit3') switchMode('BOAT');

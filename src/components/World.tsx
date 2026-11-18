@@ -15,6 +15,13 @@ import {
   createLimestonePBR,
   createNormalMapFromCanvas,
   createBarkPBR,
+  createAsphaltRoadTexture,
+  createSidewalkCobblePBR,
+  createCrosswalkIntersectionPBR,
+  createModernConcreteSteelPBR,
+  createArtDecoLimestonePBR,
+  createBrickResidentialPBR,
+  createRoofGravelHVACPBR,
 } from './Textures';
 import { VegasLandmarks } from './Landmarks';
 import { getTerrainHeight, LANDMARKS } from '../game/worldMath';
@@ -23,6 +30,179 @@ import { simState } from '../game/store';
 export { VegasLandmarks };
 
 const SUN_DIR = new THREE.Vector3(0.55, 0.48, -0.68).normalize();
+
+function getSidewalkCobblePBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
+  return { map: createSidewalkCobblePBR() };
+}
+
+function getCrosswalkIntersectionPBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
+  return { map: createCrosswalkIntersectionPBR() };
+}
+
+function getModernConcreteSteelPBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
+  return createModernConcreteSteelPBR();
+}
+
+function getArtDecoLimestonePBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
+  return createArtDecoLimestonePBR();
+}
+
+function getBrickResidentialPBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
+  return createBrickResidentialPBR();
+}
+
+function getRoofGravelHVACPBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
+  return { map: createRoofGravelHVACPBR() };
+}
+
+function createStreetSignTexture(label: string): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#1d4ed8';
+  ctx.fillRect(0, 0, 512, 128);
+  ctx.strokeStyle = '#f8fafc';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(8, 8, 496, 112);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 42px Inter, Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, 256, 66);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+export interface CityBuildingSpec {
+  x: number;
+  z: number;
+  y: number;
+  w: number;
+  d: number;
+  h: number;
+  halfW: number;
+  halfD: number;
+  style: 0 | 1 | 2; // 0 = Glass Financial, 1 = Art Deco Limestone, 2 = Urban Brick Mid-Rise
+}
+
+/**
+ * Deterministically generates 48 Metropolis buildings across urban blocks while strictly respecting:
+ * - Road Clearance: |x| >= 30 (Grand Central Ave), |z + 120| >= 18 (North Cross Blvd),
+ *   |z| >= 20 (Midtown Cross Ave), |z - 80| >= 18 (South Cross Blvd)
+ * - Landmark Clearance: >= 28m from all 12 Global Landmarks + Science Sphere [98, -35] + Central Park Fountain [-52, 42]
+ * - Waterway & Runway Clearance: clear of Venetian Canal and Airport Runway
+ */
+const GENERATED_CITY_BUILDINGS: CityBuildingSpec[] = (() => {
+  const results: CityBuildingSpec[] = [];
+  const protectedPoints: [number, number][] = [
+    ...LANDMARKS.map((lm) => [lm.position[0], lm.position[2]] as [number, number]),
+    [98, -35], // Science Sphere
+    [-52, 42], // Central Park West Fountain Plaza
+  ];
+
+  // Urban block candidate coordinates neatly aligned between avenues
+  const zRows = [-172, -150, -96, -72, -46, 26, 52, 104, 126, 148];
+  const xCols = [-142, -116, -90, -64, -38, 38, 64, 90, 116, 142];
+
+  const candidates: [number, number][] = [];
+  for (const z of zRows) {
+    for (const x of xCols) {
+      candidates.push([x, z]);
+    }
+  }
+  // Additional outer block fill candidates to guarantee 48 buildings
+  const extraZ = [-162, -138, -84, -58, -34, 38, 60, 114, 138];
+  const extraX = [-130, -102, -76, -42, 42, 76, 102, 130];
+  for (const z of extraZ) {
+    for (const x of extraX) {
+      candidates.push([x, z]);
+    }
+  }
+
+  let idx = 0;
+  for (const [cx, cz] of candidates) {
+    if (results.length >= 48) break;
+
+    const jitterX = ((idx * 7) % 5) - 2;
+    const jitterZ = ((idx * 11) % 5) - 2;
+    const x = cx + jitterX;
+    const z = cz + jitterZ;
+    idx++;
+
+    // Strict road clearance
+    if (Math.abs(x) < 34) continue;
+    if (Math.abs(z + 120) < 20) continue;
+    if (Math.abs(z) < 22) continue;
+    if (Math.abs(z - 80) < 20) continue;
+
+    // Exclude Venetian Canal & Airport Runway
+    if (x > 62 && Math.abs(z + 95) < 30) continue;
+    if (x < -38 && z > 122 && z < 185) continue;
+
+    // Terrain elevation check (must sit on dry urban island ground)
+    const y = getTerrainHeight(x, z);
+    if (y < 1.6) continue;
+
+    // Strict 38.5m plaza & sightline clearance from all 12 Global Landmarks + Science Sphere + Central Park Fountain
+    let nearLandmark = false;
+    for (const [lx, lz] of protectedPoints) {
+      if (Math.hypot(x - lx, z - lz) < 38.5) {
+        nearLandmark = true;
+        break;
+      }
+    }
+    if (nearLandmark) continue;
+
+    // Minimum building-to-building spacing
+    let overlapsBuilding = false;
+    for (const b of results) {
+      if (Math.hypot(x - b.x, z - b.z) < 18.5) {
+        overlapsBuilding = true;
+        break;
+      }
+    }
+    if (overlapsBuilding) continue;
+
+    const bIdx = results.length;
+    const style = (bIdx % 3) as 0 | 1 | 2;
+    const w = style === 0 ? 12.5 + (bIdx % 3) * 2.0 : style === 1 ? 11.5 + (bIdx % 3) * 1.8 : 13.0 + (bIdx % 2) * 2.2;
+    const d = style === 0 ? 12.5 + ((bIdx + 1) % 3) * 2.0 : style === 1 ? 11.5 + ((bIdx + 1) % 3) * 1.8 : 12.0 + ((bIdx + 1) % 2) * 2.0;
+    const h =
+      style === 0
+        ? 30 + ((bIdx * 13) % 34) // Glass Curtain-Wall Financial Skyscrapers (30m..64m)
+        : style === 1
+          ? 22 + ((bIdx * 11) % 24) // Art Deco Limestone & Travertine Civic Towers (22m..46m)
+          : 14 + ((bIdx * 7) % 14); // Urban Red-Brick & Brownstone Mid-Rise Blocks (14m..28m)
+
+    results.push({
+      x,
+      z,
+      y,
+      w,
+      d,
+      h,
+      halfW: w * 0.5,
+      halfD: d * 0.5,
+      style,
+    });
+  }
+
+  return results;
+})();
+
+export const CITY_BUILDING_AABBS: { x: number; z: number; halfW: number; halfD: number }[] =
+  GENERATED_CITY_BUILDINGS.map(({ x, z, halfW, halfD }) => ({
+    x,
+    z,
+    halfW,
+    halfD,
+  }));
 
 export function SkyDome() {
   const uniforms = useMemo(
@@ -229,12 +409,10 @@ export function LuxuryCruiseShip({
         const zOffset = -1.5 - idx * 0.7;
         return (
           <group key={idx} position={[0, dy, zOffset]}>
-            {/* White Alabaster Structural Deck Slab */}
             <mesh castShadow receiveShadow>
               <boxGeometry args={[deckBeam, 1.38, deckLen]} />
               <meshStandardMaterial color="#f8fafc" roughness={0.25} metalness={0.15} />
             </mesh>
-            {/* Continuous Wrap-Around Tinted Glass Balcony Ribbons (#0284c7, emissive #38bdf8) */}
             <mesh position={[0, 0.08, 0]}>
               <boxGeometry args={[deckBeam + 0.18, 0.62, deckLen - 1.2]} />
               <meshStandardMaterial
@@ -245,7 +423,6 @@ export function LuxuryCruiseShip({
                 metalness={0.65}
               />
             </mesh>
-            {/* Warm Golden Cabin Lighting Strips (#fef08a) */}
             <mesh position={[0, -0.34, 0]}>
               <boxGeometry args={[deckBeam + 0.22, 0.14, deckLen - 2.0]} />
               <meshStandardMaterial
@@ -291,7 +468,6 @@ export function LuxuryCruiseShip({
             metalness={0.75}
           />
         </mesh>
-        {/* Navigation Bridge Roof Mast & Rotating Radar Array Dome */}
         <mesh position={[0, 1.4, 0]}>
           <sphereGeometry args={[0.95, 16, 16]} />
           <meshStandardMaterial color="#f8fafc" roughness={0.2} metalness={0.3} />
@@ -310,12 +486,10 @@ export function LuxuryCruiseShip({
 
       {/* Deck 7 Rooftop Lido Sun Deck with Two Glowing Turquoise Swimming Pools, Cabanas & Waterslide Arch */}
       <group position={[0, 12.55, -3.5]}>
-        {/* Teak & Alabaster Sun Deck Promenade Surface */}
         <mesh receiveShadow>
           <boxGeometry args={[10.4, 0.28, 34.0]} />
           <meshStandardMaterial color="#fde68a" roughness={0.62} metalness={0.08} />
         </mesh>
-        {/* Forward & Aft Glowing Turquoise Lido Swimming Pools (#06b6d4) */}
         {[-6.5, 5.5].map((pz, pIdx) => (
           <group key={`pool-${pIdx}`} position={[0, 0.16, pz]}>
             <mesh>
@@ -334,7 +508,6 @@ export function LuxuryCruiseShip({
             </mesh>
           </group>
         ))}
-        {/* Luxury Poolside Lounge Cabanas */}
         {[-4.0, 4.0].map((cx) =>
           [-12, -6.5, -1, 5.5, 11].map((cz, cIdx) => (
             <mesh key={`cabana-${cx}-${cIdx}`} position={[cx, 0.55, cz]} castShadow>
@@ -343,7 +516,6 @@ export function LuxuryCruiseShip({
             </mesh>
           ))
         )}
-        {/* Sculpted Waterslide Arch Coiling Over Stern Lido Deck */}
         <mesh position={[0, 2.2, -13.5]} rotation={[0.25, 0, 0]}>
           <torusGeometry args={[3.2, 0.42, 10, 24, Math.PI]} />
           <meshStandardMaterial color="#f97316" emissive="#fb923c" emissiveIntensity={0.45} roughness={0.22} />
@@ -357,12 +529,10 @@ export function LuxuryCruiseShip({
             <cylinderGeometry args={[1.35, 1.85, 5.2, 16]} />
             <meshStandardMaterial color="#1d4ed8" roughness={0.25} metalness={0.45} />
           </mesh>
-          {/* Gold Sovereign Crown Band */}
           <mesh position={[0, 1.1, 0]}>
             <cylinderGeometry args={[1.48, 1.56, 0.68, 16]} />
             <meshStandardMaterial color="#fbbf24" emissive="#f59e0b" emissiveIntensity={0.75} metalness={0.88} roughness={0.18} />
           </mesh>
-          {/* Exhaust Wing Fin Cap */}
           <mesh position={[0, 2.55, -0.35]}>
             <boxGeometry args={[3.8, 0.35, 2.4]} />
             <meshStandardMaterial color="#0f172a" metalness={0.65} roughness={0.25} />
@@ -457,18 +627,50 @@ export function VegasStripDetails() {
     });
   }, []);
 
+  // Procedural Metropolis Roadway, Sidewalk, Crosswalk, Limestone & Steel PBR Textures
+  const mainAsphaltTex = useMemo(() => {
+    const t = createAsphaltRoadTexture();
+    t.repeat.set(1, 16);
+    return t;
+  }, []);
+
+  const crossAsphaltTex = useMemo(() => {
+    const t = createAsphaltRoadTexture().clone();
+    t.needsUpdate = true;
+    t.center.set(0.5, 0.5);
+    t.rotation = Math.PI / 2;
+    t.repeat.set(1, 6);
+    return t;
+  }, []);
+
+  const { map: sidewalkTex, roughnessMap: sidewalkRough } = useMemo(() => getSidewalkCobblePBR(), []);
+  const { map: crosswalkTex, roughnessMap: crosswalkRough } = useMemo(() => getCrosswalkIntersectionPBR(), []);
+  const { map: steelConcreteTex, roughnessMap: steelConcreteRough } = useMemo(() => getModernConcreteSteelPBR(), []);
+
   const limestoneTex = useMemo(() => createLimestonePBR(), []);
   const limestoneNormal = useMemo(
     () => createNormalMapFromCanvas(limestoneTex.image as HTMLCanvasElement, 2.5, 3, 3),
     [limestoneTex]
   );
 
-  // Cloned real 3D GLB cobra-head street lamps every 36m along the Strip curbs
+  // Street Sign Textures for the 4 Major Signalized Intersections
+  const gantryIntersections = useMemo(
+    () => [
+      { z: -120, label: 'NORTH BAY PKWY', tex: createStreetSignTexture('NORTH BAY PKWY') },
+      { z: -60, label: 'GRAND CENTRAL AVE', tex: createStreetSignTexture('GRAND CENTRAL AVE') },
+      { z: 0, label: 'MIDTOWN CROSSING', tex: createStreetSignTexture('MIDTOWN CROSSING') },
+      { z: 80, label: 'HARBOR BLVD', tex: createStreetSignTexture('HARBOR BLVD') },
+    ],
+    []
+  );
+
+  // Cloned real 3D GLB cobra-head street lamps along Grand Central Ave sidewalks (clear of cross-streets)
   const streetLampClones = useMemo(() => {
     if (!streetLightModel) return [];
     const list: { key: string; obj: THREE.Group; pos: [number, number, number]; rotY: number }[] = [];
-    for (let z = -108; z <= 108; z += 36) {
-      for (const x of [-22.5, 22.5]) {
+    for (let z = -180; z <= 168; z += 28) {
+      if (Math.abs(z + 120) < 16 || Math.abs(z) < 17 || Math.abs(z - 80) < 16) continue;
+      for (const x of [-19.2, 19.2]) {
         const y = getTerrainHeight(x, z);
         const clone = streetLightModel.clone(true);
         list.push({
@@ -482,15 +684,15 @@ export function VegasStripDetails() {
     return list;
   }, [streetLightModel]);
 
-  // Cloned real 3D GLB botanical palm trees along the Strip boulevard and resort plazas
+  // Cloned real 3D GLB botanical palm trees along outer sidewalk planters and Central Park West Plaza
   const stripPalmClones = useMemo(() => {
     if (!palmModel && !chileanPalmModel) return [];
     const list: { key: string; obj: THREE.Group; pos: [number, number, number]; rotY: number; scale: number }[] = [];
 
-    // Strip Boulevard rows (x = ±23.5, z = -108..108 every 24m)
     let idx = 0;
-    for (let z = -108; z <= 108; z += 24) {
-      for (const x of [-23.5, 23.5]) {
+    for (let z = -168; z <= 156; z += 28) {
+      if (Math.abs(z + 120) < 16 || Math.abs(z) < 17 || Math.abs(z - 80) < 16) continue;
+      for (const x of [-21.4, 21.4]) {
         const useChilean = idx % 2 === 1 && chileanPalmModel;
         const src = useChilean ? chileanPalmModel! : (palmModel || chileanPalmModel)!;
         const y = getTerrainHeight(x, z);
@@ -506,10 +708,15 @@ export function VegasStripDetails() {
       }
     }
 
-    // Resort Plaza palms (Bellagio Fountain perimeter, Venice Canal promenade, Luxor & Eiffel plazas)
+    // Central Park West Fountain Plaza & Waterfront Promenade Palms (100% off-street)
     const plazaCoords: [number, number][] = [
-      [-18, -22], [18, -22], [-18, 2], [18, 2],
-      [68, -72], [-75, 22], [68, 22],
+      [-68, 26],
+      [-36, 26],
+      [-68, 58],
+      [-36, 58],
+      [68, -72],
+      [-75, 22],
+      [68, 22],
     ];
     plazaCoords.forEach(([px, pz], pIdx) => {
       const useChilean = pIdx % 2 === 0 && chileanPalmModel;
@@ -528,7 +735,7 @@ export function VegasStripDetails() {
     return list;
   }, [palmModel, chileanPalmModel]);
 
-  // Cloned real 3D GLB Battle Royale Supply (LOOT) & Ammo (AMMO) Crates at all 8 simState.lootCrates coordinates
+  // Cloned real 3D GLB Battle Royale Supply (LOOT) & Ammo (AMMO) Crates
   const crateClones = useMemo(() => {
     return simState.lootCrates.map((crate, idx) => {
       const src = crate.kind === 'LOOT' ? lootCrateModel : ammoCrateModel;
@@ -611,8 +818,27 @@ export function VegasStripDetails() {
     }
   });
 
-  const archY = getTerrainHeight(0, 62);
-  const poolY = getTerrainHeight(0, -10);
+  const groundY = getTerrainHeight(0, 0);
+  const parkY = getTerrainHeight(-52, 42);
+  const rampY = getTerrainHeight(14.5, 115);
+
+  // Sidewalk Z segments along Grand Central Avenue (split cleanly at z = -120, 0, +80 cross-streets)
+  const grandAveSidewalkSegments: [number, number][] = [
+    [-205, -132],
+    [-108, -13],
+    [13, 68],
+    [92, 185],
+  ];
+
+  // Cross-Town Boulevard specs (split into West and East wings outside Grand Central Ave x = ±16)
+  const crossBoulevards = [
+    { z: -120, width: 20, westMin: -140, eastMax: 140, name: 'North Cross Boulevard' },
+    { z: 0, width: 22, westMin: -150, eastMax: 150, name: 'Midtown Cross Avenue' },
+    { z: 80, width: 20, westMin: -145, eastMax: 145, name: 'South Cross Boulevard' },
+  ];
+
+  // 6 Zebra Crosswalk Intersection Pad Z-positions along Grand Central Avenue
+  const crosswalkZList = [-120, -60, 0, 40, 80, 130];
 
   return (
     <group>
@@ -690,21 +916,227 @@ export function VegasStripDetails() {
         })}
       </group>
 
-      {/* Physical Raised Granite Curb Edges bordering the GLSL Strip Boulevard */}
-      {[-22.3, 22.3].map((sx) => (
-        <mesh key={sx} position={[sx, getTerrainHeight(sx, 0) + 0.09, 0]} receiveShadow castShadow>
-          <boxGeometry args={[0.55, 0.18, 250]} />
-          <meshStandardMaterial
-            map={limestoneTex}
-            normalMap={limestoneNormal}
-            bumpMap={limestoneTex}
-            bumpScale={0.12}
-            roughness={0.62}
-          />
-        </mesh>
-      ))}
+      {/* ==================== TEXTURED 3D METROPOLIS ROADWAYS, INTERSECTIONS & SIDEWALKS ==================== */}
 
-      {/* Real 3D GLB Botanical Palm Trees along the Strip Boulevard & Resort Plazas */}
+      {/* 1. Grand Central Avenue (x = 0, width 32m, length 390m from z = -205 to z = +185) */}
+      <mesh
+        position={[0, groundY + 0.05, -10]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        receiveShadow
+      >
+        <planeGeometry args={[32, 390]} />
+        <meshStandardMaterial map={mainAsphaltTex} roughness={0.82} metalness={0.08} />
+      </mesh>
+
+      {/* Grand Central Avenue Textured Concrete Sidewalks (width = 5.5m along x = ±18.8) & Raised Stone Curbs */}
+      {grandAveSidewalkSegments.map(([zStart, zEnd], sIdx) => {
+        const segLen = zEnd - zStart;
+        const zMid = (zStart + zEnd) * 0.5;
+        const segY = getTerrainHeight(0, zMid);
+        return (
+          <group key={`grand-ave-sidewalk-${sIdx}`}>
+            {[-18.8, 18.8].map((sx) => (
+              <mesh
+                key={`sw-${sx}`}
+                position={[sx, segY + 0.11, zMid]}
+                receiveShadow
+                castShadow
+              >
+                <boxGeometry args={[5.5, 0.14, segLen]} />
+                <meshStandardMaterial
+                  map={sidewalkTex}
+                  roughnessMap={sidewalkRough}
+                  roughness={0.76}
+                  metalness={0.06}
+                />
+              </mesh>
+            ))}
+            {[-16.15, 16.15].map((cx) => (
+              <mesh
+                key={`curb-${cx}`}
+                position={[cx, segY + 0.13, zMid]}
+                receiveShadow
+                castShadow
+              >
+                <boxGeometry args={[0.45, 0.18, segLen]} />
+                <meshStandardMaterial
+                  map={limestoneTex}
+                  normalMap={limestoneNormal}
+                  bumpMap={limestoneTex}
+                  bumpScale={0.1}
+                  roughness={0.62}
+                />
+              </mesh>
+            ))}
+          </group>
+        );
+      })}
+
+      {/* 2. Three Cross-Town Boulevards (North Cross z=-120, Midtown Cross z=0, South Cross z=+80) */}
+      {crossBoulevards.map((blvd) => {
+        const by = getTerrainHeight(0, blvd.z);
+        const westLen = -16 - blvd.westMin;
+        const westCenter = (blvd.westMin - 16) * 0.5;
+        const eastLen = blvd.eastMax - 16;
+        const eastCenter = (blvd.eastMax + 16) * 0.5;
+        const swOffset = blvd.width * 0.5 + 2.1;
+        const curbOffset = blvd.width * 0.5 + 0.18;
+
+        return (
+          <group key={blvd.name}>
+            {/* West Wing Roadway */}
+            <mesh
+              position={[westCenter, by + 0.048, blvd.z]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              receiveShadow
+            >
+              <planeGeometry args={[westLen, blvd.width]} />
+              <meshStandardMaterial map={crossAsphaltTex} roughness={0.82} metalness={0.08} />
+            </mesh>
+            {/* East Wing Roadway */}
+            <mesh
+              position={[eastCenter, by + 0.048, blvd.z]}
+              rotation={[-Math.PI / 2, 0, 0]}
+              receiveShadow
+            >
+              <planeGeometry args={[eastLen, blvd.width]} />
+              <meshStandardMaterial map={crossAsphaltTex} roughness={0.82} metalness={0.08} />
+            </mesh>
+
+            {/* Cross-Boulevard Sidewalks & Raised Stone Curbs (West & East Wings) */}
+            {[
+              { xCenter: westCenter, len: westLen - 6 },
+              { xCenter: eastCenter, len: eastLen - 6 },
+            ].map((wing, wIdx) => (
+              <group key={`wing-${wIdx}`}>
+                {[-swOffset, swOffset].map((dz) => (
+                  <mesh
+                    key={`csw-${dz}`}
+                    position={[wing.xCenter, by + 0.1, blvd.z + dz]}
+                    receiveShadow
+                  >
+                    <boxGeometry args={[wing.len, 0.12, 3.8]} />
+                    <meshStandardMaterial
+                      map={sidewalkTex}
+                      roughnessMap={sidewalkRough}
+                      roughness={0.78}
+                      metalness={0.05}
+                    />
+                  </mesh>
+                ))}
+                {[-curbOffset, curbOffset].map((dz) => (
+                  <mesh
+                    key={`ccurb-${dz}`}
+                    position={[wing.xCenter, by + 0.12, blvd.z + dz]}
+                    receiveShadow
+                  >
+                    <boxGeometry args={[wing.len, 0.16, 0.38]} />
+                    <meshStandardMaterial
+                      map={limestoneTex}
+                      normalMap={limestoneNormal}
+                      roughness={0.62}
+                    />
+                  </mesh>
+                ))}
+              </group>
+            ))}
+          </group>
+        );
+      })}
+
+      {/* 3. Textured Zebra Crosswalk Intersection Pads at (0, -120), (0, -60), (0, 0), (0, 40), (0, 80), and (0, 130) */}
+      {crosswalkZList.map((cz) => {
+        const iy = getTerrainHeight(0, cz);
+        return (
+          <mesh
+            key={`crosswalk-pad-${cz}`}
+            position={[0, iy + 0.062, cz]}
+            rotation={[-Math.PI / 2, 0, 0]}
+            receiveShadow
+          >
+            <planeGeometry args={[32, 24]} />
+            <meshStandardMaterial
+              map={crosswalkTex}
+              roughnessMap={crosswalkRough}
+              roughness={0.75}
+              metalness={0.08}
+            />
+          </mesh>
+        );
+      })}
+
+      {/* 4. Modern City Overhead Traffic Signal Gantries & Illuminated Street-Name Signs on Sidewalks (x = ±19.5) */}
+      {gantryIntersections.map((inter) => {
+        const gy = getTerrainHeight(0, inter.z);
+        return (
+          <group key={`gantry-${inter.z}`} position={[0, gy, inter.z]}>
+            {[-1, 1].map((side) => {
+              const poleX = side * 19.5;
+              const armDir = -side; // Cantilever extends inward over driving lanes
+              return (
+                <group key={`pole-${side}`} position={[poleX, 0, (side < 0 ? -1 : 1) * 11.5]}>
+                  {/* Concrete & Steel Foundation Plinth */}
+                  <mesh position={[0, 0.45, 0]} castShadow>
+                    <cylinderGeometry args={[0.42, 0.52, 0.9, 12]} />
+                    <meshStandardMaterial
+                      map={steelConcreteTex}
+                      roughnessMap={steelConcreteRough}
+                      roughness={0.5}
+                      metalness={0.45}
+                    />
+                  </mesh>
+                  {/* Vertical Dark-Steel Mast Pole (100% on sidewalk at x = ±19.5) */}
+                  <mesh position={[0, 4.2, 0]} castShadow>
+                    <cylinderGeometry args={[0.22, 0.28, 7.6, 12]} />
+                    <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.24} />
+                  </mesh>
+                  {/* Horizontal Cantilever Mast Arm Overhanging Lanes at y = 7.45m */}
+                  <mesh position={[armDir * 7.2, 7.45, 0]} rotation={[0, 0, Math.PI / 2]} castShadow>
+                    <cylinderGeometry args={[0.14, 0.19, 14.4, 10]} />
+                    <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.24} />
+                  </mesh>
+                  {/* Illuminated Metropolitan Blue Street-Name Sign Plate */}
+                  <mesh position={[armDir * 5.2, 7.55, 0]}>
+                    <boxGeometry args={[3.8, 0.72, 0.14]} />
+                    <meshStandardMaterial
+                      map={inter.tex}
+                      emissive="#1e3a8a"
+                      emissiveIntensity={0.45}
+                      roughness={0.25}
+                    />
+                  </mesh>
+                  {/* Twin 3-Aspect Red/Amber/Green LED Traffic Signal Heads */}
+                  {[4.2, 10.6].map((offset, hIdx) => (
+                    <group key={`sig-${hIdx}`} position={[armDir * offset, 6.72, 0]}>
+                      <mesh castShadow>
+                        <boxGeometry args={[0.46, 1.28, 0.34]} />
+                        <meshStandardMaterial color="#0f172a" metalness={0.75} roughness={0.28} />
+                      </mesh>
+                      {/* Red LED Aspect */}
+                      <mesh position={[0, 0.36, 0.18]}>
+                        <sphereGeometry args={[0.12, 10, 10]} />
+                        <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={1.6} />
+                      </mesh>
+                      {/* Amber LED Aspect */}
+                      <mesh position={[0, 0, 0.18]}>
+                        <sphereGeometry args={[0.12, 10, 10]} />
+                        <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={1.4} />
+                      </mesh>
+                      {/* Green LED Aspect */}
+                      <mesh position={[0, -0.36, 0.18]}>
+                        <sphereGeometry args={[0.12, 10, 10]} />
+                        <meshStandardMaterial color="#22c55e" emissive="#22c55e" emissiveIntensity={2.2} />
+                      </mesh>
+                    </group>
+                  ))}
+                </group>
+              );
+            })}
+          </group>
+        );
+      })}
+
+      {/* Real 3D GLB Botanical Palm Trees along Outer Sidewalks & Central Park West */}
       {stripPalmClones.map((item) => (
         <primitive
           key={item.key}
@@ -715,7 +1147,7 @@ export function VegasStripDetails() {
         />
       ))}
 
-      {/* Real 3D GLB Cobra-Head Street Lamps every 22m along the Strip */}
+      {/* Real 3D GLB Cobra-Head Street Lamps along Grand Central Avenue Sidewalks */}
       {streetLampClones.map((lamp) => (
         <group key={lamp.key} position={lamp.pos} rotation={[0, lamp.rotY, 0]}>
           <primitive object={lamp.obj} scale={1.08} />
@@ -726,58 +1158,50 @@ export function VegasStripDetails() {
         </group>
       ))}
 
-      {/* Active 3D Grand Prix Checkpoint Gate (Twin Carbon/Gold Pilasters + Laser Arch + Bobbing Chevron) */}
+      {/* Active 3D Grand Prix Checkpoint Gate (Pilasters widened to x = ±17.2 on sidewalks so roadway is 100% clear) */}
       <group ref={checkpointGateRef} position={[0, getTerrainHeight(0, 52), 52]}>
-        {[-8.5, 8.5].map((px) => (
+        {[-17.2, 17.2].map((px) => (
           <group key={px} position={[px, 0, 0]}>
-            {/* Brushed Gold Plinth Base */}
             <mesh position={[0, 0.45, 0]} castShadow>
               <cylinderGeometry args={[0.85, 1.05, 0.9, 12]} />
               <meshStandardMaterial color="#f59e0b" metalness={0.88} roughness={0.2} />
             </mesh>
-            {/* Carbon-Fiber Pilaster Tower */}
-            <mesh position={[0, 5.0, 0]} castShadow>
-              <boxGeometry args={[0.92, 8.8, 0.92]} />
+            <mesh position={[0, 5.4, 0]} castShadow>
+              <boxGeometry args={[0.92, 9.6, 0.92]} />
               <meshStandardMaterial color="#0f172a" metalness={0.78} roughness={0.22} />
             </mesh>
-            {/* Glowing Cyan Vertical Laser Channels */}
-            <mesh position={[px > 0 ? -0.48 : 0.48, 5.0, 0]}>
-              <boxGeometry args={[0.12, 8.2, 0.36]} />
+            <mesh position={[px > 0 ? -0.48 : 0.48, 5.4, 0]}>
+              <boxGeometry args={[0.12, 9.0, 0.36]} />
               <meshStandardMaterial color="#22d3ee" emissive="#06b6d4" emissiveIntensity={2.2} />
             </mesh>
-            {/* Gold Crown Capital */}
-            <mesh position={[0, 9.5, 0]}>
+            <mesh position={[0, 10.3, 0]}>
               <boxGeometry args={[1.25, 0.55, 1.25]} />
               <meshStandardMaterial color="#fbbf24" emissive="#f59e0b" emissiveIntensity={0.8} metalness={0.85} roughness={0.18} />
             </mesh>
           </group>
         ))}
-        {/* Overhead Carbon & Gold Gantry Arch */}
-        <mesh position={[0, 9.65, 0]} castShadow>
-          <boxGeometry args={[18.4, 0.85, 0.95]} />
+        {/* Wide-Span Overhead Carbon & Gold Gantry Arch (35.8m clear span) */}
+        <mesh position={[0, 10.45, 0]} castShadow>
+          <boxGeometry args={[35.8, 0.85, 0.95]} />
           <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.2} />
         </mesh>
-        {/* Glowing Cyan & Gold Overhead Laser Arch Bars */}
-        <mesh position={[0, 9.65, 0]}>
-          <boxGeometry args={[16.6, 0.32, 1.08]} />
+        <mesh position={[0, 10.45, 0]}>
+          <boxGeometry args={[33.8, 0.32, 1.08]} />
           <meshStandardMaterial color="#22d3ee" emissive="#06b6d4" emissiveIntensity={2.4} />
         </mesh>
-        <mesh position={[0, 10.18, 0]}>
-          <boxGeometry args={[14.8, 0.2, 0.65]} />
+        <mesh position={[0, 10.98, 0]}>
+          <boxGeometry args={[31.6, 0.2, 0.65]} />
           <meshStandardMaterial color="#fde047" emissive="#f59e0b" emissiveIntensity={1.8} />
         </mesh>
-        {/* Translucent Holographic Laser Curtain */}
-        <mesh position={[0, 8.6, 0]}>
-          <planeGeometry args={[15.8, 1.6]} />
+        <mesh position={[0, 9.4, 0]}>
+          <planeGeometry args={[33.2, 1.6]} />
           <meshBasicMaterial color="#22d3ee" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
         </mesh>
-        {/* Ground Threshold Target Ring */}
         <mesh ref={gatePulseRef} position={[0, 0.14, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[6.8, 8.2, 36]} />
+          <ringGeometry args={[8.5, 10.2, 36]} />
           <meshBasicMaterial color="#22d3ee" transparent opacity={0.42} side={THREE.DoubleSide} depthWrite={false} />
         </mesh>
-        {/* Bobbing 3D Chevron Marker + Skyward Waypoint Filament */}
-        <group ref={chevronRef} position={[0, 11.8, 0]}>
+        <group ref={chevronRef} position={[0, 12.6, 0]}>
           <mesh rotation={[Math.PI, 0, 0]}>
             <coneGeometry args={[1.35, 2.2, 4]} />
             <meshStandardMaterial color="#fde047" emissive="#f59e0b" emissiveIntensity={2.2} metalness={0.7} roughness={0.15} />
@@ -793,42 +1217,27 @@ export function VegasStripDetails() {
         </mesh>
       </group>
 
-      {/* Glowing Stunt Launch Ramp on South Strip */}
-      <group position={[6.5, getTerrainHeight(6.5, 86) + 0.1, 86]} rotation={[-0.28, 0, 0]}>
+      {/* Curbside Shoulder Stunt Launch Ramp (Relocated to [14.5, rampY + 0.1, 115] so main 4 lanes are wide open) */}
+      <group position={[14.5, rampY + 0.1, 115]} rotation={[-0.28, 0, 0]}>
         <mesh receiveShadow castShadow>
-          <boxGeometry args={[6.5, 0.4, 9.5]} />
+          <boxGeometry args={[5.2, 0.4, 9.5]} />
           <meshStandardMaterial color="#1e293b" metalness={0.7} roughness={0.25} />
         </mesh>
         <mesh position={[0, 0.22, 0]}>
-          <boxGeometry args={[5.4, 0.06, 8.6]} />
+          <boxGeometry args={[4.4, 0.06, 8.6]} />
           <meshStandardMaterial color="#22d3ee" emissive="#06b6d4" emissiveIntensity={1.2} />
         </mesh>
       </group>
 
-      {/* Brushed Steel & Gold Azurea Coastline Archway */}
-      <group position={[0, archY, 62]}>
-        <mesh position={[-15, 7, 0]} castShadow>
-          <cylinderGeometry args={[0.55, 0.75, 14, 12]} />
-          <meshStandardMaterial color="#e2e8f0" metalness={0.8} roughness={0.25} />
+      {/* Central Park West Fountain Plaza (Relocated off-street to [-52, parkY + 0.12, 42]) */}
+      <group position={[-52, parkY + 0.12, 42]}>
+        {/* Lush Emerald Urban Park Lawn Pad & Limestone Perimeter Walk */}
+        <mesh position={[0, -0.06, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+          <planeGeometry args={[38, 38]} />
+          <meshStandardMaterial color="#15803d" roughness={0.88} />
         </mesh>
-        <mesh position={[15, 7, 0]} castShadow>
-          <cylinderGeometry args={[0.55, 0.75, 14, 12]} />
-          <meshStandardMaterial color="#e2e8f0" metalness={0.8} roughness={0.25} />
-        </mesh>
-        <mesh position={[0, 13.5, 0]} castShadow>
-          <boxGeometry args={[32, 2.6, 1.2]} />
-          <meshStandardMaterial color="#1e293b" metalness={0.75} roughness={0.22} />
-        </mesh>
-        <mesh position={[0, 13.5, 0]}>
-          <boxGeometry args={[28, 1.2, 1.35]} />
-          <meshStandardMaterial color="#f59e0b" emissive="#f59e0b" emissiveIntensity={0.95} />
-        </mesh>
-      </group>
-
-      {/* Bellagio-Style Limestone Fountain Plaza */}
-      <group position={[0, poolY + 0.12, -10]}>
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-          <ringGeometry args={[13.2, 15.8, 48]} />
+          <ringGeometry args={[13.2, 16.4, 48]} />
           <meshStandardMaterial
             map={limestoneTex}
             normalMap={limestoneNormal}
@@ -841,7 +1250,6 @@ export function VegasStripDetails() {
           <circleGeometry args={[13.2, 48]} />
           <meshPhysicalMaterial color="#0369a1" roughness={0.08} metalness={0.35} clearcoat={1.0} />
         </mesh>
-        {/* Warm Underwater Pool Glow */}
         <mesh position={[0, 0.04, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[4.4, 11.4, 48]} />
           <meshBasicMaterial color="#38bdf8" transparent opacity={0.22} depthWrite={false} />
@@ -872,7 +1280,14 @@ export function VegasStripDetails() {
             return (
               <mesh key={i} position={[Math.cos(ang) * r, 1.8, Math.sin(ang) * r]}>
                 <cylinderGeometry args={[0.11, 0.38, 3.0, 8]} />
-                <meshStandardMaterial color="#e0f2fe" emissive="#7dd3fc" emissiveIntensity={0.42} transparent opacity={0.55} roughness={0.1} />
+                <meshStandardMaterial
+                  color="#e0f2fe"
+                  emissive="#7dd3fc"
+                  emissiveIntensity={0.42}
+                  transparent
+                  opacity={0.55}
+                  roughness={0.1}
+                />
               </mesh>
             );
           })}
@@ -886,7 +1301,14 @@ export function VegasStripDetails() {
               <group key={i} position={[Math.cos(ang) * r, 0.4, Math.sin(ang) * r]} rotation={[0, -ang, 0]}>
                 <mesh rotation={[0, 0, 0.08]}>
                   <torusGeometry args={[2.7, 0.085, 6, 16, Math.PI * 0.88]} />
-                  <meshStandardMaterial color="#f0f9ff" emissive="#bae6fd" emissiveIntensity={0.5} transparent opacity={0.62} roughness={0.12} />
+                  <meshStandardMaterial
+                    color="#f0f9ff"
+                    emissive="#bae6fd"
+                    emissiveIntensity={0.5}
+                    transparent
+                    opacity={0.62}
+                    roughness={0.12}
+                  />
                 </mesh>
               </group>
             );
@@ -949,8 +1371,15 @@ export function InstancedFoliage() {
     useRef<THREE.InstancedMesh>(null),
     useRef<THREE.InstancedMesh>(null),
   ];
-  const buildingRef = useRef<THREE.InstancedMesh>(null);
-  const setbackRef = useRef<THREE.InstancedMesh>(null);
+
+  // 3 Distinct Textured Architectural Style InstancedMesh Groups (Main Shafts + Setbacks)
+  const glassTowerRef = useRef<THREE.InstancedMesh>(null);
+  const glassSetbackRef = useRef<THREE.InstancedMesh>(null);
+  const decoTowerRef = useRef<THREE.InstancedMesh>(null);
+  const decoSetbackRef = useRef<THREE.InstancedMesh>(null);
+  const brickTowerRef = useRef<THREE.InstancedMesh>(null);
+  const brickSetbackRef = useRef<THREE.InstancedMesh>(null);
+
   const crownRef = useRef<THREE.InstancedMesh>(null);
   const spireRef = useRef<THREE.InstancedMesh>(null);
   const helipadRef = useRef<THREE.InstancedMesh>(null);
@@ -959,9 +1388,12 @@ export function InstancedFoliage() {
   const boulderRef = useRef<THREE.InstancedMesh>(null);
 
   const { map: glassTex, roughnessMap: glassRough } = useMemo(() => createSkyscraperPBR(), []);
+  const { map: decoTex, roughnessMap: decoRough } = useMemo(() => getArtDecoLimestonePBR(), []);
+  const { map: brickTex, roughnessMap: brickRough } = useMemo(() => getBrickResidentialPBR(), []);
+  const { map: roofGravelTex, roughnessMap: roofGravelRough } = useMemo(() => getRoofGravelHVACPBR(), []);
   const { map: barkMap, normalMap: barkNormal } = useMemo(() => createBarkPBR(), []);
 
-  // Organic fractured coastal boulder geometry (single shared geometry, 1 draw call)
+  // Organic fractured coastal boulder geometry
   const boulderGeo = useMemo(() => {
     const geo = new THREE.DodecahedronGeometry(1, 1);
     const pos = geo.attributes.position;
@@ -986,7 +1418,6 @@ export function InstancedFoliage() {
     shape.quadraticCurveTo(-0.42, 1.6, 0, 0);
     const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.06, bevelEnabled: false, curveSegments: 8 });
     geo.rotateX(Math.PI / 2);
-    // Arch downward gracefully toward tip
     const pos = geo.attributes.position;
     for (let i = 0; i < pos.count; i++) {
       const z = pos.getZ(i);
@@ -998,9 +1429,15 @@ export function InstancedFoliage() {
 
   const {
     palmTransforms,
-    buildingTransforms,
-    buildingColors,
-    setbackTransforms,
+    glassShaftMats,
+    glassShaftColors,
+    glassSetbackMats,
+    decoShaftMats,
+    decoShaftColors,
+    decoSetbackMats,
+    brickShaftMats,
+    brickShaftColors,
+    brickSetbackMats,
     crownTransforms,
     crownColors,
     spireTransforms,
@@ -1019,8 +1456,15 @@ export function InstancedFoliage() {
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = getTerrainHeight(x, z);
-      if (y > 0.7 && y < 8.5 && Math.abs(x) > 32 && !(x > -215 && x < -40 && z > 130 && z < 180)) {
-        const s = 0.9 + ((i % 5) * 0.14);
+      const onCrossRoad = Math.abs(z + 120) < 18 || Math.abs(z) < 20 || Math.abs(z - 80) < 18;
+      if (
+        y > 0.7 &&
+        y < 8.5 &&
+        Math.abs(x) > 32 &&
+        !onCrossRoad &&
+        !(x > -215 && x < -40 && z > 130 && z < 180)
+      ) {
+        const s = 0.9 + (i % 5) * 0.14;
         dummy.position.set(x, y + 3.5 * s, z);
         dummy.rotation.set(0.05, (i * 0.7) % Math.PI, 0.03);
         dummy.scale.set(s, s, s);
@@ -1033,10 +1477,10 @@ export function InstancedFoliage() {
     const boulders: THREE.Matrix4[] = [];
     const bColors: THREE.Color[] = [];
     const rockPalette = [
-      new THREE.Color('#b6aea0'), // warm coastal limestone
-      new THREE.Color('#9e9689'), // weathered limestone
-      new THREE.Color('#565b63'), // dark coastal basalt
-      new THREE.Color('#6b7078'), // slate granite
+      new THREE.Color('#b6aea0'),
+      new THREE.Color('#9e9689'),
+      new THREE.Color('#565b63'),
+      new THREE.Color('#6b7078'),
     ];
     for (let i = 0; i < 360; i++) {
       const angle = (i * 137.508 * Math.PI) / 180;
@@ -1044,10 +1488,11 @@ export function InstancedFoliage() {
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = getTerrainHeight(x, z);
-      const nearStrip = Math.abs(x) < 32 && Math.abs(z) < 135;
+      const nearStrip = Math.abs(x) < 34;
+      const nearCross = Math.abs(z + 120) < 18 || Math.abs(z) < 20 || Math.abs(z - 80) < 18;
       const nearRunway = x > -218 && x < -38 && z > 128 && z < 182;
       const nearCanal = x > 60 && Math.abs(z + 95) < 30;
-      if (y >= 0.2 && y <= 2.5 && !nearStrip && !nearRunway && !nearCanal) {
+      if (y >= 0.2 && y <= 2.5 && !nearStrip && !nearCross && !nearRunway && !nearCanal) {
         const sx = 1.05 + ((i * 13) % 17) * 0.12;
         const sy = 0.55 + ((i * 7) % 11) * 0.08;
         const sz = 0.95 + ((i * 19) % 15) * 0.11;
@@ -1060,9 +1505,18 @@ export function InstancedFoliage() {
       }
     }
 
-    const bMats: THREE.Matrix4[] = [];
-    const bTints: THREE.Color[] = [];
-    const sMats: THREE.Matrix4[] = [];
+    const gShafts: THREE.Matrix4[] = [];
+    const gColors: THREE.Color[] = [];
+    const gSetbacks: THREE.Matrix4[] = [];
+
+    const dShafts: THREE.Matrix4[] = [];
+    const dColors: THREE.Color[] = [];
+    const dSetbacks: THREE.Matrix4[] = [];
+
+    const brShafts: THREE.Matrix4[] = [];
+    const brColors: THREE.Color[] = [];
+    const brSetbacks: THREE.Matrix4[] = [];
+
     const cMats: THREE.Matrix4[] = [];
     const cTints: THREE.Color[] = [];
     const spMats: THREE.Matrix4[] = [];
@@ -1070,54 +1524,70 @@ export function InstancedFoliage() {
     const canMats: THREE.Matrix4[] = [];
     const lobMats: THREE.Matrix4[] = [];
 
-    const towerPalette = [
-      new THREE.Color('#94a3b8'), // architectural slate glass
+    const glassPalette = [
+      new THREE.Color('#94a3b8'), // sapphire-slate glass
       new THREE.Color('#cbd5e1'), // silver architectural glass
-      new THREE.Color('#d6d3cd'), // limestone-clad modern
-      new THREE.Color('#a8a29e'), // warm titanium travertine
-      new THREE.Color('#64748b'), // deep sapphire-slate curtain wall
+      new THREE.Color('#7dd3fc'), // sky-reflective curtain wall
+      new THREE.Color('#e2e8f0'), // titanium mirror glass
+    ];
+    const decoPalette = [
+      new THREE.Color('#f5f0e6'), // warm cream limestone
+      new THREE.Color('#e7dfd3'), // classic carved travertine
+      new THREE.Color('#d6cfc2'), // sandstone civic buff
+    ];
+    const brickPalette = [
+      new THREE.Color('#e2b8a8'), // warm terracotta tint
+      new THREE.Color('#d4a392'), // classic red-brick brownstone
+      new THREE.Color('#c89d8c'), // russet urban masonry
     ];
     const crownPalette = [
-      new THREE.Color('#334155'), // obsidian steel
-      new THREE.Color('#475569'), // brushed titanium
-      new THREE.Color('#78716c'), // architectural dark bronze
+      new THREE.Color('#cbd5e1'),
+      new THREE.Color('#94a3b8'),
+      new THREE.Color('#d6d3cd'),
     ];
 
-    for (let i = 0; i < 34; i++) {
-      const side = i % 2 === 0 ? -1 : 1;
-      const x = side * (40 + (i % 3) * 18);
-      const z = -105 + Math.floor(i / 2) * 13;
-      const y = getTerrainHeight(x, z);
-      const w = 12 + (i % 4) * 2.2;
-      const d = 12 + ((i + 1) % 3) * 2.2;
-      const h = 20 + ((i * 17) % 42);
+    GENERATED_CITY_BUILDINGS.forEach((b, i) => {
+      const { x, y, z, w, d, h, style } = b;
 
       // Main tower shaft
       dummy.position.set(x, y + h / 2, z);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.set(w, h, d);
       dummy.updateMatrix();
-      bMats.push(dummy.matrix.clone());
-      bTints.push(towerPalette[i % towerPalette.length]);
+      const shaftMat = dummy.matrix.clone();
 
-      // Art Deco stepped setback tier
-      const sbH = Math.max(4.5, h * 0.18);
+      // Stepped setback tier
+      const sbH = Math.max(3.5, h * 0.17);
       dummy.position.set(x, y + h + sbH / 2, z);
-      dummy.scale.set(w * 0.74, sbH, d * 0.74);
+      dummy.scale.set(w * 0.76, sbH, d * 0.76);
       dummy.updateMatrix();
-      sMats.push(dummy.matrix.clone());
+      const setbackMat = dummy.matrix.clone();
 
-      // Art Deco upper crown cap
-      const crH = 3.2 + (i % 3) * 0.9;
+      if (style === 0) {
+        gShafts.push(shaftMat);
+        gColors.push(glassPalette[i % glassPalette.length]);
+        gSetbacks.push(setbackMat);
+      } else if (style === 1) {
+        dShafts.push(shaftMat);
+        dColors.push(decoPalette[i % decoPalette.length]);
+        dSetbacks.push(setbackMat);
+      } else {
+        brShafts.push(shaftMat);
+        brColors.push(brickPalette[i % brickPalette.length]);
+        brSetbacks.push(setbackMat);
+      }
+
+      // Rooftop Gravel & Mechanical HVAC Crown Slab
+      const crH = 2.4 + (i % 3) * 0.7;
       dummy.position.set(x, y + h + sbH + crH / 2, z);
-      dummy.scale.set(w * 0.46, crH, d * 0.46);
+      dummy.scale.set(w * 0.56, crH, d * 0.56);
       dummy.updateMatrix();
       cMats.push(dummy.matrix.clone());
       cTints.push(crownPalette[i % crownPalette.length]);
 
-      // Alternating rooftop spire or helipad
+      // Rooftop spire (for skyscrapers/civic towers) or helipad
       const roofY = y + h + sbH + crH;
-      if (i % 2 === 0) {
+      if (style === 0 || (style === 1 && i % 2 === 0)) {
         const spH = 7.5 + (i % 4) * 2.2;
         dummy.position.set(x, roofY + spH / 2, z);
         dummy.scale.set(1, spH, 1);
@@ -1130,10 +1600,10 @@ export function InstancedFoliage() {
         hpMats.push(dummy.matrix.clone());
       }
 
-      // Ground-floor cantilevered resort canopy & warm lobby glow facing the Strip
-      const faceDir = -side;
-      dummy.position.set(x + faceDir * (w / 2 + 1.6), y + 4.1, z);
-      dummy.scale.set(3.4, 0.52, d * 0.68);
+      // Ground-floor cantilevered entrance canopy & warm storefront lobby glow facing toward Grand Central Ave
+      const faceDir = x < 0 ? 1 : -1;
+      dummy.position.set(x + faceDir * (w / 2 + 1.5), y + 4.1, z);
+      dummy.scale.set(3.2, 0.52, d * 0.68);
       dummy.updateMatrix();
       canMats.push(dummy.matrix.clone());
 
@@ -1141,13 +1611,19 @@ export function InstancedFoliage() {
       dummy.scale.set(0.35, 3.8, d * 0.56);
       dummy.updateMatrix();
       lobMats.push(dummy.matrix.clone());
-    }
+    });
 
     return {
       palmTransforms: palms,
-      buildingTransforms: bMats,
-      buildingColors: bTints,
-      setbackTransforms: sMats,
+      glassShaftMats: gShafts,
+      glassShaftColors: gColors,
+      glassSetbackMats: gSetbacks,
+      decoShaftMats: dShafts,
+      decoShaftColors: dColors,
+      decoSetbackMats: dSetbacks,
+      brickShaftMats: brShafts,
+      brickShaftColors: brColors,
+      brickSetbackMats: brSetbacks,
       crownTransforms: cMats,
       crownColors: cTints,
       spireTransforms: spMats,
@@ -1183,24 +1659,56 @@ export function InstancedFoliage() {
         if (fRef.current) fRef.current.instanceMatrix.needsUpdate = true;
       });
     }
-    if (buildingRef.current && setbackRef.current && crownRef.current && canopyRef.current && lobbyGlowRef.current) {
-      buildingTransforms.forEach((mat, i) => {
-        buildingRef.current!.setMatrixAt(i, mat);
-        buildingRef.current!.setColorAt(i, buildingColors[i]);
-        setbackRef.current!.setMatrixAt(i, setbackTransforms[i]);
-        crownRef.current!.setMatrixAt(i, crownTransforms[i]);
+
+    // Populate Tier 1: Glass Curtain-Wall Financial Skyscrapers
+    if (glassTowerRef.current && glassSetbackRef.current) {
+      glassShaftMats.forEach((mat, i) => {
+        glassTowerRef.current!.setMatrixAt(i, mat);
+        glassTowerRef.current!.setColorAt(i, glassShaftColors[i]);
+        glassSetbackRef.current!.setMatrixAt(i, glassSetbackMats[i]);
+      });
+      glassTowerRef.current.instanceMatrix.needsUpdate = true;
+      if (glassTowerRef.current.instanceColor) glassTowerRef.current.instanceColor.needsUpdate = true;
+      glassSetbackRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // Populate Tier 2: Art Deco Limestone & Travertine Civic Towers
+    if (decoTowerRef.current && decoSetbackRef.current) {
+      decoShaftMats.forEach((mat, i) => {
+        decoTowerRef.current!.setMatrixAt(i, mat);
+        decoTowerRef.current!.setColorAt(i, decoShaftColors[i]);
+        decoSetbackRef.current!.setMatrixAt(i, decoSetbackMats[i]);
+      });
+      decoTowerRef.current.instanceMatrix.needsUpdate = true;
+      if (decoTowerRef.current.instanceColor) decoTowerRef.current.instanceColor.needsUpdate = true;
+      decoSetbackRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    // Populate Tier 3: Urban Red-Brick & Brownstone Mid-Rise Blocks
+    if (brickTowerRef.current && brickSetbackRef.current) {
+      brickShaftMats.forEach((mat, i) => {
+        brickTowerRef.current!.setMatrixAt(i, mat);
+        brickTowerRef.current!.setColorAt(i, brickShaftColors[i]);
+        brickSetbackRef.current!.setMatrixAt(i, brickSetbackMats[i]);
+      });
+      brickTowerRef.current.instanceMatrix.needsUpdate = true;
+      if (brickTowerRef.current.instanceColor) brickTowerRef.current.instanceColor.needsUpdate = true;
+      brickSetbackRef.current.instanceMatrix.needsUpdate = true;
+    }
+
+    if (crownRef.current && canopyRef.current && lobbyGlowRef.current) {
+      crownTransforms.forEach((mat, i) => {
+        crownRef.current!.setMatrixAt(i, mat);
         crownRef.current!.setColorAt(i, crownColors[i]);
         canopyRef.current!.setMatrixAt(i, canopyTransforms[i]);
         lobbyGlowRef.current!.setMatrixAt(i, lobbyTransforms[i]);
       });
-      buildingRef.current.instanceMatrix.needsUpdate = true;
-      if (buildingRef.current.instanceColor) buildingRef.current.instanceColor.needsUpdate = true;
-      setbackRef.current.instanceMatrix.needsUpdate = true;
       crownRef.current.instanceMatrix.needsUpdate = true;
       if (crownRef.current.instanceColor) crownRef.current.instanceColor.needsUpdate = true;
       canopyRef.current.instanceMatrix.needsUpdate = true;
       lobbyGlowRef.current.instanceMatrix.needsUpdate = true;
     }
+
     if (spireRef.current) {
       spireTransforms.forEach((mat, i) => spireRef.current!.setMatrixAt(i, mat));
       spireRef.current.instanceMatrix.needsUpdate = true;
@@ -1219,9 +1727,15 @@ export function InstancedFoliage() {
     }
   }, [
     palmTransforms,
-    buildingTransforms,
-    buildingColors,
-    setbackTransforms,
+    glassShaftMats,
+    glassShaftColors,
+    glassSetbackMats,
+    decoShaftMats,
+    decoShaftColors,
+    decoSetbackMats,
+    brickShaftMats,
+    brickShaftColors,
+    brickSetbackMats,
     crownTransforms,
     crownColors,
     spireTransforms,
@@ -1253,25 +1767,61 @@ export function InstancedFoliage() {
       <instancedMesh ref={boulderRef} args={[boulderGeo, undefined, boulderTransforms.length]} castShadow receiveShadow>
         <meshStandardMaterial roughness={0.88} metalness={0.04} />
       </instancedMesh>
-      <instancedMesh ref={buildingRef} args={[undefined, undefined, buildingTransforms.length]} castShadow receiveShadow>
+
+      {/* Style 1: Glass Curtain-Wall Financial Skyscrapers */}
+      <instancedMesh ref={glassTowerRef} args={[undefined, undefined, glassShaftMats.length]} castShadow receiveShadow>
         <boxGeometry args={[1, 1, 1]} />
-        <meshPhysicalMaterial map={glassTex} roughnessMap={glassRough} metalness={0.45} roughness={0.22} clearcoat={0.8} />
+        <meshPhysicalMaterial map={glassTex} roughnessMap={glassRough} metalness={0.48} roughness={0.2} clearcoat={0.85} />
       </instancedMesh>
-      <instancedMesh ref={setbackRef} args={[undefined, undefined, setbackTransforms.length]} castShadow receiveShadow>
+      <instancedMesh ref={glassSetbackRef} args={[undefined, undefined, glassSetbackMats.length]} castShadow receiveShadow>
         <boxGeometry args={[1, 1, 1]} />
-        <meshPhysicalMaterial map={glassTex} roughnessMap={glassRough} color="#e2e8f0" metalness={0.48} roughness={0.24} clearcoat={0.75} />
+        <meshPhysicalMaterial map={glassTex} roughnessMap={glassRough} color="#e2e8f0" metalness={0.5} roughness={0.22} clearcoat={0.8} />
       </instancedMesh>
-      <instancedMesh ref={crownRef} args={[undefined, undefined, crownTransforms.length]} castShadow>
+
+      {/* Style 2: Art Deco Limestone & Travertine Civic Towers */}
+      <instancedMesh ref={decoTowerRef} args={[undefined, undefined, decoShaftMats.length]} castShadow receiveShadow>
         <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial metalness={0.72} roughness={0.22} />
+        <meshStandardMaterial map={decoTex} roughnessMap={decoRough} metalness={0.18} roughness={0.58} />
       </instancedMesh>
+      <instancedMesh ref={decoSetbackRef} args={[undefined, undefined, decoSetbackMats.length]} castShadow receiveShadow>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={decoTex} roughnessMap={decoRough} color="#e7dfd3" metalness={0.2} roughness={0.55} />
+      </instancedMesh>
+
+      {/* Style 3: Urban Red-Brick & Brownstone Mid-Rise City Blocks */}
+      <instancedMesh ref={brickTowerRef} args={[undefined, undefined, brickShaftMats.length]} castShadow receiveShadow>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={brickTex} roughnessMap={brickRough} metalness={0.12} roughness={0.72} />
+      </instancedMesh>
+      <instancedMesh ref={brickSetbackRef} args={[undefined, undefined, brickSetbackMats.length]} castShadow receiveShadow>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial map={brickTex} roughnessMap={brickRough} color="#d6cfc2" metalness={0.14} roughness={0.68} />
+      </instancedMesh>
+
+      {/* Textured Roof Gravel & HVAC Crown Slabs */}
+      <instancedMesh ref={crownRef} args={[undefined, undefined, crownTransforms.length]} castShadow receiveShadow>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial
+          map={roofGravelTex}
+          roughnessMap={roofGravelRough}
+          metalness={0.38}
+          roughness={0.64}
+        />
+      </instancedMesh>
+
       <instancedMesh ref={spireRef} args={[undefined, undefined, spireTransforms.length]}>
         <cylinderGeometry args={[0.08, 0.48, 1, 8]} />
         <meshStandardMaterial color="#f8fafc" metalness={0.85} roughness={0.18} />
       </instancedMesh>
       <instancedMesh ref={helipadRef} args={[undefined, undefined, helipadTransforms.length]}>
         <cylinderGeometry args={[1, 1, 1, 16]} />
-        <meshStandardMaterial color="#334155" metalness={0.45} roughness={0.55} />
+        <meshStandardMaterial
+          map={roofGravelTex}
+          roughnessMap={roofGravelRough}
+          color="#475569"
+          metalness={0.45}
+          roughness={0.55}
+        />
       </instancedMesh>
       <instancedMesh ref={canopyRef} args={[undefined, undefined, canopyTransforms.length]} castShadow>
         <boxGeometry args={[1, 1, 1]} />

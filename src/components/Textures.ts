@@ -453,3 +453,571 @@ export function createBarkPBR(): {
   const normalMap = createNormalMapFromCanvas(canvas, 3.0, 1, 3);
   return { map, normalMap };
 }
+
+/**
+ * 1. Art Deco Carved Limestone & Bronze Spandrel Office Facade PBR
+ */
+export function createArtDecoLimestonePBR(): {
+  map: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const w = 512;
+  const h = 1024;
+  const cColor = document.createElement('canvas');
+  cColor.width = w;
+  cColor.height = h;
+  const ctx = cColor.getContext('2d')!;
+
+  const cRough = document.createElement('canvas');
+  cRough.width = w;
+  cRough.height = h;
+  const rCtx = cRough.getContext('2d')!;
+
+  // Base carved Indiana limestone / Roman travertine ashlar blocks
+  ctx.fillStyle = '#e7dfd3';
+  ctx.fillRect(0, 0, w, h);
+  rCtx.fillStyle = 'rgb(185,185,185)';
+  rCtx.fillRect(0, 0, w, h);
+
+  const rand = makeSeededRand(212);
+  // Ashlar masonry stone courses
+  for (let y = 0; y < h; y += 32) {
+    for (let x = 0; x < w; x += 64) {
+      const shade = 218 + Math.floor(rand() * 22);
+      ctx.fillStyle = `rgb(${shade},${shade - 7},${shade - 18})`;
+      ctx.fillRect(x + 1, y + 1, 62, 30);
+    }
+  }
+
+  // Vertical Art Deco fluted limestone pilasters & recessed bronze spandrel bays
+  for (let col = 0; col < 8; col++) {
+    const bx = col * 64;
+    // Fluted limestone pilaster ribs
+    ctx.fillStyle = '#f5efe6';
+    ctx.fillRect(bx, 0, 14, h);
+    ctx.fillStyle = '#c8bca9';
+    ctx.fillRect(bx + 4, 0, 2, h);
+    ctx.fillRect(bx + 9, 0, 2, h);
+
+    for (let row = 0; row < 24; row++) {
+      const by = row * 42 + 6;
+      // Aged bronze Art Deco spandrel panel
+      ctx.fillStyle = '#45382b';
+      ctx.fillRect(bx + 15, by + 26, 46, 12);
+      ctx.strokeStyle = '#b48a4e';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(bx + 18, by + 28, 40, 8);
+
+      // Recessed mullioned office window
+      const lit = rand() > 0.62;
+      const winGrad = ctx.createLinearGradient(bx + 16, by, bx + 16, by + 24);
+      if (lit) {
+        winGrad.addColorStop(0, '#fef3c7');
+        winGrad.addColorStop(0.65, '#fde68a');
+        winGrad.addColorStop(1, '#d97706');
+      } else {
+        winGrad.addColorStop(0, '#334155');
+        winGrad.addColorStop(0.5, '#1e293b');
+        winGrad.addColorStop(1, '#0f172a');
+      }
+      ctx.fillStyle = winGrad;
+      ctx.fillRect(bx + 16, by, 44, 25);
+
+      // Glossy window roughness
+      rCtx.fillStyle = 'rgb(28,28,28)';
+      rCtx.fillRect(bx + 16, by, 44, 25);
+
+      // Crisp dark bronze window mullions
+      ctx.fillStyle = '#292524';
+      ctx.fillRect(bx + 37, by, 3, 25);
+      ctx.fillRect(bx + 16, by + 11, 44, 2);
+    }
+  }
+
+  const map = new THREE.CanvasTexture(cColor);
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.RepeatWrapping;
+  map.anisotropy = 4;
+  map.colorSpace = THREE.SRGBColorSpace;
+
+  const roughnessMap = new THREE.CanvasTexture(cRough);
+  roughnessMap.wrapS = THREE.RepeatWrapping;
+  roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.anisotropy = 4;
+
+  return { map, roughnessMap };
+}
+
+/**
+ * 2. Classic Urban Red/Terracotta & Brownstone Brick Residential PBR
+ */
+export function createBrickResidentialPBR(): {
+  map: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const w = 512;
+  const h = 512;
+  const cColor = document.createElement('canvas');
+  cColor.width = w;
+  cColor.height = h;
+  const ctx = cColor.getContext('2d')!;
+
+  const cRough = document.createElement('canvas');
+  cRough.width = w;
+  cRough.height = h;
+  const rCtx = cRough.getContext('2d')!;
+
+  // Warm mortar base
+  ctx.fillStyle = '#d6cfc4';
+  ctx.fillRect(0, 0, w, h);
+  rCtx.fillStyle = 'rgb(210,210,210)';
+  rCtx.fillRect(0, 0, w, h);
+
+  const rand = makeSeededRand(616);
+  // Running-bond terracotta/brownstone brickwork
+  const brickH = 8;
+  const brickW = 20;
+  for (let y = 0; y < h; y += brickH) {
+    const rowOffset = ((y / brickH) % 2) * (brickW / 2);
+    for (let x = -brickW; x < w + brickW; x += brickW) {
+      const r = 138 + Math.floor(rand() * 44);
+      const g = 56 + Math.floor(rand() * 26);
+      const b = 38 + Math.floor(rand() * 20);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x + rowOffset + 1, y + 1, brickW - 2, brickH - 2);
+    }
+  }
+
+  // Carved cream limestone cornice & belt courses
+  ctx.fillStyle = '#e7dfd3';
+  ctx.fillRect(0, 0, w, 16);
+  ctx.fillRect(0, 248, w, 10);
+  ctx.fillStyle = '#b8ad9e';
+  ctx.fillRect(0, 14, w, 4);
+
+  // Multi-pane apartment windows with cream stone lintels and sills
+  for (let row = 0; row < 5; row++) {
+    const wy = row * 98 + 26;
+    for (let col = 0; col < 6; col++) {
+      const wx = col * 84 + 18;
+      // Limestone window lintel & sill
+      ctx.fillStyle = '#ede6da';
+      ctx.fillRect(wx - 4, wy - 7, 54, 7);
+      ctx.fillRect(wx - 5, wy + 56, 56, 6);
+
+      // Recessed dark window frame
+      ctx.fillStyle = '#1c1917';
+      ctx.fillRect(wx, wy, 46, 56);
+
+      // Lit or dark apartment glass
+      const lit = rand() > 0.56;
+      ctx.fillStyle = lit ? (rand() > 0.4 ? '#fef3c7' : '#fde68a') : '#1e293b';
+      ctx.fillRect(wx + 3, wy + 3, 40, 50);
+
+      // Glossy window roughness
+      rCtx.fillStyle = 'rgb(26,26,26)';
+      rCtx.fillRect(wx + 3, wy + 3, 40, 50);
+
+      // White sash muntin bars
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(wx + 22, wy + 2, 2, 52);
+      ctx.fillRect(wx + 2, wy + 27, 42, 3);
+    }
+  }
+
+  const map = new THREE.CanvasTexture(cColor);
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.RepeatWrapping;
+  map.anisotropy = 4;
+  map.colorSpace = THREE.SRGBColorSpace;
+
+  const roughnessMap = new THREE.CanvasTexture(cRough);
+  roughnessMap.wrapS = THREE.RepeatWrapping;
+  roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.anisotropy = 4;
+
+  return { map, roughnessMap };
+}
+
+/**
+ * 3. Architectural Board-Formed Concrete & Brushed Anodized Steel PBR
+ */
+export function createModernConcreteSteelPBR(): {
+  map: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const w = 512;
+  const h = 512;
+  const cColor = document.createElement('canvas');
+  cColor.width = w;
+  cColor.height = h;
+  const ctx = cColor.getContext('2d')!;
+
+  const cRough = document.createElement('canvas');
+  cRough.width = w;
+  cRough.height = h;
+  const rCtx = cRough.getContext('2d')!;
+
+  ctx.fillStyle = '#cbd5e1';
+  ctx.fillRect(0, 0, w, h);
+  rCtx.fillStyle = 'rgb(160,160,160)';
+  rCtx.fillRect(0, 0, w, h);
+
+  const rand = makeSeededRand(707);
+  // Concrete architectural panels with expansion joints and tie-rod cone dimples
+  for (let py = 0; py < h; py += 64) {
+    for (let px = 0; px < w; px += 128) {
+      const shade = 192 + Math.floor(rand() * 24);
+      ctx.fillStyle = `rgb(${shade},${shade + 4},${shade + 10})`;
+      ctx.fillRect(px + 2, py + 2, 124, 60);
+
+      // Formwork tie-rod dimples
+      ctx.fillStyle = '#64748b';
+      [
+        [px + 18, py + 16],
+        [px + 110, py + 16],
+        [px + 18, py + 48],
+        [px + 110, py + 48],
+      ].forEach(([dx, dy]) => {
+        ctx.beginPath();
+        ctx.arc(dx, dy, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+  }
+
+  // Sleek horizontal ribbon windows with anodized steel mullions
+  for (let row = 0; row < 8; row++) {
+    const wy = row * 64 + 18;
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, wy, w, 28);
+    rCtx.fillStyle = 'rgb(20,20,20)';
+    rCtx.fillRect(0, wy, w, 28);
+
+    for (let col = 0; col < 16; col++) {
+      const wx = col * 32;
+      const isLit = rand() > 0.68;
+      ctx.fillStyle = isLit ? '#e0f2fe' : '#1e293b';
+      ctx.fillRect(wx + 2, wy + 3, 28, 22);
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(wx, wy, 2, 28);
+    }
+  }
+
+  const map = new THREE.CanvasTexture(cColor);
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.RepeatWrapping;
+  map.anisotropy = 4;
+  map.colorSpace = THREE.SRGBColorSpace;
+
+  const roughnessMap = new THREE.CanvasTexture(cRough);
+  roughnessMap.wrapS = THREE.RepeatWrapping;
+  roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.anisotropy = 4;
+
+  return { map, roughnessMap };
+}
+
+/**
+ * 4. City Rooftop Tar-and-Gravel Membrane, Skylight & Mechanical Louver Pad PBR
+ */
+export function createRoofGravelHVACPBR(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  // Dark weathered roofing bitumen membrane
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(0, 0, size, size);
+
+  const rand = makeSeededRand(808);
+  for (let i = 0; i < 18000; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const v = 42 + Math.floor(rand() * 52);
+    ctx.fillStyle = `rgb(${v},${v + 3},${v + 7})`;
+    ctx.fillRect(x, y, 2, 2);
+  }
+
+  // Perimeter parapet metal coping border
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 18;
+  ctx.strokeRect(9, 9, size - 18, size - 18);
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(18, 18, size - 36, size - 36);
+
+  // Rooftop mechanical louver grates & solar/skylight bays
+  for (let gx = 64; gx <= 360; gx += 148) {
+    for (let gy = 64; gy <= 360; gy += 148) {
+      ctx.fillStyle = '#475569';
+      ctx.fillRect(gx, gy, 88, 88);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(gx, gy, 88, 88);
+      // HVAC Louver slats
+      ctx.fillStyle = '#1e293b';
+      for (let s = 8; s < 80; s += 8) {
+        ctx.fillRect(gx + 8, gy + s, 72, 4);
+      }
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * 5. Urban Brushed Concrete Sidewalk & Plaza Paver Tiles PBR
+ */
+export function createSidewalkCobblePBR(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#d6d3d1';
+  ctx.fillRect(0, 0, size, size);
+
+  const rand = makeSeededRand(919);
+  const tile = 64;
+  for (let y = 0; y < size; y += tile) {
+    for (let x = 0; x < size; x += tile) {
+      const v = 204 + Math.floor(rand() * 22);
+      ctx.fillStyle = `rgb(${v},${v - 2},${v - 6})`;
+      ctx.fillRect(x + 2, y + 2, tile - 4, tile - 4);
+    }
+  }
+
+  // Fine granite mineral speckle
+  for (let i = 0; i < 12000; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const v = 160 + Math.floor(rand() * 75);
+    ctx.fillStyle = `rgba(${v},${v - 2},${v - 4},0.35)`;
+    ctx.fillRect(x, y, 2, 2);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(8, 8);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * 6. Dark Asphalt Intersection Pad with Continental Zebra Crosswalks
+ */
+export function createCrosswalkIntersectionPBR(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#1e222a';
+  ctx.fillRect(0, 0, size, size);
+
+  const rand = makeSeededRand(303);
+  for (let i = 0; i < 14000; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const v = 26 + Math.floor(rand() * 28);
+    ctx.fillStyle = `rgb(${v},${v + 2},${v + 5})`;
+    ctx.fillRect(x, y, 2, 2);
+  }
+
+  // Crisp white continental zebra stripes on all 4 approaches
+  ctx.fillStyle = '#f1f5f9';
+  for (let i = 56; i < size - 56; i += 28) {
+    // North & South crosswalks
+    ctx.fillRect(i, 14, 16, 42);
+    ctx.fillRect(i, size - 56, 16, 42);
+    // West & East crosswalks
+    ctx.fillRect(14, i, 42, 16);
+    ctx.fillRect(size - 56, i, 42, 16);
+  }
+
+  // Stop bars
+  ctx.fillRect(52, 62, size - 104, 5);
+  ctx.fillRect(52, size - 67, size - 104, 5);
+  ctx.fillRect(62, 52, 5, size - 104);
+  ctx.fillRect(size - 67, 52, 5, size - 104);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * 7. Riveted Structural Steel Truss & Gusset Plate PBR (for Golden Gate, Eiffel, Tokyo Tower)
+ */
+export function createSteelTrussPBR(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#b8bec8';
+  ctx.fillRect(0, 0, size, size);
+
+  const rand = makeSeededRand(414);
+  // Brushed metallic steel grain
+  for (let i = 0; i < 9000; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const v = 165 + Math.floor(rand() * 55);
+    ctx.fillStyle = `rgba(${v},${v},${v + 4},0.35)`;
+    ctx.fillRect(x, y, 6, 1);
+  }
+
+  // Cross-bracing structural steel gusset ribs
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 10;
+  for (let y = 0; y < size; y += 128) {
+    for (let x = 0; x < size; x += 128) {
+      ctx.strokeRect(x + 4, y + 4, 120, 120);
+      ctx.beginPath();
+      ctx.moveTo(x + 4, y + 4);
+      ctx.lineTo(x + 124, y + 124);
+      ctx.moveTo(x + 124, y + 4);
+      ctx.lineTo(x + 4, y + 124);
+      ctx.stroke();
+
+      // Rivet heads along gusset plates
+      ctx.fillStyle = '#e2e8f0';
+      for (let r = 16; r <= 112; r += 16) {
+        ctx.beginPath();
+        ctx.arc(x + r, y + 10, 2.5, 0, Math.PI * 2);
+        ctx.arc(x + r, y + 118, 2.5, 0, Math.PI * 2);
+        ctx.arc(x + 10, y + r, 2.5, 0, Math.PI * 2);
+        ctx.arc(x + 118, y + r, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 4);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/**
+ * 8. Glossy Chevron-Ribbed Swedish Ceramic Shell Tile PBR (for Sydney Opera House)
+ */
+export function createCeramicShellPBR(): {
+  map: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const size = 512;
+  const cColor = document.createElement('canvas');
+  cColor.width = size;
+  cColor.height = size;
+  const ctx = cColor.getContext('2d')!;
+
+  const cRough = document.createElement('canvas');
+  cRough.width = size;
+  cRough.height = size;
+  const rCtx = cRough.getContext('2d')!;
+
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(0, 0, size, size);
+  rCtx.fillStyle = 'rgb(24,24,24)';
+  rCtx.fillRect(0, 0, size, size);
+
+  const rand = makeSeededRand(515);
+  // Precast concrete rib radial lines & glossy white/cream ceramic chevron tiles
+  for (let x = 0; x < size; x += 32) {
+    ctx.fillStyle = '#cbd5e1';
+    ctx.fillRect(x, 0, 3, size);
+    rCtx.fillStyle = 'rgb(140,140,140)';
+    rCtx.fillRect(x, 0, 3, size);
+
+    for (let y = 0; y < size; y += 16) {
+      const cream = rand() > 0.45;
+      ctx.fillStyle = cream ? '#f8fafc' : '#f1f5f9';
+      ctx.fillRect(x + 4, y + 1, 26, 14);
+      // Subtle chevron diagonal tile seam
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + 4, y + 8);
+      ctx.lineTo(x + 17, y + 2);
+      ctx.lineTo(x + 30, y + 8);
+      ctx.stroke();
+    }
+  }
+
+  const map = new THREE.CanvasTexture(cColor);
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(3, 3);
+  map.anisotropy = 4;
+  map.colorSpace = THREE.SRGBColorSpace;
+
+  const roughnessMap = new THREE.CanvasTexture(cRough);
+  roughnessMap.wrapS = THREE.RepeatWrapping;
+  roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.set(3, 3);
+  roughnessMap.anisotropy = 4;
+
+  return { map, roughnessMap };
+}
+
+/**
+ * 9. Oxidized Verdigris Copper Sheet & Riveted Seam PBR (for Statue of Liberty)
+ */
+export function createCopperPatinaPBR(): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = '#2dd4bf';
+  ctx.fillRect(0, 0, size, size);
+
+  const rand = makeSeededRand(999);
+  for (let y = 0; y < size; y += 64) {
+    for (let x = 0; x < size; x += 64) {
+      const g = 175 + Math.floor(rand() * 38);
+      const b = 155 + Math.floor(rand() * 35);
+      ctx.fillStyle = `rgb(42,${g},${b})`;
+      ctx.fillRect(x + 1, y + 1, 62, 62);
+
+      // Subtle bronze/verdigris patina mottling
+      ctx.fillStyle = rand() > 0.5 ? 'rgba(13, 148, 136, 0.28)' : 'rgba(180, 130, 80, 0.14)';
+      ctx.fillRect(x + 6, y + 6, 50, 50);
+
+      // Riveted copper sheet seam border
+      ctx.strokeStyle = '#0f766e';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, 62, 62);
+    }
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 3);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}

@@ -4,7 +4,6 @@ import {
   Plane,
   Ship,
   Footprints,
-  Sparkles,
   Compass,
   Zap,
   Volume2,
@@ -22,6 +21,12 @@ import {
   Backpack,
   UserCheck,
   X,
+  LayoutGrid,
+  Globe,
+  Trophy,
+  Play,
+  CheckCircle2,
+  ChevronRight,
 } from 'lucide-react';
 import {
   CHARACTER_PRESETS,
@@ -40,6 +45,12 @@ interface Props {
   hud: GameHudSnapshot;
   onSelectMode: (m: VehicleMode) => void;
 }
+
+export type MetropolisGameMode =
+  | 'FREE_ROAM'
+  | 'BATTLE_ROYALE'
+  | 'GRAND_PRIX'
+  | 'LANDMARK_TOUR';
 
 const RADAR_SIZE = 136;
 const RADAR_CENTER = RADAR_SIZE / 2; // 68
@@ -99,44 +110,348 @@ const STUDIO_CAP_COLORS = [
   '#10b981',
 ];
 
-const QUICK_WARP_TARGETS: Array<{
-  id: string;
+// Step 1: 4 Metropolis Gameplay Experiences
+const GAMEPLAY_EXPERIENCES: Array<{
+  id: MetropolisGameMode;
+  title: string;
+  badge: string;
+  desc: string;
+  accent: string;
+}> = [
+  {
+    id: 'FREE_ROAM',
+    title: 'FREE ROAM METROPOLIS',
+    badge: 'OPEN WORLD SANDBOX',
+    desc: 'Unobstructed open-world city driving, flying, sailing & exploration across 12 world landmarks.',
+    accent: 'from-sky-500/25 to-cyan-500/15 border-sky-400/60 text-sky-200',
+  },
+  {
+    id: 'BATTLE_ROYALE',
+    title: 'BATTLE ROYALE SKY-DROP',
+    badge: '120M PARACHUTE COMBAT',
+    desc: 'Parachute from 120m into the city, open supply crates, and battle 8 armed AI bots inside the shrinking storm.',
+    accent: 'from-rose-500/25 to-amber-500/15 border-rose-400/60 text-rose-200',
+  },
+  {
+    id: 'GRAND_PRIX',
+    title: 'WORLD GRAND PRIX CIRCUIT',
+    badge: '8-GATE TIME TRIAL',
+    desc: 'High-speed checkpointed time-trial race across Grand Central Avenue, Golden Gate Bridge & Harbor Blvd.',
+    accent: 'from-amber-500/25 to-yellow-500/15 border-amber-400/60 text-amber-200',
+  },
+  {
+    id: 'LANDMARK_TOUR',
+    title: 'GLOBAL LANDMARK TOUR',
+    badge: '12 WORLD MONUMENTS',
+    desc: 'Guided sightseeing mode with instant teleportation to all 12 world monuments.',
+    accent: 'from-emerald-500/25 to-teal-500/15 border-emerald-400/60 text-emerald-200',
+  },
+];
+
+// Step 2: Fleet Model Specs for Direct Selection
+const CAR_FLEET_MENU = [
+  { idx: 0, label: 'Ferrari 458 Italia', codeName: 'FERRARI 458 ITALIA', spec: 'V8 Mid-Engine · 340 km/h' },
+  { idx: 1, label: 'GT3 Gymkhana Supercar', codeName: 'GT3 GYMKHANA SUPERCAR', spec: 'Track Aero · AWD Drift' },
+  { idx: 2, label: '80s Wedge Supercar', codeName: '80S WEDGE SUPERCAR', spec: 'Retro V12 · Pop-Up Styling' },
+  { idx: 3, label: '60s Classic Muscle', codeName: '60S CLASSIC MUSCLE', spec: 'Big-Block V8 · Street Torque' },
+  { idx: 4, label: 'Executive Stretch Limo', codeName: 'EXECUTIVE STRETCH LIMO', spec: 'Metropolis Presidential VIP' },
+];
+
+const BOAT_FLEET_MENU = [
+  { idx: 0, label: 'Cigarette Racing Powerboat', codeName: 'CIGARETTE RACING POWERBOAT', spec: 'Twin V8 Offshore Interceptor' },
+  { idx: 1, label: 'Oasis of Azurea Cruise Liner', codeName: 'OASIS OF AZUREA CRUISE LINER', spec: '7-Deck Mega-Cruise Ship' },
+  { idx: 2, label: 'Royal Sovereign Tall Ship', codeName: 'ROYAL SOVEREIGN TALL SHIP', spec: 'Full-Rigged 3-Mast Frigate' },
+  { idx: 3, label: 'Mediterranean Sloop Yacht', codeName: 'MEDITERRANEAN SLOOP YACHT', spec: 'Racing Keel Regatta Cruiser' },
+  { idx: 4, label: 'Aegean Motor Yacht', codeName: 'AEGEAN MOTOR YACHT', spec: 'Coastal Wooden Day-Cruiser' },
+  { idx: 5, label: 'Deep-Sea Explorer Submarine', codeName: 'DEEP-SEA EXPLORER SUBMARINE', spec: 'Stealth Hydro-Submersible' },
+];
+
+const PLANE_FLEET_MENU = [
+  { idx: 0, label: 'Gulfstream G700 Jet', codeName: 'GULFSTREAM G700 JET', spec: 'Mach 0.92 Executive Twin-Jet' },
+  { idx: 1, label: 'Bell VIP Helicopter', codeName: 'BELL VIP HELICOPTER', spec: 'VTOL Rooftop Helipad Rotorcraft' },
+  { idx: 2, label: 'Mustang Strike Fighter', codeName: 'MUSTANG STRIKE FIGHTER', spec: 'Aerobatic Tactical Fighter' },
+  { idx: 3, label: 'Twin Regional Turboprop', codeName: 'TWIN REGIONAL TURBOPROP', spec: 'STOL Commuter Airliner' },
+  { idx: 4, label: 'Boeing 737 Executive Liner', codeName: 'BOEING 737 EXECUTIVE LINER', spec: 'Transcontinental Commercial Jet' },
+  { idx: 5, label: 'Heavy Strategic Cargo Jet', codeName: 'HEAVY STRATEGIC CARGO JET', spec: '4-Engine Heavy Airlifter' },
+];
+
+const MENU_CHARACTER_PRESETS: Array<{
   label: string;
+  role: string;
+  presetIdx: number;
+  patch?: Partial<CharacterCustomization>;
+}> = [
+  {
+    label: 'Metropolis Executive',
+    role: 'Savile Row Suit · Aviators',
+    presetIdx: 0,
+    patch: { presetName: 'Metropolis Executive', topColor: '#1e293b', bottomColor: '#0f172a' },
+  },
+  {
+    label: 'Spec-Ops Operator',
+    role: 'Tactical Armor · Cyber Visor',
+    presetIdx: 5,
+    patch: { presetName: 'Spec-Ops Operator' },
+  },
+  {
+    label: 'Street Drift Champion',
+    role: 'Track Jacket · Pro Pack',
+    presetIdx: 1,
+    patch: { presetName: 'Street Drift Champion' },
+  },
+  {
+    label: 'Cyber Neon VIP',
+    role: 'Couture Streetwear · Visor',
+    presetIdx: 4,
+    patch: { presetName: 'Cyber Neon VIP', eyewear: 'CYBER_VISOR' },
+  },
+];
+
+// Step 3 & Top-Right Quick-Warp: All 12 Global Landmarks + Cruise Harbor + Airport (14 total)
+export interface LandmarkDestination {
+  id: string;
+  shortLabel: string;
+  fullTitle: string;
+  cityBadge: string;
   x: number;
   z: number;
   color: string;
   forceMode?: VehicleMode;
-}> = [
-  { id: 'sphere', label: 'Strip/Sphere', x: 0, z: -45, color: '#38bdf8' },
-  { id: 'luxor', label: 'Luxor', x: -115, z: 85, color: '#f59e0b' },
-  { id: 'eiffel', label: 'Eiffel', x: 95, z: 35, color: '#f43f5e' },
-  { id: 'liberty', label: 'Liberty', x: -155, z: -145, color: '#34d399' },
-  { id: 'venice', label: 'Venice', x: 135, z: -95, color: '#22d3ee' },
-  { id: 'harbor', label: 'Harbor/Cruise', x: 232, z: -95, color: '#a855f7', forceMode: 'BOAT' },
-  { id: 'airport', label: 'Airport', x: -125, z: 155, color: '#fbbf24' },
+  // Unobstructed avenue spawn coordinates so the camera has a crystal-clear view of the landmark
+  spawnCarX: number;
+  spawnCarZ: number;
+  spawnFootX: number;
+  spawnFootZ: number;
+}
+
+export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
+  {
+    id: 'empire',
+    shortLabel: 'NYC Empire',
+    fullTitle: 'NYC — Empire State Building',
+    cityBadge: 'NEW YORK',
+    x: -52,
+    z: -28,
+    color: '#38bdf8',
+    spawnCarX: -12,
+    spawnCarZ: -28,
+    spawnFootX: -16,
+    spawnFootZ: -24,
+  },
+  {
+    id: 'goldengate',
+    shortLabel: 'Golden Gate',
+    fullTitle: 'SF — Golden Gate Bridge',
+    cityBadge: 'SAN FRANCISCO',
+    x: 0,
+    z: -205,
+    color: '#f97316',
+    spawnCarX: 4,
+    spawnCarZ: -148,
+    spawnFootX: -4,
+    spawnFootZ: -144,
+  },
+  {
+    id: 'bigben',
+    shortLabel: 'Big Ben',
+    fullTitle: 'London — Big Ben Clock Tower',
+    cityBadge: 'LONDON',
+    x: -52,
+    z: -88,
+    color: '#fbbf24',
+    spawnCarX: -12,
+    spawnCarZ: -88,
+    spawnFootX: -16,
+    spawnFootZ: -84,
+  },
+  {
+    id: 'eiffel',
+    shortLabel: 'Eiffel Tower',
+    fullTitle: 'Paris — Eiffel Tower',
+    cityBadge: 'PARIS',
+    x: 95,
+    z: 35,
+    color: '#f43f5e',
+    spawnCarX: 54,
+    spawnCarZ: 35,
+    spawnFootX: 50,
+    spawnFootZ: 39,
+  },
+  {
+    id: 'burj',
+    shortLabel: 'Burj Khalifa',
+    fullTitle: 'Dubai — Burj Khalifa',
+    cityBadge: 'DUBAI',
+    x: 54,
+    z: -148,
+    color: '#22d3ee',
+    spawnCarX: 14,
+    spawnCarZ: -120,
+    spawnFootX: 10,
+    spawnFootZ: -116,
+  },
+  {
+    id: 'colosseum',
+    shortLabel: 'Colosseum',
+    fullTitle: 'Rome — The Colosseum',
+    cityBadge: 'ROME',
+    x: -105,
+    z: 45,
+    color: '#f59e0b',
+    spawnCarX: -82,
+    spawnCarZ: 80,
+    spawnFootX: -86,
+    spawnFootZ: 76,
+  },
+  {
+    id: 'sydney',
+    shortLabel: 'Sydney Opera',
+    fullTitle: 'Sydney — Opera House',
+    cityBadge: 'SYDNEY',
+    x: 148,
+    z: 108,
+    color: '#e2e8f0',
+    spawnCarX: 112,
+    spawnCarZ: 80,
+    spawnFootX: 116,
+    spawnFootZ: 84,
+  },
+  {
+    id: 'tokyo',
+    shortLabel: 'Tokyo Tower',
+    fullTitle: 'Tokyo — Tokyo Tower & Shibuya',
+    cityBadge: 'TOKYO',
+    x: 52,
+    z: -28,
+    color: '#ef4444',
+    spawnCarX: 12,
+    spawnCarZ: -28,
+    spawnFootX: 16,
+    spawnFootZ: -24,
+  },
+  {
+    id: 'liberty',
+    shortLabel: 'Lady Liberty',
+    fullTitle: 'NYC — Statue of Liberty',
+    cityBadge: 'NY HARBOR',
+    x: -158,
+    z: -145,
+    color: '#34d399',
+    spawnCarX: -116,
+    spawnCarZ: -120,
+    spawnFootX: -112,
+    spawnFootZ: -116,
+  },
+  {
+    id: 'redeemer',
+    shortLabel: 'Redeemer',
+    fullTitle: 'Rio — Christ the Redeemer',
+    cityBadge: 'RIO DE JANEIRO',
+    x: 58,
+    z: 148,
+    color: '#a855f7',
+    spawnCarX: 18,
+    spawnCarZ: 108,
+    spawnFootX: 14,
+    spawnFootZ: 104,
+  },
+  {
+    id: 'venice',
+    shortLabel: 'Venice Rialto',
+    fullTitle: 'Venice — Rialto Bridge & Canal',
+    cityBadge: 'VENICE',
+    x: 135,
+    z: -95,
+    color: '#06b6d4',
+    spawnCarX: 88,
+    spawnCarZ: -70,
+    spawnFootX: 94,
+    spawnFootZ: -72,
+  },
+  {
+    id: 'giza',
+    shortLabel: 'Giza Pyramid',
+    fullTitle: 'Cairo — Great Pyramid of Giza',
+    cityBadge: 'CAIRO / GIZA',
+    x: -118,
+    z: -28,
+    color: '#eab308',
+    spawnCarX: -76,
+    spawnCarZ: -4,
+    spawnFootX: -72,
+    spawnFootZ: 0,
+  },
+  {
+    id: 'harbor',
+    shortLabel: 'Cruise Harbor',
+    fullTitle: 'East Ocean — Mega-Cruise Harbor',
+    cityBadge: 'MARITIME PORT',
+    x: 234,
+    z: -95,
+    color: '#38bdf8',
+    forceMode: 'BOAT',
+    spawnCarX: 186,
+    spawnCarZ: -72,
+    spawnFootX: 192,
+    spawnFootZ: -74,
+  },
+  {
+    id: 'airport',
+    shortLabel: 'Intl Airport',
+    fullTitle: 'West Runway — International Airport',
+    cityBadge: 'AVIATION HUB',
+    x: -125,
+    z: 155,
+    color: '#fbbf24',
+    forceMode: 'PLANE',
+    spawnCarX: -138,
+    spawnCarZ: 145,
+    spawnFootX: -132,
+    spawnFootZ: 145,
+  },
 ];
 
 export function HUD({ hud, onSelectMode }: Props) {
   const [muted, setMuted] = useState(soundEngine.isMuted());
   const [, setUiTick] = useState(0);
+  const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('empire');
 
   useEffect(() => {
     const onSyncUi = () => setUiTick((t) => t + 1);
     window.addEventListener('toggle-customizer', onSyncUi);
     window.addEventListener('customizer-updated', onSyncUi);
+    window.addEventListener('toggle-start-menu', onSyncUi);
+    window.addEventListener('mode-switched', onSyncUi);
     return () => {
       window.removeEventListener('toggle-customizer', onSyncUi);
       window.removeEventListener('customizer-updated', onSyncUi);
+      window.removeEventListener('toggle-start-menu', onSyncUi);
+      window.removeEventListener('mode-switched', onSyncUi);
     };
   }, []);
+
+  const s = simState as any;
+  const isStartMenuOpen = Boolean(s.startMenuOpen);
+  const activeGameMode: MetropolisGameMode = (s.gameMode as MetropolisGameMode) || 'FREE_ROAM';
 
   const handleToggleMute = () => {
     soundEngine.toggleMute();
     setMuted(soundEngine.isMuted());
   };
 
+  const handleToggleStartMenu = (forceState?: boolean) => {
+    const next = typeof forceState === 'boolean' ? forceState : !Boolean(s.startMenuOpen);
+    s.startMenuOpen = next;
+    if (next) {
+      simState.customizerOpen = false;
+    }
+    window.dispatchEvent(new CustomEvent('toggle-start-menu'));
+    setUiTick((t) => t + 1);
+  };
+
   const handleToggleCustomizer = () => {
     const prev = Boolean(simState.customizerOpen);
+    s.startMenuOpen = false;
     window.dispatchEvent(new CustomEvent('toggle-customizer'));
     if (Boolean(simState.customizerOpen) === prev) {
       simState.customizerOpen = !prev;
@@ -151,14 +466,51 @@ export function HUD({ hud, onSelectMode }: Props) {
     setUiTick((t) => t + 1);
   };
 
-  const applyOutfitPreset = (preset: CharacterCustomization) => {
-    Object.assign(simState.customization, preset);
+  const applyOutfitPreset = (preset: CharacterCustomization, extraPatch?: Partial<CharacterCustomization>) => {
+    Object.assign(simState.customization, preset, extraPatch || {});
     simState.customizationVersion = (simState.customizationVersion || 0) + 1;
     window.dispatchEvent(new CustomEvent('customizer-updated'));
     setUiTick((t) => t + 1);
   };
 
-  const warpToLocation = (x: number, z: number, forceMode?: VehicleMode) => {
+  const selectSpecificCar = (idx: number) => {
+    onSelectMode('CAR');
+    s.activeCarIdx = idx;
+    s.activeCarName = CAR_FLEET_MENU[idx]?.codeName ?? 'FERRARI 458 ITALIA';
+    simState.stuntText = `SUPERCAR READY: ${s.activeCarName}`;
+    simState.stuntTimer = 2.5;
+    setUiTick((t) => t + 1);
+  };
+
+  const selectSpecificBoat = (idx: number) => {
+    onSelectMode('BOAT');
+    s.activeBoatIdx = idx;
+    s.activeBoatName = BOAT_FLEET_MENU[idx]?.codeName ?? 'CIGARETTE RACING POWERBOAT';
+    // Ensure boat is moored in deep water (Cruise Harbor for Cruise Ship, or Venetian Canal/Harbor)
+    if (idx === 1) {
+      simState.boatPos.set(234, 0.45, -95);
+      simState.boatYaw = -1.15;
+      simState.boatSpeed = 0;
+    } else if (getTerrainHeight(simState.boatPos.x, simState.boatPos.z) > 0.1) {
+      simState.boatPos.set(145, 0.5, -95);
+      simState.boatYaw = -Math.PI / 2;
+      simState.boatSpeed = 0;
+    }
+    simState.stuntText = `MARITIME VESSEL READY: ${s.activeBoatName}`;
+    simState.stuntTimer = 2.5;
+    setUiTick((t) => t + 1);
+  };
+
+  const selectSpecificPlane = (idx: number) => {
+    onSelectMode('PLANE');
+    s.activePlaneIdx = idx;
+    s.activePlaneName = PLANE_FLEET_MENU[idx]?.codeName ?? 'GULFSTREAM G700 JET';
+    simState.stuntText = `AIRCRAFT READY: ${s.activePlaneName}`;
+    simState.stuntTimer = 2.5;
+    setUiTick((t) => t + 1);
+  };
+
+  const warpToLocation = (x: number, z: number, forceMode?: VehicleMode, destId?: string) => {
     simState.parachuting = false;
     simState.gliding = false;
 
@@ -166,79 +518,190 @@ export function HUD({ hud, onSelectMode }: Props) {
       onSelectMode(forceMode);
     }
 
-    const isSphere = Math.abs(x) < 5 && Math.abs(z + 45) < 5;
-    const isLuxor = x < -50 && z > 0 && z < 120;
-    const isAirport = z > 130;
-    const isHarbor = x > 195 && Math.abs(z + 95) < 25;
+    // Match against our 14 curated global landmark avenue viewpoints
+    const matched =
+      WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === destId) ||
+      WORLD_LANDMARK_DESTINATIONS.find((d) => Math.hypot(d.x - x, d.z - z) < 18);
 
-    if (isSphere) {
-      const footY = Math.max(getTerrainHeight(-2.5, 25), 0) + 0.08;
-      simState.playerPos.set(-2.5, footY, 25);
-      simState.playerYaw = Math.PI;
-      simState.playerVel.set(0, 0, 0);
+    if (matched) {
+      setSelectedLandmarkId(matched.id);
+    }
 
-      const carY = Math.max(getTerrainHeight(12.5, 32), 0) + 0.1;
-      simState.carPos.set(12.5, carY, 32);
-      simState.carYaw = Math.PI;
-      simState.carSpeed = 0;
-    } else if (isLuxor) {
-      const footY = Math.max(getTerrainHeight(-92, 48), 0) + 0.08;
-      simState.playerPos.set(-92, footY, 48);
-      simState.playerYaw = -0.35;
-      simState.playerVel.set(0, 0, 0);
-
-      const carY = Math.max(getTerrainHeight(-104, 54), 0) + 0.1;
-      simState.carPos.set(-104, carY, 54);
-      simState.carYaw = -0.25;
-      simState.carSpeed = 0;
-    } else if (isAirport) {
-      const footY = Math.max(getTerrainHeight(-125, 155), 0) + 0.08;
-      simState.playerPos.set(-125, footY, 155);
-      simState.playerYaw = Math.PI / 2;
-      simState.playerVel.set(0, 0, 0);
-
-      const carY = Math.max(getTerrainHeight(-138, 155), 0) + 0.1;
-      simState.carPos.set(-138, carY, 155);
-      simState.carYaw = Math.PI / 2;
-      simState.carSpeed = 0;
-    } else if (isHarbor) {
+    if (matched?.id === 'harbor' || (x > 195 && Math.abs(z + 95) < 25)) {
       simState.boatPos.set(234, 0.45, -95);
       simState.boatYaw = -1.15;
       simState.boatSpeed = 0;
-      simState.playerPos.set(192, Math.max(getTerrainHeight(192, -74), 0.5) + 0.08, -74);
-    } else {
-      const destZ = z + 44;
-      const footY = Math.max(getTerrainHeight(x - 4.0, destZ), 0) + 0.08;
-      simState.playerPos.set(x - 4.0, footY, destZ);
-      simState.playerYaw = Math.PI;
+
+      const footY = Math.max(getTerrainHeight(192, -74), 0.5) + 0.08;
+      simState.playerPos.set(192, footY, -74);
+      simState.playerYaw = Math.atan2(234 - 192, -95 - -74);
       simState.playerVel.set(0, 0, 0);
 
-      const carY = Math.max(getTerrainHeight(x + 8.0, destZ + 4), 0) + 0.1;
-      simState.carPos.set(x + 8.0, carY, destZ + 4);
-      simState.carYaw = Math.PI;
+      const carY = Math.max(getTerrainHeight(186, -72), 0.5) + 0.1;
+      simState.carPos.set(186, carY, -72);
+      simState.carYaw = Math.atan2(234 - 186, -95 - -72);
+      simState.carSpeed = 0;
+    } else if (matched?.id === 'airport' || (z > 130 && x < -45)) {
+      const footY = Math.max(getTerrainHeight(-132, 145), 0) + 0.08;
+      simState.playerPos.set(-132, footY, 145);
+      simState.playerYaw = Math.PI / 2;
+      simState.playerVel.set(0, 0, 0);
+
+      const carY = Math.max(getTerrainHeight(-138, 145), 0) + 0.1;
+      simState.carPos.set(-138, carY, 145);
+      simState.carYaw = Math.PI / 2;
+      simState.carSpeed = 0;
+
+      simState.planePos.set(-125, 22, 155);
+      simState.planeYaw = Math.PI / 2;
+      simState.planePitch = -0.02;
+      simState.planeRoll = 0;
+      simState.planeSpeed = 38;
+      setUiTick((t) => t + 1);
+      return;
+    } else if (matched) {
+      const carX = matched.spawnCarX;
+      const carZ = matched.spawnCarZ;
+      const footX = matched.spawnFootX;
+      const footZ = matched.spawnFootZ;
+
+      const carYaw = Math.atan2(matched.x - carX, matched.z - carZ);
+      const footYaw = Math.atan2(matched.x - footX, matched.z - footZ);
+
+      const footY = Math.max(getTerrainHeight(footX, footZ), 0) + 0.08;
+      simState.playerPos.set(footX, footY, footZ);
+      simState.playerYaw = footYaw;
+      simState.playerVel.set(0, 0, 0);
+
+      const carY = Math.max(getTerrainHeight(carX, carZ), 0) + 0.1;
+      simState.carPos.set(carX, carY, carZ);
+      simState.carYaw = carYaw;
+      simState.carSpeed = 0;
+
+      if (matched.id === 'venice') {
+        simState.boatPos.set(104, 0.5, -95);
+        simState.boatYaw = Math.PI / 2;
+        simState.boatSpeed = 0;
+      }
+    } else {
+      // Fallback for arbitrary radar click: place on open avenue side facing target
+      const destZ = z + 38;
+      const yawToTarget = Math.atan2(x - (x - 4.0), z - destZ);
+      const footY = Math.max(getTerrainHeight(x - 4.0, destZ), 0) + 0.08;
+      simState.playerPos.set(x - 4.0, footY, destZ);
+      simState.playerYaw = yawToTarget;
+      simState.playerVel.set(0, 0, 0);
+
+      const carY = Math.max(getTerrainHeight(x + 6.0, destZ + 4), 0) + 0.1;
+      simState.carPos.set(x + 6.0, carY, destZ + 4);
+      simState.carYaw = Math.atan2(x - (x + 6.0), z - (destZ + 4));
       simState.carSpeed = 0;
     }
 
-    if (isSphere) {
-      simState.planePos.set(0, 48, 56);
-    } else {
-      simState.planePos.set(x, Math.max(getTerrainHeight(x, z), 0) + 36, z + 95);
-    }
-    simState.planeYaw = Math.PI;
-    simState.planePitch = -0.05;
+    // Position aircraft in scenic approach facing the landmark
+    const planeDist = 85;
+    const approachX = x * 0.65;
+    const approachZ = z + planeDist;
+    simState.planePos.set(
+      approachX,
+      Math.max(getTerrainHeight(x, z), 0) + 42,
+      approachZ
+    );
+    simState.planeYaw = Math.atan2(x - approachX, z - approachZ);
+    simState.planePitch = -0.04;
     simState.planeRoll = 0;
-    simState.planeSpeed = 36;
+    simState.planeSpeed = 38;
 
-    if (simState.mode === 'BOAT' && !isHarbor) {
-      if (Math.abs(z + 95) < 5) {
-        simState.boatPos.set(x + 48, 0.5, z);
-        simState.boatYaw = -Math.PI / 2;
+    if (simState.mode === 'BOAT' && matched?.id !== 'harbor' && matched?.id !== 'venice') {
+      // Keep boat in nearest navigable water channel
+      if (Math.abs(z + 95) < 25 && x > 75) {
+        simState.boatPos.set(Math.max(95, x - 28), 0.5, -95);
+        simState.boatYaw = Math.PI / 2;
       } else {
-        simState.boatPos.set(x, 0.5, z + 38);
-        simState.boatYaw = Math.PI;
+        const angle = Math.atan2(z, x);
+        const waterR = 238;
+        const bx = Math.cos(angle) * waterR;
+        const bz = Math.sin(angle) * waterR;
+        simState.boatPos.set(bx, 0.5, bz);
+        simState.boatYaw = Math.atan2(x - bx, z - bz);
       }
       simState.boatSpeed = 0;
     }
+
+    if (matched) {
+      simState.stuntText = `WARPED TO ${matched.fullTitle.toUpperCase()}`;
+      simState.stuntTimer = 2.8;
+    }
+    setUiTick((t) => t + 1);
+  };
+
+  const handleSelectGameMode = (modeId: MetropolisGameMode) => {
+    s.gameMode = modeId;
+    if (modeId === 'GRAND_PRIX') {
+      onSelectMode('CAR');
+      simState.activeCheckpoint = 0;
+      simState.lapTime = 0;
+      const startY = Math.max(getTerrainHeight(0, 12), 0) + 0.1;
+      simState.carPos.set(0, startY, 12);
+      simState.carYaw = Math.PI;
+      simState.carSpeed = 0;
+      simState.stuntText = 'WORLD GRAND PRIX CIRCUIT — RACE THROUGH ALL 8 CHECKPOINTS!';
+      simState.stuntTimer = 3.5;
+    } else if (modeId === 'BATTLE_ROYALE') {
+      simState.brActive = true;
+      simState.stuntText = 'BATTLE ROYALE READY — CLICK DEPLOY FOR 120M SKY-DROP!';
+      simState.stuntTimer = 3.2;
+    } else if (modeId === 'LANDMARK_TOUR') {
+      const target =
+        WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === selectedLandmarkId) ||
+        WORLD_LANDMARK_DESTINATIONS[0];
+      warpToLocation(target.x, target.z, undefined, target.id);
+      simState.stuntText = `GLOBAL LANDMARK TOUR — ${target.fullTitle.toUpperCase()}`;
+      simState.stuntTimer = 3.2;
+    } else {
+      simState.stuntText = 'FREE ROAM METROPOLIS — UNOBSTRUCTED CITY EXPLORATION';
+      simState.stuntTimer = 3.0;
+    }
+    setUiTick((t) => t + 1);
+  };
+
+  const handleDeployToMetropolis = () => {
+    s.startMenuOpen = false;
+    simState.customizerOpen = false;
+
+    const chosenDest =
+      WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === selectedLandmarkId) ||
+      WORLD_LANDMARK_DESTINATIONS[0];
+
+    if (activeGameMode === 'BATTLE_ROYALE') {
+      window.dispatchEvent(new CustomEvent('br-drop'));
+      simState.playerPos.set(chosenDest.spawnFootX, 118, chosenDest.spawnFootZ);
+      simState.playerYaw = Math.atan2(
+        chosenDest.x - chosenDest.spawnFootX,
+        chosenDest.z - chosenDest.spawnFootZ
+      );
+      simState.stuntText = `SKY-DROP OVER ${chosenDest.fullTitle.toUpperCase()}!`;
+      simState.stuntTimer = 4.0;
+    } else if (activeGameMode === 'GRAND_PRIX') {
+      onSelectMode('CAR');
+      simState.activeCheckpoint = 0;
+      simState.lapTime = 0;
+      const startY = Math.max(getTerrainHeight(0, 12), 0) + 0.1;
+      simState.carPos.set(0, startY, 12);
+      simState.carYaw = Math.PI;
+      simState.stuntText = 'WORLD GRAND PRIX CIRCUIT — GO! HIT ALL 8 CHECKPOINTS!';
+      simState.stuntTimer = 3.8;
+    }
+
+    window.dispatchEvent(new CustomEvent('toggle-start-menu'));
+    setUiTick((t) => t + 1);
+  };
+
+  const cycleNextLandmarkTour = () => {
+    const idx = WORLD_LANDMARK_DESTINATIONS.findIndex((d) => d.id === selectedLandmarkId);
+    const nextDest =
+      WORLD_LANDMARK_DESTINATIONS[(idx + 1) % WORLD_LANDMARK_DESTINATIONS.length];
+    warpToLocation(nextDest.x, nextDest.z, nextDest.forceMode, nextDest.id);
   };
 
   // Resolve active player / vehicle position & heading for radar and checkpoint distance
@@ -298,13 +761,15 @@ export function HUD({ hud, onSelectMode }: Props) {
   const wingRX = playerRx - fwdX * 4.8 + rightX * 4.2;
   const wingRZ = playerRz - fwdZ * 4.8 + rightZ * 4.2;
 
-  const [stripTopX, stripTopZ] = worldToRadar(0, -118);
-  const [stripBotX, stripBotZ] = worldToRadar(0, 118);
-  const [bellagioX, bellagioZ] = worldToRadar(0, -10);
+  const [aveTopX, aveTopZ] = worldToRadar(0, -210);
+  const [aveBotX, aveBotZ] = worldToRadar(0, 175);
+  const [midWestX, midWestZ] = worldToRadar(-150, 0);
+  const [midEastX, midEastZ] = worldToRadar(150, 0);
+  const [plazaX, plazaZ] = worldToRadar(0, -10);
   const [canalStartX, canalStartZ] = worldToRadar(82, -95);
-  const [canalEndX, canalEndZ] = worldToRadar(218, -95);
+  const [canalEndX, canalEndZ] = worldToRadar(238, -95);
   const [runwayStartX, runwayStartZ] = worldToRadar(-195, 155);
-  const [runwayEndX, runwayEndZ] = worldToRadar(-15, 155);
+  const [runwayEndX, runwayEndZ] = worldToRadar(-45, 155);
 
   // Battle Royale Telemetry & Loadout State
   const aliveCount = hud.aliveCount ?? simState.aliveCount ?? 25;
@@ -324,6 +789,9 @@ export function HUD({ hud, onSelectMode }: Props) {
 
   const isCustomizerOpen = Boolean(simState.customizerOpen);
   const custom = simState.customization;
+  const activeCarIdx = typeof s.activeCarIdx === 'number' ? s.activeCarIdx : 0;
+  const activeBoatIdx = typeof s.activeBoatIdx === 'number' ? s.activeBoatIdx : 0;
+  const activePlaneIdx = typeof s.activePlaneIdx === 'number' ? s.activePlaneIdx : 0;
 
   // Single compact top notification pill text (if any active event)
   const notificationBanner =
@@ -349,12 +817,16 @@ export function HUD({ hud, onSelectMode }: Props) {
       ? 'LEATHER'
       : 'SATIN';
 
+  const currentDestObj =
+    WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === selectedLandmarkId) ||
+    WORLD_LANDMARK_DESTINATIONS[0];
+
   return (
     <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden">
       {/* =====================================================================
           1. UNOBSTRUCTED CENTER-SCREEN 4-TICK CROSSHAIR (FOOT / CAR COMBAT)
          ===================================================================== */}
-      {(hud.mode === 'FOOT' || hud.mode === 'CAR') && (
+      {!isStartMenuOpen && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
         <div className="pointer-events-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           <div
             className={`relative h-6 w-6 transition-transform duration-150 ${
@@ -391,11 +863,11 @@ export function HUD({ hud, onSelectMode }: Props) {
       )}
 
       {/* =====================================================================
-          SINGLE COMPACT FLOATING EVENT PILL NEAR TOP (top-14)
+          SINGLE COMPACT FLOATING EVENT PILL NEAR TOP (top-24)
          ===================================================================== */}
-      {notificationBanner && (
-        <div className="pointer-events-none fixed left-1/2 top-14 -translate-x-1/2 z-30">
-          <div className="flex items-center gap-2 rounded-full border border-amber-400/75 bg-slate-950/85 px-3.5 py-1 text-[11px] font-mono font-black tracking-widest text-amber-200 shadow-lg shadow-slate-950/60 backdrop-blur-md">
+      {notificationBanner && !isStartMenuOpen && (
+        <div className="pointer-events-none fixed left-1/2 top-24 -translate-x-1/2 z-30">
+          <div className="flex items-center gap-2 rounded-full border border-sky-400/75 bg-slate-950/90 px-3.5 py-1 text-[11px] font-mono font-black tracking-widest text-sky-200 shadow-lg shadow-slate-950/60 backdrop-blur-md">
             {killFeedText ? (
               <Crosshair className="h-3.5 w-3.5 text-rose-400" />
             ) : (
@@ -409,19 +881,33 @@ export function HUD({ hud, onSelectMode }: Props) {
       {/* =====================================================================
           2. SLEEK TOP TELEMETRY & ACTION BAR (top-3 inset-x-3)
          ===================================================================== */}
-      <div className="fixed inset-x-3 top-3 z-30 flex flex-wrap items-center justify-between gap-2">
-        {/* LEFT: Brand Badge, FPS Badge, Chips Counter & Mute Button */}
-        <div className="pointer-events-auto flex items-center gap-1.5 rounded-xl border border-white/15 bg-slate-950/80 px-2.5 py-1.5 font-mono shadow-lg backdrop-blur-md">
-          <div className="flex items-center gap-1.5 pr-1 text-[11px] font-black tracking-wider text-amber-400">
-            <Sparkles className="h-3.5 w-3.5 shrink-0" />
-            <span>AZUREA // COASTLINE</span>
+      <div className="fixed inset-x-3 top-3 z-30 flex flex-wrap items-start justify-between gap-2">
+        {/* LEFT: METROPOLIS Brand Badge, Prominent [M] START / MODE MENU Button, FPS, $CREDITS & Mute */}
+        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-slate-950/85 px-2.5 py-1.5 font-mono shadow-lg backdrop-blur-md">
+          <div className="flex items-center gap-1.5 pr-1 text-[11px] font-black tracking-wider text-sky-300">
+            <Globe className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+            <span>METROPOLIS // WORLD HORIZON</span>
           </div>
+
+          <button
+            onClick={() => handleToggleStartMenu()}
+            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[10px] font-black tracking-wider shadow-md transition active:scale-95 ${
+              isStartMenuOpen
+                ? 'border-amber-300 bg-amber-400 text-slate-950 shadow-amber-400/40'
+                : 'border-amber-400/85 bg-gradient-to-r from-amber-500/30 via-sky-500/25 to-cyan-500/30 text-amber-200 shadow-amber-500/20 hover:border-amber-300 hover:text-white'
+            }`}
+          >
+            <LayoutGrid className="h-3 w-3" />
+            <span>[M] SWITCH MODE / START MENU</span>
+          </button>
+
           <span className="h-3.5 w-px bg-white/15" />
+
           <div className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300 border border-emerald-400/30">
             {hud.fps} FPS
           </div>
-          <div className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-black tabular-nums text-amber-200 border border-amber-400/30">
-            ${hud.chips.toLocaleString()}
+          <div className="rounded bg-sky-500/15 px-2 py-0.5 text-[10px] font-black tabular-nums text-sky-200 border border-sky-400/30">
+            ${hud.chips.toLocaleString()} CREDITS
           </div>
           <button
             onClick={handleToggleMute}
@@ -436,8 +922,8 @@ export function HUD({ hud, onSelectMode }: Props) {
           </button>
         </div>
 
-        {/* CENTER: Compact BR & Grand Prix Pill + [P] SKY-DROP + Glowing [C] CHARACTER STUDIO */}
-        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-slate-950/80 px-2.5 py-1.5 font-mono shadow-lg backdrop-blur-md">
+        {/* CENTER: Active Mode Telemetry + [P] SKY-DROP + [C] CHARACTER STUDIO */}
+        <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-xl border border-white/15 bg-slate-950/85 px-2.5 py-1.5 font-mono shadow-lg backdrop-blur-md">
           <div className="flex items-center gap-1 rounded-md bg-sky-500/15 px-2 py-0.5 text-[10px] font-black text-sky-200 border border-sky-400/30">
             <Users className="h-3 w-3 text-sky-400" />
             <span>ALIVE {aliveCount}</span>
@@ -450,12 +936,22 @@ export function HUD({ hud, onSelectMode }: Props) {
             <Radio className="h-3 w-3 text-purple-400" />
             <span>STORM {stormRadius}m</span>
           </div>
-          <div className="hidden items-center gap-1 rounded-md bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold text-cyan-200 border border-cyan-400/30 xl:flex">
+          <div className="hidden items-center gap-1 rounded-md bg-cyan-500/15 px-2 py-0.5 text-[10px] font-bold text-cyan-200 border border-cyan-400/30 2xl:flex">
             <Flag className="h-3 w-3 text-cyan-400" />
             <span>
               NEXT GATE: {checkpointName} ({checkpointDist}m)
             </span>
           </div>
+
+          {activeGameMode === 'LANDMARK_TOUR' && (
+            <button
+              onClick={cycleNextLandmarkTour}
+              className="flex items-center gap-1 rounded-lg border border-emerald-400/75 bg-emerald-500/20 px-2 py-0.5 text-[10px] font-black tracking-wider text-emerald-200 hover:bg-emerald-500/35 hover:text-white active:scale-95 transition"
+            >
+              <Globe className="h-3 w-3 text-emerald-300" />
+              <span>NEXT MONUMENT</span>
+            </button>
+          )}
 
           <button
             onClick={() => window.dispatchEvent(new CustomEvent('br-drop'))}
@@ -477,35 +973,509 @@ export function HUD({ hud, onSelectMode }: Props) {
           </button>
         </div>
 
-        {/* RIGHT: Compact Landmark Quick-Warp Pills + Roulette Spin Button */}
-        <div className="pointer-events-auto hidden flex-wrap items-center gap-1 rounded-xl border border-white/15 bg-slate-950/80 px-2 py-1 font-mono shadow-lg backdrop-blur-md lg:flex">
-          {QUICK_WARP_TARGETS.map((lm) => (
-            <button
-              key={lm.id}
-              onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode)}
-              className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:bg-white/15 hover:text-white transition"
-            >
-              <MapPin className="h-2.5 w-2.5 shrink-0" style={{ color: lm.color }} />
-              <span>{lm.label}</span>
-            </button>
-          ))}
-          <span className="mx-0.5 h-3.5 w-px bg-white/15" />
+        {/* RIGHT: All 12 Global Landmarks + Cruise Harbor + Airport Quick-Warp Pills & City Event Boost */}
+        <div className="pointer-events-auto hidden max-w-[660px] flex-wrap items-center justify-end gap-1 rounded-xl border border-white/15 bg-slate-950/85 px-2 py-1 font-mono shadow-lg backdrop-blur-md lg:flex">
+          {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
+            const isCurrent = selectedLandmarkId === lm.id;
+            return (
+              <button
+                key={lm.id}
+                onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
+                title={`Teleport to ${lm.fullTitle}`}
+                className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[9px] font-bold transition ${
+                  isCurrent
+                    ? 'border-sky-400/70 bg-sky-500/25 text-white'
+                    : 'border-transparent bg-white/5 text-slate-200 hover:border-white/20 hover:bg-white/15 hover:text-white'
+                }`}
+              >
+                <MapPin className="h-2.5 w-2.5 shrink-0" style={{ color: lm.color }} />
+                <span>{lm.shortLabel}</span>
+              </button>
+            );
+          })}
           <button
             onClick={() => triggerRouletteSpin()}
-            title={`Roulette Storm (${hud.rouletteTimer}s)`}
-            className="flex items-center gap-1 rounded-md border border-emerald-400/50 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-black text-emerald-200 hover:bg-emerald-500/30 hover:text-white active:scale-95 transition"
+            title={`City Event & Credit Multiplier Boost (${hud.rouletteTimer}s)`}
+            className="flex items-center gap-1 rounded-md border border-emerald-400/60 bg-emerald-500/15 px-2 py-0.5 text-[9px] font-black text-emerald-200 hover:bg-emerald-500/30 hover:text-white active:scale-95 transition"
           >
             <Zap className="h-3 w-3 text-emerald-400" />
-            <span>[R] SPIN ({hud.multiplier}x)</span>
+            <span>[R] CITY BOOST ({hud.multiplier}x)</span>
           </button>
         </div>
       </div>
 
       {/* =====================================================================
-          3. INTERACTIVE [C] 3D CHARACTER & WARDROBE STUDIO DRAWER
+          3. FULL-SCREEN GLASSMORPHIC START & MODE SELECTOR MENU
+             (Opened via [M] / Escape / Tab / "SWITCH MODE / START MENU" button)
+         ===================================================================== */}
+      {isStartMenuOpen && (
+        <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-3 sm:p-5 font-mono backdrop-blur-xl">
+          <div className="flex max-h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-3xl border border-sky-400/40 bg-slate-950/95 text-slate-100 shadow-2xl shadow-sky-950/80">
+            {/* TOP COMMAND HEADER */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-gradient-to-r from-sky-500/20 via-slate-900 to-amber-500/20 px-5 py-3.5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-sky-400/50 bg-sky-500/20 text-sky-300 shadow-inner">
+                  <Globe className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm sm:text-base font-black tracking-wider text-white">
+                      METROPOLIS // START & MODE SELECTOR
+                    </span>
+                    <span className="rounded-full border border-sky-400/50 bg-sky-500/20 px-2 py-0.5 text-[9px] font-black text-sky-200">
+                      12 WORLD LANDMARKS
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-300">
+                    Select your Gameplay Experience, Vehicle / Character Loadout, and Starting City Landmark District
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDeployToMetropolis}
+                  className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-gradient-to-r from-emerald-500 to-cyan-500 px-4 py-2 text-xs font-black tracking-wider text-slate-950 shadow-lg shadow-emerald-500/25 hover:brightness-110 active:scale-95 transition"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>DEPLOY TO METROPOLIS [ENTER]</span>
+                </button>
+                <button
+                  onClick={() => handleToggleStartMenu(false)}
+                  title="Close Start Menu [M / Esc]"
+                  className="rounded-xl border border-white/15 bg-white/5 p-2 text-slate-300 hover:bg-white/15 hover:text-white transition"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* SCROLLABLE 3-STEP COMMAND BODY */}
+            <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+              {/* STEP 1: SELECT GAMEPLAY EXPERIENCE */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-sky-300">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-sky-500 text-[10px] text-slate-950">
+                      1
+                    </span>
+                    <span>STEP 1 — SELECT GAMEPLAY EXPERIENCE</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    Active Mode: <strong className="text-amber-300">{activeGameMode.replace('_', ' ')}</strong>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
+                  {GAMEPLAY_EXPERIENCES.map((exp) => {
+                    const isSelected = activeGameMode === exp.id;
+                    return (
+                      <button
+                        key={exp.id}
+                        onClick={() => handleSelectGameMode(exp.id)}
+                        className={`group flex flex-col justify-between rounded-2xl border p-3 text-left transition ${
+                          isSelected
+                            ? `bg-gradient-to-br ${exp.accent} ring-2 ring-amber-400 shadow-lg`
+                            : 'border-white/10 bg-white/5 text-slate-300 hover:border-white/25 hover:bg-white/10'
+                        }`}
+                      >
+                        <div>
+                          <div className="mb-1 flex items-center justify-between gap-1">
+                            <span className="rounded bg-slate-950/70 px-1.5 py-0.5 text-[9px] font-bold tracking-wider text-sky-300 border border-white/10">
+                              {exp.badge}
+                            </span>
+                            {isSelected && <CheckCircle2 className="h-4 w-4 text-amber-300 shrink-0" />}
+                          </div>
+                          <div className="text-xs font-black text-white">{exp.title}</div>
+                          <p className="mt-1 text-[10px] leading-relaxed text-slate-300/90">
+                            {exp.desc}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* STEP 2: SELECT TRAVERSAL MODE & EXACT VEHICLE MODEL */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-amber-300">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-[10px] text-slate-950">
+                      2
+                    </span>
+                    <span>STEP 2 — SELECT TRAVERSAL MODE & EXACT VEHICLE / CHARACTER MODEL</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    Current Traversal: <strong className="text-sky-300">{hud.mode}</strong>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {/* COLUMN 1: ON-FOOT / PARACHUTE / WARDROBE */}
+                  <div
+                    className={`flex flex-col justify-between rounded-2xl border p-3 transition ${
+                      hud.mode === 'FOOT'
+                        ? 'border-cyan-400/80 bg-cyan-500/15 ring-1 ring-cyan-400/60'
+                        : 'border-white/10 bg-slate-900/75'
+                    }`}
+                  >
+                    <div>
+                      <button
+                        onClick={() => onSelectMode('FOOT')}
+                        className="mb-2 flex w-full items-center justify-between rounded-xl border border-cyan-400/40 bg-cyan-500/20 px-3 py-2 text-left transition hover:bg-cyan-500/30"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Footprints className="h-4 w-4 text-cyan-300" />
+                          <div>
+                            <div className="text-[11px] font-black text-white">
+                              1. ON-FOOT / WARDROBE
+                            </div>
+                            <div className="text-[9px] text-cyan-200">
+                              {custom.presetName || 'Metropolis Citizen'}
+                            </div>
+                          </div>
+                        </div>
+                        {hud.mode === 'FOOT' && (
+                          <span className="rounded bg-cyan-400 px-1.5 py-0.5 text-[8px] font-black text-slate-950">
+                            ACTIVE
+                          </span>
+                        )}
+                      </button>
+
+                      <div className="mb-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                        Character Presets:
+                      </div>
+                      <div className="space-y-1">
+                        {MENU_CHARACTER_PRESETS.map((item) => {
+                          const basePreset =
+                            CHARACTER_PRESETS[item.presetIdx] ?? CHARACTER_PRESETS[0];
+                          const isSelected =
+                            hud.mode === 'FOOT' && custom.presetName === item.label;
+                          return (
+                            <button
+                              key={item.label}
+                              onClick={() => {
+                                onSelectMode('FOOT');
+                                applyOutfitPreset(basePreset, item.patch);
+                              }}
+                              className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-left text-[10px] transition ${
+                                isSelected
+                                  ? 'border-cyan-300 bg-cyan-500/30 text-white font-black'
+                                  : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
+                              }`}
+                            >
+                              <div>
+                                <div className="font-bold">{item.label}</div>
+                                <div className="text-[8px] text-slate-400">{item.role}</div>
+                              </div>
+                              <ChevronRight className="h-3 w-3 text-cyan-300" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 grid grid-cols-2 gap-1.5 border-t border-white/10 pt-2">
+                      <button
+                        onClick={() => {
+                          onSelectMode('FOOT');
+                          handleToggleCustomizer();
+                        }}
+                        className="flex items-center justify-center gap-1 rounded-lg border border-cyan-400/60 bg-cyan-500/20 py-1.5 text-[9px] font-black text-cyan-200 hover:bg-cyan-500/35 hover:text-white transition"
+                      >
+                        <Shirt className="h-3 w-3" />
+                        <span>3D WARDROBE</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          s.startMenuOpen = false;
+                          window.dispatchEvent(new CustomEvent('br-drop'));
+                          window.dispatchEvent(new CustomEvent('toggle-start-menu'));
+                        }}
+                        className="flex items-center justify-center gap-1 rounded-lg border border-amber-400/60 bg-amber-500/20 py-1.5 text-[9px] font-black text-amber-200 hover:bg-amber-500/35 hover:text-white transition"
+                      >
+                        <span>120M SKY-DROP</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* COLUMN 2: STREET SUPERCAR FLEET (5 CARS) */}
+                  <div
+                    className={`flex flex-col justify-between rounded-2xl border p-3 transition ${
+                      hud.mode === 'CAR'
+                        ? 'border-amber-400/80 bg-amber-500/15 ring-1 ring-amber-400/60'
+                        : 'border-white/10 bg-slate-900/75'
+                    }`}
+                  >
+                    <div>
+                      <button
+                        onClick={() => onSelectMode('CAR')}
+                        className="mb-2 flex w-full items-center justify-between rounded-xl border border-amber-400/40 bg-amber-500/20 px-3 py-2 text-left transition hover:bg-amber-500/30"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Car className="h-4 w-4 text-amber-300" />
+                          <div>
+                            <div className="text-[11px] font-black text-white">
+                              2. STREET SUPERCAR FLEET
+                            </div>
+                            <div className="text-[9px] text-amber-200">
+                              {CAR_FLEET_MENU[activeCarIdx]?.label}
+                            </div>
+                          </div>
+                        </div>
+                        {hud.mode === 'CAR' && (
+                          <span className="rounded bg-amber-400 px-1.5 py-0.5 text-[8px] font-black text-slate-950">
+                            ACTIVE
+                          </span>
+                        )}
+                      </button>
+
+                      <div className="space-y-1">
+                        {CAR_FLEET_MENU.map((car) => {
+                          const isSelected = hud.mode === 'CAR' && activeCarIdx === car.idx;
+                          return (
+                            <button
+                              key={car.idx}
+                              onClick={() => selectSpecificCar(car.idx)}
+                              className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1.5 text-left text-[10px] transition ${
+                                isSelected
+                                  ? 'border-amber-300 bg-amber-500/30 text-white font-black'
+                                  : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
+                              }`}
+                            >
+                              <div>
+                                <div className="font-bold">{car.label}</div>
+                                <div className="text-[8px] text-slate-400">{car.spec}</div>
+                              </div>
+                              <ChevronRight className="h-3 w-3 text-amber-300" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* COLUMN 3: MARITIME & CRUISE SHIP FLEET (6 VESSELS) */}
+                  <div
+                    className={`flex flex-col justify-between rounded-2xl border p-3 transition ${
+                      hud.mode === 'BOAT'
+                        ? 'border-teal-400/80 bg-teal-500/15 ring-1 ring-teal-400/60'
+                        : 'border-white/10 bg-slate-900/75'
+                    }`}
+                  >
+                    <div>
+                      <button
+                        onClick={() => selectSpecificBoat(activeBoatIdx)}
+                        className="mb-2 flex w-full items-center justify-between rounded-xl border border-teal-400/40 bg-teal-500/20 px-3 py-2 text-left transition hover:bg-teal-500/30"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Ship className="h-4 w-4 text-teal-300" />
+                          <div>
+                            <div className="text-[11px] font-black text-white">
+                              3. MARITIME & CRUISE FLEET
+                            </div>
+                            <div className="text-[9px] text-teal-200">
+                              {BOAT_FLEET_MENU[activeBoatIdx]?.label}
+                            </div>
+                          </div>
+                        </div>
+                        {hud.mode === 'BOAT' && (
+                          <span className="rounded bg-teal-400 px-1.5 py-0.5 text-[8px] font-black text-slate-950">
+                            ACTIVE
+                          </span>
+                        )}
+                      </button>
+
+                      <div className="space-y-1">
+                        {BOAT_FLEET_MENU.map((boat) => {
+                          const isSelected = hud.mode === 'BOAT' && activeBoatIdx === boat.idx;
+                          return (
+                            <button
+                              key={boat.idx}
+                              onClick={() => selectSpecificBoat(boat.idx)}
+                              className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1 text-left text-[10px] transition ${
+                                isSelected
+                                  ? 'border-teal-300 bg-teal-500/30 text-white font-black'
+                                  : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
+                              }`}
+                            >
+                              <div>
+                                <div className="font-bold">{boat.label}</div>
+                                <div className="text-[8px] text-slate-400">{boat.spec}</div>
+                              </div>
+                              <ChevronRight className="h-3 w-3 text-teal-300" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* COLUMN 4: AVIATION & HELICOPTER FLEET (6 AIRCRAFT) */}
+                  <div
+                    className={`flex flex-col justify-between rounded-2xl border p-3 transition ${
+                      hud.mode === 'PLANE'
+                        ? 'border-sky-400/80 bg-sky-500/15 ring-1 ring-sky-400/60'
+                        : 'border-white/10 bg-slate-900/75'
+                    }`}
+                  >
+                    <div>
+                      <button
+                        onClick={() => selectSpecificPlane(activePlaneIdx)}
+                        className="mb-2 flex w-full items-center justify-between rounded-xl border border-sky-400/40 bg-sky-500/20 px-3 py-2 text-left transition hover:bg-sky-500/30"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Plane className="h-4 w-4 text-sky-300" />
+                          <div>
+                            <div className="text-[11px] font-black text-white">
+                              4. AVIATION & HELICOPTERS
+                            </div>
+                            <div className="text-[9px] text-sky-200">
+                              {PLANE_FLEET_MENU[activePlaneIdx]?.label}
+                            </div>
+                          </div>
+                        </div>
+                        {hud.mode === 'PLANE' && (
+                          <span className="rounded bg-sky-400 px-1.5 py-0.5 text-[8px] font-black text-slate-950">
+                            ACTIVE
+                          </span>
+                        )}
+                      </button>
+
+                      <div className="space-y-1">
+                        {PLANE_FLEET_MENU.map((plane) => {
+                          const isSelected = hud.mode === 'PLANE' && activePlaneIdx === plane.idx;
+                          return (
+                            <button
+                              key={plane.idx}
+                              onClick={() => selectSpecificPlane(plane.idx)}
+                              className={`flex w-full items-center justify-between rounded-lg border px-2.5 py-1 text-left text-[10px] transition ${
+                                isSelected
+                                  ? 'border-sky-300 bg-sky-500/30 text-white font-black'
+                                  : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/10'
+                              }`}
+                            >
+                              <div>
+                                <div className="font-bold">{plane.label}</div>
+                                <div className="text-[8px] text-slate-400">{plane.spec}</div>
+                              </div>
+                              <ChevronRight className="h-3 w-3 text-sky-300" />
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* STEP 3: SELECT STARTING CITY LANDMARK / SPAWN DISTRICT (12 Global Landmarks + Harbor + Airport) */}
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-emerald-300">
+                    <span className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-400 text-[10px] text-slate-950">
+                      3
+                    </span>
+                    <span>
+                      STEP 3 — SELECT STARTING CITY LANDMARK / SPAWN DISTRICT (12 WORLD WONDERS + HARBOR & AIRPORT)
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">
+                    Selected District: <strong className="text-emerald-300">{currentDestObj.fullTitle}</strong>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7">
+                  {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
+                    const isSelected = selectedLandmarkId === lm.id;
+                    return (
+                      <button
+                        key={lm.id}
+                        onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
+                        onDoubleClick={() => {
+                          warpToLocation(lm.x, lm.z, lm.forceMode, lm.id);
+                          handleDeployToMetropolis();
+                        }}
+                        className={`flex flex-col justify-between rounded-xl border p-2.5 text-left transition ${
+                          isSelected
+                            ? 'border-emerald-300 bg-emerald-500/25 text-white ring-1 ring-emerald-300 shadow-md'
+                            : 'border-white/10 bg-white/5 text-slate-300 hover:border-white/25 hover:bg-white/10 hover:text-white'
+                        }`}
+                      >
+                        <div>
+                          <div className="mb-1 flex items-center justify-between gap-1">
+                            <span
+                              className="inline-block h-2 w-2 rounded-full"
+                              style={{ backgroundColor: lm.color }}
+                            />
+                            <span className="text-[8px] font-black tracking-wider text-slate-400">
+                              {lm.cityBadge}
+                            </span>
+                          </div>
+                          <div className="text-[10px] font-black leading-snug text-white">
+                            {lm.fullTitle}
+                          </div>
+                        </div>
+                        <div className="mt-1.5 flex items-center justify-between text-[8px] text-slate-400">
+                          <span>
+                            ({lm.x}, {lm.z})
+                          </span>
+                          <span className="font-bold text-emerald-300">
+                            {isSelected ? 'READY' : 'WARP'}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* BOTTOM LAUNCH CTA BAR */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-slate-900/95 px-5 py-3">
+              <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                <span className="flex items-center gap-1.5 text-slate-300">
+                  <Trophy className="h-3.5 w-3.5 text-amber-400" />
+                  <span>Experience:</span>
+                  <strong className="text-white">{activeGameMode.replace('_', ' ')}</strong>
+                </span>
+                <span className="text-slate-600">•</span>
+                <span className="text-slate-300">
+                  Mode:{' '}
+                  <strong className="text-sky-300">
+                    {hud.mode === 'CAR'
+                      ? CAR_FLEET_MENU[activeCarIdx]?.label
+                      : hud.mode === 'BOAT'
+                      ? BOAT_FLEET_MENU[activeBoatIdx]?.label
+                      : hud.mode === 'PLANE'
+                      ? PLANE_FLEET_MENU[activePlaneIdx]?.label
+                      : `ON-FOOT (${custom.presetName})`}
+                  </strong>
+                </span>
+                <span className="text-slate-600">•</span>
+                <span className="text-slate-300">
+                  Spawn: <strong className="text-emerald-300">{currentDestObj.fullTitle}</strong>
+                </span>
+              </div>
+
+              <button
+                onClick={handleDeployToMetropolis}
+                className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-400 px-6 py-2.5 text-xs font-black tracking-widest text-slate-950 shadow-xl shadow-emerald-500/30 hover:brightness-110 active:scale-95 transition"
+              >
+                <Play className="h-4 w-4 fill-current" />
+                <span>DEPLOY TO METROPOLIS [ENTER]</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =====================================================================
+          4. INTERACTIVE [C] 3D CHARACTER & WARDROBE STUDIO DRAWER
              (left-3 top-16 bottom-20 w-80)
          ===================================================================== */}
-      {isCustomizerOpen && (
+      {isCustomizerOpen && !isStartMenuOpen && (
         <div className="pointer-events-auto fixed left-3 top-16 bottom-20 z-30 flex w-80 flex-col overflow-hidden rounded-2xl border border-cyan-400/45 bg-slate-950/90 font-mono text-slate-100 shadow-2xl shadow-slate-950/90 backdrop-blur-xl">
           {/* Studio Drawer Header */}
           <div className="flex items-center justify-between border-b border-white/10 bg-gradient-to-r from-cyan-500/20 via-slate-900 to-purple-500/20 px-3.5 py-2.5">
@@ -539,11 +1509,21 @@ export function HUD({ hud, onSelectMode }: Props) {
               </div>
               <div className="grid grid-cols-2 gap-1.5">
                 {CHARACTER_PRESETS.map((preset) => {
-                  const active = custom.presetName === preset.presetName;
+                  const displayTitle =
+                    preset.presetName === 'Vegas High Roller'
+                      ? 'Metropolis Executive'
+                      : preset.presetName === 'Vanguard Armored Operator'
+                      ? 'Vanguard Operator'
+                      : preset.presetName;
+                  const active =
+                    custom.presetName === preset.presetName ||
+                    custom.presetName === displayTitle;
                   return (
                     <button
                       key={preset.presetName}
-                      onClick={() => applyOutfitPreset(preset)}
+                      onClick={() =>
+                        applyOutfitPreset(preset, { presetName: displayTitle })
+                      }
                       className={`flex items-center gap-1.5 rounded-lg border px-2 py-1.5 text-left text-[10px] font-bold transition ${
                         active
                           ? 'border-cyan-300 bg-cyan-500/25 text-white shadow-sm shadow-cyan-500/30'
@@ -554,11 +1534,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                         className="h-2.5 w-2.5 shrink-0 rounded-full border border-white/40"
                         style={{ backgroundColor: preset.topColor }}
                       />
-                      <span className="truncate">
-                        {preset.presetName === 'Vanguard Armored Operator'
-                          ? 'Vanguard Operator'
-                          : preset.presetName}
-                      </span>
+                      <span className="truncate">{displayTitle}</span>
                     </button>
                   );
                 })}
@@ -832,11 +1808,11 @@ export function HUD({ hud, onSelectMode }: Props) {
       )}
 
       {/* =====================================================================
-          4. COMPACT BOTTOM-LEFT CORNER (bottom-3 left-3):
-             136x136 Radar Minimap + Compact Shield/HP + Mode & Fleet Switchers
+          5. COMPACT BOTTOM-LEFT CORNER (bottom-3 left-3):
+             136x136 GPS Radar Minimap + Shield/HP + Mode & Start Menu Dock
          ===================================================================== */}
       <div className="pointer-events-auto fixed bottom-3 left-3 z-30 flex items-end gap-2.5">
-        {/* Circular 136x136 Radar Minimap */}
+        {/* Circular 136x136 GPS Radar Minimap */}
         <div
           style={{ width: `${RADAR_SIZE}px`, height: `${RADAR_SIZE}px` }}
           className="relative hidden shrink-0 overflow-hidden rounded-full border-2 border-cyan-300/40 bg-slate-950/85 shadow-xl shadow-slate-950/80 backdrop-blur-md sm:block"
@@ -905,31 +1881,31 @@ export function HUD({ hud, onSelectMode }: Props) {
               strokeLinecap="round"
             />
 
-            {/* Las Vegas Strip Boulevard Lines & Bellagio Loop */}
+            {/* Metropolis Grand Central Avenue & Midtown Crosstown Grid Lines */}
             <line
-              x1={stripTopX - 2}
-              y1={stripTopZ}
-              x2={stripBotX - 2}
-              y2={stripBotZ}
-              stroke="rgba(251, 191, 36, 0.55)"
-              strokeWidth="2"
+              x1={aveTopX}
+              y1={aveTopZ}
+              x2={aveBotX}
+              y2={aveBotZ}
+              stroke="rgba(56, 189, 248, 0.45)"
+              strokeWidth="3"
               strokeLinecap="round"
             />
             <line
-              x1={stripTopX + 2}
-              y1={stripTopZ}
-              x2={stripBotX + 2}
-              y2={stripBotZ}
-              stroke="rgba(251, 191, 36, 0.55)"
-              strokeWidth="2"
+              x1={midWestX}
+              y1={midWestZ}
+              x2={midEastX}
+              y2={midEastZ}
+              stroke="rgba(148, 163, 184, 0.35)"
+              strokeWidth="2.2"
               strokeLinecap="round"
             />
             <circle
-              cx={bellagioX}
-              cy={bellagioZ}
-              r={5}
+              cx={plazaX}
+              cy={plazaZ}
+              r={4.5}
               fill="rgba(14, 165, 233, 0.25)"
-              stroke="rgba(251, 191, 36, 0.65)"
+              stroke="rgba(56, 189, 248, 0.65)"
               strokeWidth="1.2"
             />
 
@@ -998,22 +1974,22 @@ export function HUD({ hud, onSelectMode }: Props) {
           </div>
           <Compass className="pointer-events-none absolute right-2 top-2 h-3 w-3 text-slate-400/80" />
 
-          {/* All Colored Landmark Pins (Click to Quick-Warp) */}
-          {LANDMARKS.map((lm) => {
-            const [mx, mz] = worldToRadar(lm.position[0], lm.position[2]);
+          {/* All 12 Global Landmarks + Harbor + Airport Pins (Click to Quick-Warp) */}
+          {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
+            const [mx, mz] = worldToRadar(lm.x, lm.z);
             return (
               <button
                 key={lm.id}
-                onClick={() => warpToLocation(lm.position[0], lm.position[2])}
-                title={`Warp to ${lm.name}`}
+                onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
+                title={`Warp to ${lm.fullTitle}`}
                 style={{ left: `${mx}px`, top: `${mz}px`, backgroundColor: lm.color }}
-                className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-950 shadow transition-transform hover:scale-150"
+                className="absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-950 shadow transition-transform hover:scale-150"
               />
             );
           })}
         </div>
 
-        {/* Compact Shield/Health + Mode Switcher + Context-Aware Fleet Switcher */}
+        {/* Compact Shield/Health + Mode Switcher + Start Menu Selector + Fleet Switcher */}
         <div className="flex flex-col gap-1.5 rounded-2xl border border-white/15 bg-slate-950/85 p-2.5 font-mono shadow-xl backdrop-blur-md">
           {/* Compact Shield & Health Bars */}
           <div className="grid grid-cols-2 gap-2">
@@ -1048,8 +2024,8 @@ export function HUD({ hud, onSelectMode }: Props) {
             </div>
           </div>
 
-          {/* Vehicle Mode Switcher (1 Foot · 2 Car · 3 Boat · 4 Plane) */}
-          <div className="flex items-center gap-1">
+          {/* Vehicle Mode Switcher (1 Foot · 2 Car · 3 Boat · 4 Plane) + [M] START / MODE MENU */}
+          <div className="flex flex-wrap items-center gap-1">
             {(
               [
                 { id: 'FOOT', label: '1 Foot', Icon: Footprints },
@@ -1062,7 +2038,10 @@ export function HUD({ hud, onSelectMode }: Props) {
               return (
                 <button
                   key={id}
-                  onClick={() => onSelectMode(id)}
+                  onClick={() => {
+                    onSelectMode(id);
+                    handleToggleStartMenu(true);
+                  }}
                   className={`flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold transition ${
                     active
                       ? 'bg-sky-500 text-slate-950 shadow shadow-sky-500/30'
@@ -1074,6 +2053,15 @@ export function HUD({ hud, onSelectMode }: Props) {
                 </button>
               );
             })}
+
+            <button
+              onClick={() => handleToggleStartMenu()}
+              title="Open Full-Screen Start & Mode Selector Menu [M]"
+              className="flex items-center gap-1 rounded-lg border border-amber-400/75 bg-amber-500/20 px-2 py-1 text-[10px] font-black text-amber-200 hover:bg-amber-500/35 hover:text-white active:scale-95 transition"
+            >
+              <LayoutGrid className="h-3 w-3 text-amber-300" />
+              <span>[M] MODE MENU</span>
+            </button>
           </div>
 
           {/* Context-Aware Model Fleet Switcher + Always-Accessible Customize Button */}
@@ -1084,7 +2072,9 @@ export function HUD({ hud, onSelectMode }: Props) {
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-amber-400/60 bg-amber-500/20 px-2.5 py-1 text-[10px] font-black tracking-wide text-amber-200 hover:bg-amber-500/30 hover:text-white active:scale-95 transition"
               >
                 <Car className="h-3 w-3 text-amber-400" />
-                <span>[V] SWITCH CAR (5 GLB SUPERCARS)</span>
+                <span>
+                  [V] {hud.activeCarName || CAR_FLEET_MENU[activeCarIdx]?.codeName} (5 CARS)
+                </span>
               </button>
             )}
 
@@ -1094,7 +2084,9 @@ export function HUD({ hud, onSelectMode }: Props) {
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-cyan-400/60 bg-cyan-500/20 px-2.5 py-1 text-[10px] font-black tracking-wide text-cyan-200 hover:bg-cyan-500/30 hover:text-white active:scale-95 transition"
               >
                 <Ship className="h-3 w-3 text-cyan-400" />
-                <span>[B] SWITCH VESSEL (6 BOATS & CRUISE SHIP)</span>
+                <span>
+                  [B] {hud.activeBoatName || BOAT_FLEET_MENU[activeBoatIdx]?.codeName} (6 VESSELS)
+                </span>
               </button>
             )}
 
@@ -1104,7 +2096,9 @@ export function HUD({ hud, onSelectMode }: Props) {
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-sky-400/60 bg-sky-500/20 px-2.5 py-1 text-[10px] font-black tracking-wide text-sky-200 hover:bg-sky-500/30 hover:text-white active:scale-95 transition"
               >
                 <Plane className="h-3 w-3 text-sky-400" />
-                <span>[B] SWITCH AIRCRAFT (6 PLANES & HELI)</span>
+                <span>
+                  [B] {hud.activePlaneName || PLANE_FLEET_MENU[activePlaneIdx]?.codeName} (6 AIRCRAFT)
+                </span>
               </button>
             )}
 
@@ -1114,7 +2108,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                 className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-cyan-400/75 bg-cyan-500/20 px-2.5 py-1 text-[10px] font-black tracking-wide text-cyan-200 hover:bg-cyan-500/35 hover:text-white active:scale-95 transition"
               >
                 <Shirt className="h-3 w-3 text-cyan-400" />
-                <span>[C] CUSTOMIZE OUTFIT</span>
+                <span>[C] CUSTOMIZE OUTFIT ({custom.presetName})</span>
               </button>
             )}
 
@@ -1137,7 +2131,7 @@ export function HUD({ hud, onSelectMode }: Props) {
       </div>
 
       {/* =====================================================================
-          5. COMPACT BOTTOM-RIGHT CORNER (bottom-3 right-3):
+          6. COMPACT BOTTOM-RIGHT CORNER (bottom-3 right-3):
              5-Slot Weapon Hotbar + Digital Speedometer & Altitude Readout
          ===================================================================== */}
       <div className="pointer-events-auto fixed bottom-3 right-3 z-30 flex flex-col items-end gap-1.5 font-mono">
