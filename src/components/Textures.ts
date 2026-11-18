@@ -69,11 +69,10 @@ export function createSkyscraperPBR(): {
   cRough.height = h;
   const rCtx = cRough.getContext('2d')!;
 
-  // Base architectural dark-sapphire & bronze reflective curtain-wall glass (#0f172a to #1e293b)
+  // Base architectural deep slate-blue & dark steel-teal curtain-wall glass (#0f172a to #1e293b)
   const bg = ctx.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, '#1e293b');
-  bg.addColorStop(0.35, '#172554');
-  bg.addColorStop(0.7, '#0f172a');
+  bg.addColorStop(0.45, '#0f172a');
   bg.addColorStop(1, '#090d16');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, w, h);
@@ -83,64 +82,108 @@ export function createSkyscraperPBR(): {
   rCtx.fillRect(0, 0, w, h);
 
   const rand = makeSeededRand(108);
-  for (let y = 0; y < h; y += 32) {
-    const floorSuiteLit = rand() > 0.68;
-    for (let x = 0; x < w; x += 32) {
+  const cols = 16; // 16 window bays across per tile (32 across with repeat 2x2)
+  const rows = 32; // 32 floor rows per tile (64 rows with repeat 2x2)
+  const bayW = w / cols; // 32px
+  const rowH = h / rows; // 32px
+
+  for (let row = 0; row < rows; row++) {
+    const y = row * rowH;
+    const isMechanicalFloor = row === 15 || row === 31;
+    const floorSuiteActive = rand() > 0.76;
+
+    for (let col = 0; col < cols; col++) {
+      const x = col * bayW;
       const r = rand();
-      const g = ctx.createLinearGradient(x, y, x, y + 26);
-      if (r > 0.75 || (floorSuiteLit && r > 0.45)) {
-        // ~25% warm champagne-gold interior penthouse/suite floor bands
-        g.addColorStop(0, '#fef3c7');
-        g.addColorStop(0.55, '#fde68a');
-        g.addColorStop(1, '#b45309');
-      } else if (r > 0.42) {
-        // Subtle sky-reflection dark sapphire glass pane
+
+      if (isMechanicalFloor) {
+        // Dark architectural louver band on mechanical equipment floors
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(x + 2, y + 4, bayW - 3, rowH - 5);
+        ctx.fillStyle = '#334155';
+        for (let ly = y + 6; ly < y + rowH - 3; ly += 4) {
+          ctx.fillRect(x + 3, ly, bayW - 5, 1.5);
+        }
+        rCtx.fillStyle = 'rgb(155,155,155)';
+        rCtx.fillRect(x + 2, y + 4, bayW - 3, rowH - 5);
+        continue;
+      }
+
+      // Base glass reflection gradient per pane (deep slate-blue & dark steel-teal)
+      const g = ctx.createLinearGradient(x, y + 4, x, y + rowH - 1);
+      if (r > 0.55) {
         g.addColorStop(0, '#334155');
-        g.addColorStop(0.5, '#1e293b');
+        g.addColorStop(0.55, '#1e293b');
         g.addColorStop(1, '#0f172a');
-      } else if (r > 0.18) {
-        // Architectural smoked bronze-slate reflection
-        g.addColorStop(0, '#292524');
-        g.addColorStop(0.5, '#1e293b');
+      } else if (r > 0.22) {
+        g.addColorStop(0, '#1e293b');
+        g.addColorStop(0.6, '#152238');
         g.addColorStop(1, '#0f172a');
       } else {
-        // Deep obsidian twilight glass pane
         g.addColorStop(0, '#1e293b');
         g.addColorStop(1, '#090d16');
       }
       ctx.fillStyle = g;
-      ctx.fillRect(x + 3, y + 5, 26, 23);
+      ctx.fillRect(x + 2, y + 4, bayW - 3, rowH - 5);
 
-      // Subtle diagonal specular sky-reflection sheen across glass pane
-      ctx.fillStyle = 'rgba(148, 163, 184, 0.08)';
-      ctx.fillRect(x + 4, y + 6, 10, 21);
+      // Understated warm white / soft-amber office ceiling lights in ~20% of panes
+      const isLit = r > 0.82 || (floorSuiteActive && r > 0.62);
+      if (isLit) {
+        const ceilGrad = ctx.createLinearGradient(x, y + 5, x, y + rowH - 3);
+        ceilGrad.addColorStop(0, 'rgba(254, 243, 199, 0.55)');
+        ceilGrad.addColorStop(0.45, 'rgba(253, 230, 138, 0.28)');
+        ceilGrad.addColorStop(1, 'rgba(15, 23, 42, 0.15)');
+        ctx.fillStyle = ceilGrad;
+        ctx.fillRect(x + 3, y + 5, bayW - 5, rowH - 7);
+
+        // Recessed linear office ceiling light fixture bar near top of pane
+        ctx.fillStyle = 'rgba(255, 251, 235, 0.65)';
+        ctx.fillRect(x + 5, y + 6, bayW - 9, 2);
+      }
+
+      // Subtle sky reflection band across upper glass
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.09)';
+      ctx.fillRect(x + 3, y + 5, (bayW - 5) * 0.45, rowH - 7);
+
+      // Fine secondary center sub-mullion dividing each bay into twin vertical curtain panes
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(x + bayW * 0.5, y + 4, 1, rowH - 5);
     }
   }
 
-  // Crisp dark anodized aluminum vertical mullions (#090d16) & roughness rgb(140,140,140)
-  ctx.fillStyle = '#090d16';
-  rCtx.fillStyle = 'rgb(140,140,140)';
-  for (let x = 0; x < w; x += 32) {
-    ctx.fillRect(x, 0, 3, h);
-    rCtx.fillRect(x, 0, 3, h);
+  // Realistic spandrel bands (4px) between floors in dark anodized charcoal-slate
+  for (let row = 0; row < rows; row++) {
+    const y = row * rowH;
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, y, w, 4);
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(0, y, w, 1);
+    rCtx.fillStyle = 'rgb(135,135,135)';
+    rCtx.fillRect(0, y, w, 4);
   }
-  // Dark bronze-slate horizontal spandrel bands & mullions
-  ctx.fillStyle = '#111827';
-  rCtx.fillStyle = 'rgb(140,140,140)';
-  for (let y = 0; y < h; y += 32) {
-    ctx.fillRect(0, y, w, 5);
-    rCtx.fillRect(0, y, w, 5);
+
+  // Thin silver/charcoal aluminum vertical mullions (1.5px)
+  for (let col = 0; col < cols; col++) {
+    const x = col * bayW;
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(x, 0, 1.5, h);
+    ctx.fillStyle = '#64748b';
+    ctx.fillRect(x, 0, 0.75, h);
+    rCtx.fillStyle = 'rgb(125,125,125)';
+    rCtx.fillRect(x, 0, 2, h);
   }
 
   const map = new THREE.CanvasTexture(cColor);
   map.wrapS = THREE.RepeatWrapping;
   map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(2, 2);
   map.anisotropy = 4;
   map.colorSpace = THREE.SRGBColorSpace;
 
   const roughnessMap = new THREE.CanvasTexture(cRough);
   roughnessMap.wrapS = THREE.RepeatWrapping;
   roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.set(2, 2);
   roughnessMap.anisotropy = 4;
 
   return { map, roughnessMap };
@@ -473,76 +516,107 @@ export function createArtDecoLimestonePBR(): {
   cRough.height = h;
   const rCtx = cRough.getContext('2d')!;
 
-  // Base carved Indiana limestone / Roman travertine ashlar blocks
+  // Base carved Indiana limestone ashlar masonry
   ctx.fillStyle = '#e7dfd3';
   ctx.fillRect(0, 0, w, h);
-  rCtx.fillStyle = 'rgb(185,185,185)';
+  rCtx.fillStyle = 'rgb(190,190,190)';
   rCtx.fillRect(0, 0, w, h);
 
   const rand = makeSeededRand(212);
-  // Ashlar masonry stone courses
-  for (let y = 0; y < h; y += 32) {
-    for (let x = 0; x < w; x += 64) {
-      const shade = 218 + Math.floor(rand() * 22);
-      ctx.fillStyle = `rgb(${shade},${shade - 7},${shade - 18})`;
-      ctx.fillRect(x + 1, y + 1, 62, 30);
+  // Fine limestone ashlar masonry stone courses
+  for (let y = 0; y < h; y += 16) {
+    const offset = ((y / 16) % 2) * 21;
+    for (let x = -32; x < w + 32; x += 42) {
+      const shade = 220 + Math.floor(rand() * 20);
+      ctx.fillStyle = `rgb(${shade},${shade - 6},${shade - 16})`;
+      ctx.fillRect(x + offset + 1, y + 1, 40, 14);
     }
   }
 
-  // Vertical Art Deco fluted limestone pilasters & recessed bronze spandrel bays
-  for (let col = 0; col < 8; col++) {
-    const bx = col * 64;
-    // Fluted limestone pilaster ribs
+  // Classical horizontal limestone cornice bands every 7 floors
+  for (let cy = 0; cy < h; cy += 256) {
     ctx.fillStyle = '#f5efe6';
-    ctx.fillRect(bx, 0, 14, h);
+    ctx.fillRect(0, cy, w, 6);
+    ctx.fillStyle = '#b5a895';
+    ctx.fillRect(0, cy + 6, w, 3);
+  }
+
+  // High-density 12 vertical window bays × 28 floor rows per tile
+  const cols = 12;
+  const rows = 28;
+  const bayW = w / cols; // 42.67px
+  const rowH = h / rows; // 36.57px
+
+  for (let col = 0; col < cols; col++) {
+    const bx = Math.round(col * bayW);
+    const nextBx = Math.round((col + 1) * bayW);
+    const bw = nextBx - bx;
+
+    // Subtle vertical fluted Indiana limestone pilaster between bays (10px wide)
+    ctx.fillStyle = '#f2ece1';
+    ctx.fillRect(bx, 0, 10, h);
     ctx.fillStyle = '#c8bca9';
-    ctx.fillRect(bx + 4, 0, 2, h);
-    ctx.fillRect(bx + 9, 0, 2, h);
+    ctx.fillRect(bx + 3, 0, 1.5, h);
+    ctx.fillRect(bx + 6.5, 0, 1.5, h);
 
-    for (let row = 0; row < 24; row++) {
-      const by = row * 42 + 6;
-      // Aged bronze Art Deco spandrel panel
-      ctx.fillStyle = '#45382b';
-      ctx.fillRect(bx + 15, by + 26, 46, 12);
-      ctx.strokeStyle = '#b48a4e';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(bx + 18, by + 28, 40, 8);
+    const winX = bx + 11;
+    const winW = bw - 13;
 
-      // Recessed mullioned office window
-      const lit = rand() > 0.62;
-      const winGrad = ctx.createLinearGradient(bx + 16, by, bx + 16, by + 24);
-      if (lit) {
-        winGrad.addColorStop(0, '#fef3c7');
-        winGrad.addColorStop(0.65, '#fde68a');
-        winGrad.addColorStop(1, '#d97706');
-      } else {
-        winGrad.addColorStop(0, '#334155');
-        winGrad.addColorStop(0.5, '#1e293b');
-        winGrad.addColorStop(1, '#0f172a');
-      }
+    for (let row = 0; row < rows; row++) {
+      const by = Math.round(row * rowH) + 3;
+      const winH = Math.round(rowH) - 12;
+
+      // Dark-bronze Art Deco spandrel panel below each window
+      ctx.fillStyle = '#33291f';
+      ctx.fillRect(winX, by + winH + 1, winW, 8);
+      ctx.strokeStyle = '#786248';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(winX + 2, by + winH + 2.5, winW - 4, 5);
+
+      // Recessed dark-bronze window frame (#1c1917)
+      ctx.fillStyle = '#1c1917';
+      ctx.fillRect(winX, by, winW, winH);
+
+      // Architectural glass with understated warm interior office light in ~18% of bays
+      const r = rand();
+      const winGrad = ctx.createLinearGradient(winX, by + 2, winX, by + winH - 2);
+      winGrad.addColorStop(0, '#334155');
+      winGrad.addColorStop(0.55, '#1e293b');
+      winGrad.addColorStop(1, '#0f172a');
       ctx.fillStyle = winGrad;
-      ctx.fillRect(bx + 16, by, 44, 25);
+      ctx.fillRect(winX + 2, by + 2, winW - 4, winH - 4);
 
-      // Glossy window roughness
+      if (r > 0.82) {
+        const glowGrad = ctx.createLinearGradient(winX, by + 2, winX, by + winH - 2);
+        glowGrad.addColorStop(0, 'rgba(254, 243, 199, 0.52)');
+        glowGrad.addColorStop(0.6, 'rgba(253, 230, 138, 0.25)');
+        glowGrad.addColorStop(1, 'rgba(28, 25, 23, 0.2)');
+        ctx.fillStyle = glowGrad;
+        ctx.fillRect(winX + 2, by + 2, winW - 4, winH - 4);
+      }
+
+      // Glossy window glass roughness
       rCtx.fillStyle = 'rgb(28,28,28)';
-      rCtx.fillRect(bx + 16, by, 44, 25);
+      rCtx.fillRect(winX + 2, by + 2, winW - 4, winH - 4);
 
-      // Crisp dark bronze window mullions
-      ctx.fillStyle = '#292524';
-      ctx.fillRect(bx + 37, by, 3, 25);
-      ctx.fillRect(bx + 16, by + 11, 44, 2);
+      // Fine dark-bronze center vertical & upper transom mullions
+      ctx.fillStyle = '#1c1917';
+      ctx.fillRect(winX + Math.floor(winW * 0.5) - 1, by + 1, 2, winH - 2);
+      ctx.fillRect(winX + 1, by + Math.floor(winH * 0.42), winW - 2, 1.5);
     }
   }
 
   const map = new THREE.CanvasTexture(cColor);
   map.wrapS = THREE.RepeatWrapping;
   map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(2, 2);
   map.anisotropy = 4;
   map.colorSpace = THREE.SRGBColorSpace;
 
   const roughnessMap = new THREE.CanvasTexture(cRough);
   roughnessMap.wrapS = THREE.RepeatWrapping;
   roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.set(2, 2);
   roughnessMap.anisotropy = 4;
 
   return { map, roughnessMap };
@@ -567,22 +641,22 @@ export function createBrickResidentialPBR(): {
   cRough.height = h;
   const rCtx = cRough.getContext('2d')!;
 
-  // Warm mortar base
-  ctx.fillStyle = '#d6cfc4';
+  // Warm lime-mortar base
+  ctx.fillStyle = '#cfc6b8';
   ctx.fillRect(0, 0, w, h);
-  rCtx.fillStyle = 'rgb(210,210,210)';
+  rCtx.fillStyle = 'rgb(212,212,212)';
   rCtx.fillRect(0, 0, w, h);
 
   const rand = makeSeededRand(616);
-  // Running-bond terracotta/brownstone brickwork
-  const brickH = 8;
-  const brickW = 20;
+  // Fine running-bond warm red-brown & russet brickwork
+  const brickH = 6;
+  const brickW = 16;
   for (let y = 0; y < h; y += brickH) {
     const rowOffset = ((y / brickH) % 2) * (brickW / 2);
     for (let x = -brickW; x < w + brickW; x += brickW) {
-      const r = 138 + Math.floor(rand() * 44);
-      const g = 56 + Math.floor(rand() * 26);
-      const b = 38 + Math.floor(rand() * 20);
+      const r = 128 + Math.floor(rand() * 42);
+      const g = 52 + Math.floor(rand() * 24);
+      const b = 36 + Math.floor(rand() * 18);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(x + rowOffset + 1, y + 1, brickW - 2, brickH - 2);
     }
@@ -590,50 +664,71 @@ export function createBrickResidentialPBR(): {
 
   // Carved cream limestone cornice & belt courses
   ctx.fillStyle = '#e7dfd3';
-  ctx.fillRect(0, 0, w, 16);
-  ctx.fillRect(0, 248, w, 10);
-  ctx.fillStyle = '#b8ad9e';
-  ctx.fillRect(0, 14, w, 4);
+  ctx.fillRect(0, 0, w, 10);
+  ctx.fillRect(0, 252, w, 6);
+  ctx.fillStyle = '#a89d8e';
+  ctx.fillRect(0, 9, w, 2);
 
-  // Multi-pane apartment windows with cream stone lintels and sills
-  for (let row = 0; row < 5; row++) {
-    const wy = row * 98 + 26;
-    for (let col = 0; col < 6; col++) {
-      const wx = col * 84 + 18;
-      // Limestone window lintel & sill
-      ctx.fillStyle = '#ede6da';
-      ctx.fillRect(wx - 4, wy - 7, 54, 7);
-      ctx.fillRect(wx - 5, wy + 56, 56, 6);
+  // High-density 8 columns × 8 rows of realistic multi-pane sash windows with cream stone lintels and sills
+  const cols = 8;
+  const rows = 8;
+  const cellW = w / cols; // 64px
+  const cellH = h / rows; // 64px
 
-      // Recessed dark window frame
+  for (let row = 0; row < rows; row++) {
+    const wy = row * cellH + 14;
+    const winH = 38;
+    for (let col = 0; col < cols; col++) {
+      const wx = col * cellW + 14;
+      const winW = 36;
+
+      // Cream stone keystone lintel & projecting sill
+      ctx.fillStyle = '#ede5d8';
+      ctx.fillRect(wx - 3, wy - 5, winW + 6, 5);
+      ctx.fillRect(wx - 4, wy + winH, winW + 8, 4);
+      ctx.fillStyle = '#9c9284';
+      ctx.fillRect(wx - 4, wy + winH + 4, winW + 8, 1.5);
+
+      // Recessed dark architectural window frame
       ctx.fillStyle = '#1c1917';
-      ctx.fillRect(wx, wy, 46, 56);
+      ctx.fillRect(wx, wy, winW, winH);
 
-      // Lit or dark apartment glass
-      const lit = rand() > 0.56;
-      ctx.fillStyle = lit ? (rand() > 0.4 ? '#fef3c7' : '#fde68a') : '#1e293b';
-      ctx.fillRect(wx + 3, wy + 3, 40, 50);
+      // Dark slate window glass with understated warm interior curtain glow in ~22% of windows
+      const lit = rand() > 0.78;
+      const g = ctx.createLinearGradient(wx, wy + 2, wx, wy + winH - 2);
+      g.addColorStop(0, '#334155');
+      g.addColorStop(0.55, '#1e293b');
+      g.addColorStop(1, '#0f172a');
+      ctx.fillStyle = g;
+      ctx.fillRect(wx + 2, wy + 2, winW - 4, winH - 4);
+
+      if (lit) {
+        ctx.fillStyle = 'rgba(254, 243, 199, 0.48)';
+        ctx.fillRect(wx + 2, wy + 2, winW - 4, winH - 4);
+      }
 
       // Glossy window roughness
       rCtx.fillStyle = 'rgb(26,26,26)';
-      rCtx.fillRect(wx + 3, wy + 3, 40, 50);
+      rCtx.fillRect(wx + 2, wy + 2, winW - 4, winH - 4);
 
-      // White sash muntin bars
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(wx + 22, wy + 2, 2, 52);
-      ctx.fillRect(wx + 2, wy + 27, 42, 3);
+      // Crisp cream-white double-hung sash muntin bars
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillRect(wx + Math.floor(winW * 0.5) - 1, wy + 2, 1.5, winH - 4);
+      ctx.fillRect(wx + 2, wy + Math.floor(winH * 0.5) - 1, winW - 4, 2);
     }
   }
 
   const map = new THREE.CanvasTexture(cColor);
   map.wrapS = THREE.RepeatWrapping;
   map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(2, 2);
   map.anisotropy = 4;
   map.colorSpace = THREE.SRGBColorSpace;
 
   const roughnessMap = new THREE.CanvasTexture(cRough);
   roughnessMap.wrapS = THREE.RepeatWrapping;
   roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.set(2, 2);
   roughnessMap.anisotropy = 4;
 
   return { map, roughnessMap };
@@ -660,59 +755,57 @@ export function createModernConcreteSteelPBR(): {
 
   ctx.fillStyle = '#cbd5e1';
   ctx.fillRect(0, 0, w, h);
-  rCtx.fillStyle = 'rgb(160,160,160)';
+  rCtx.fillStyle = 'rgb(165,165,165)';
   rCtx.fillRect(0, 0, w, h);
 
   const rand = makeSeededRand(707);
   // Concrete architectural panels with expansion joints and tie-rod cone dimples
-  for (let py = 0; py < h; py += 64) {
-    for (let px = 0; px < w; px += 128) {
-      const shade = 192 + Math.floor(rand() * 24);
-      ctx.fillStyle = `rgb(${shade},${shade + 4},${shade + 10})`;
-      ctx.fillRect(px + 2, py + 2, 124, 60);
+  for (let py = 0; py < h; py += 32) {
+    for (let px = 0; px < w; px += 64) {
+      const shade = 194 + Math.floor(rand() * 20);
+      ctx.fillStyle = `rgb(${shade},${shade + 3},${shade + 8})`;
+      ctx.fillRect(px + 1, py + 1, 62, 30);
 
       // Formwork tie-rod dimples
       ctx.fillStyle = '#64748b';
-      [
-        [px + 18, py + 16],
-        [px + 110, py + 16],
-        [px + 18, py + 48],
-        [px + 110, py + 48],
-      ].forEach(([dx, dy]) => {
-        ctx.beginPath();
-        ctx.arc(dx, dy, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-      });
+      ctx.fillRect(px + 8, py + 6, 2, 2);
+      ctx.fillRect(px + 54, py + 6, 2, 2);
     }
   }
 
-  // Sleek horizontal ribbon windows with anodized steel mullions
-  for (let row = 0; row < 8; row++) {
-    const wy = row * 64 + 18;
+  // High-density sleek horizontal ribbon windows with dark anodized steel mullions
+  for (let row = 0; row < 16; row++) {
+    const wy = row * 32 + 10;
     ctx.fillStyle = '#0f172a';
-    ctx.fillRect(0, wy, w, 28);
+    ctx.fillRect(0, wy, w, 18);
     rCtx.fillStyle = 'rgb(20,20,20)';
-    rCtx.fillRect(0, wy, w, 28);
+    rCtx.fillRect(0, wy, w, 18);
 
     for (let col = 0; col < 16; col++) {
       const wx = col * 32;
-      const isLit = rand() > 0.68;
-      ctx.fillStyle = isLit ? '#e0f2fe' : '#1e293b';
-      ctx.fillRect(wx + 2, wy + 3, 28, 22);
+      const isLit = rand() > 0.8;
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(wx + 2, wy + 2, 28, 14);
+      if (isLit) {
+        ctx.fillStyle = 'rgba(254, 243, 199, 0.45)';
+        ctx.fillRect(wx + 2, wy + 2, 28, 14);
+      }
       ctx.fillStyle = '#475569';
-      ctx.fillRect(wx, wy, 2, 28);
+      ctx.fillRect(wx, wy, 1.5, 18);
     }
   }
 
   const map = new THREE.CanvasTexture(cColor);
   map.wrapS = THREE.RepeatWrapping;
   map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(2, 2);
   map.anisotropy = 4;
   map.colorSpace = THREE.SRGBColorSpace;
 
   const roughnessMap = new THREE.CanvasTexture(cRough);
   roughnessMap.wrapS = THREE.RepeatWrapping;
   roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.set(2, 2);
   roughnessMap.anisotropy = 4;
 
   return { map, roughnessMap };
@@ -1020,4 +1113,324 @@ export function createCopperPatinaPBR(): THREE.CanvasTexture {
   tex.anisotropy = 4;
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
+}
+
+/**
+ * 10. Roman Travertine 3-Story Semi-Circular Arch Arcade + 4th-Story Corinthian Attic PBR (for Rome Colosseum)
+ */
+export function createColosseumArcadePBR(): {
+  map: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const w = 512;
+  const h = 512;
+  const cColor = document.createElement('canvas');
+  cColor.width = w;
+  cColor.height = h;
+  const ctx = cColor.getContext('2d')!;
+
+  const cRough = document.createElement('canvas');
+  cRough.width = w;
+  cRough.height = h;
+  const rCtx = cRough.getContext('2d')!;
+
+  // Base warm Roman travertine limestone (#e5dccb / #d6c9b4)
+  ctx.fillStyle = '#e5dccb';
+  ctx.fillRect(0, 0, w, h);
+  rCtx.fillStyle = 'rgb(195,195,195)';
+  rCtx.fillRect(0, 0, w, h);
+
+  const rand = makeSeededRand(1010);
+
+  // Fine travertine ashlar stone blocks & natural porous striations
+  for (let y = 0; y < h; y += 16) {
+    const offset = ((y / 16) % 2) * 16;
+    for (let x = -32; x < w + 32; x += 32) {
+      const shade = 212 + Math.floor(rand() * 24);
+      ctx.fillStyle = `rgb(${shade},${shade - 10},${shade - 26})`;
+      ctx.fillRect(x + offset + 1, y + 1, 30, 14);
+    }
+  }
+  for (let i = 0; i < 4500; i++) {
+    const px = rand() * w;
+    const py = rand() * h;
+    ctx.fillStyle = rand() > 0.5 ? 'rgba(130, 114, 92, 0.16)' : 'rgba(250, 245, 235, 0.14)';
+    ctx.fillRect(px, py, 3 + rand() * 5, 1.5);
+  }
+
+  const numBays = 8; // 8 arches per 512px tile -> 48 arches around perimeter with repeat(6, 1)
+  const bayW = w / numBays; // 64px
+
+  // Top 4th-Story Corinthian Attic Wall (y = 0..104)
+  ctx.fillStyle = '#efe7d6';
+  ctx.fillRect(0, 0, w, 10);
+  ctx.fillStyle = '#a3927a';
+  ctx.fillRect(0, 10, w, 4);
+  ctx.fillStyle = '#f2ead9';
+  ctx.fillRect(0, 96, w, 8);
+  ctx.fillStyle = '#9c8b73';
+  ctx.fillRect(0, 102, w, 3);
+
+  for (let col = 0; col < numBays; col++) {
+    const bx = col * bayW;
+    // Corinthian flat pilaster between attic bays
+    ctx.fillStyle = '#ede3d1';
+    ctx.fillRect(bx - 5, 14, 10, 82);
+    ctx.fillStyle = '#b8a78e';
+    ctx.fillRect(bx - 6, 14, 1.5, 82);
+    ctx.fillRect(bx + 5, 14, 1.5, 82);
+    // Corinthian capital
+    ctx.fillStyle = '#f5eee0';
+    ctx.fillRect(bx - 7, 14, 14, 6);
+
+    // Alternating rectangular bronze-shield / recessed attic window in each bay
+    if (col % 2 === 0) {
+      ctx.fillStyle = '#1c1917';
+      ctx.fillRect(bx + 22, 42, 20, 28);
+      ctx.strokeStyle = '#c2b299';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bx + 21, 41, 22, 30);
+      rCtx.fillStyle = 'rgb(240,240,240)';
+      rCtx.fillRect(bx + 22, 42, 20, 28);
+    } else {
+      // Carved travertine medallion shield in odd bays
+      ctx.fillStyle = '#cbbba2';
+      ctx.beginPath();
+      ctx.arc(bx + 32, 54, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#94836b';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  // 3 Stacked Classical Arcade Stories (Ionic, Corinthian, Tuscanic orders: y = 104..512)
+  const storyHeight = 136;
+  const storyStarts = [104, 240, 376];
+
+  for (let sIdx = 0; sIdx < 3; sIdx++) {
+    const sy = storyStarts[sIdx];
+
+    // Classical entablature & projecting cornice belt at top of story
+    ctx.fillStyle = '#f5ede0';
+    ctx.fillRect(0, sy, w, 9);
+    ctx.fillStyle = '#cfc0a9';
+    ctx.fillRect(0, sy + 9, w, 6);
+    ctx.fillStyle = '#8c7b65';
+    ctx.fillRect(0, sy + 15, w, 3);
+
+    // Parapet stylobate sill at bottom of story
+    ctx.fillStyle = '#dfd3be';
+    ctx.fillRect(0, sy + storyHeight - 8, w, 8);
+
+    for (let col = 0; col < numBays; col++) {
+      const bx = col * bayW;
+      const archCenterX = bx + bayW * 0.5; // bx + 32
+      const archRadius = 19.5;
+      const archSpringY = sy + 46;
+      const archBottomY = sy + storyHeight - 8;
+
+      // Radial travertine voussoir arch ring stones around the semi-circular arch
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(archCenterX, archSpringY, archRadius + 6, Math.PI, 0, false);
+      ctx.lineTo(archCenterX + archRadius + 6, archBottomY);
+      ctx.lineTo(archCenterX - archRadius - 6, archBottomY);
+      ctx.closePath();
+      ctx.fillStyle = '#d4c5ae';
+      ctx.fill();
+      ctx.strokeStyle = '#96856e';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // Radial voussoir wedge joints along the semi-circular arch ring
+      for (let a = 0; a <= 8; a++) {
+        const ang = Math.PI + (a * Math.PI) / 8;
+        ctx.beginPath();
+        ctx.moveTo(archCenterX + Math.cos(ang) * archRadius, archSpringY + Math.sin(ang) * archRadius);
+        ctx.lineTo(
+          archCenterX + Math.cos(ang) * (archRadius + 6.5),
+          archSpringY + Math.sin(ang) * (archRadius + 6.5)
+        );
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      // Deep, dark-shadowed semi-circular Roman arch opening (#0f172a / #1c1917)
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(archCenterX, archSpringY, archRadius, Math.PI, 0, false);
+      ctx.lineTo(archCenterX + archRadius, archBottomY);
+      ctx.lineTo(archCenterX - archRadius, archBottomY);
+      ctx.closePath();
+
+      const archGrad = ctx.createLinearGradient(archCenterX - archRadius, archSpringY - archRadius, archCenterX + archRadius, archBottomY);
+      archGrad.addColorStop(0, '#090d16');
+      archGrad.addColorStop(0.55, '#1c1917');
+      archGrad.addColorStop(1, '#29221c');
+      ctx.fillStyle = archGrad;
+      ctx.fill();
+
+      // Inner recessed travertine intrados soffit depth rim & warm Roman amber uplight glow at base
+      ctx.strokeStyle = '#786852';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      const warmArchGlow = ctx.createLinearGradient(archCenterX, archBottomY - 26, archCenterX, archBottomY);
+      warmArchGlow.addColorStop(0, 'rgba(245, 158, 11, 0)');
+      warmArchGlow.addColorStop(1, 'rgba(251, 191, 36, 0.28)');
+      ctx.fillStyle = warmArchGlow;
+      ctx.fillRect(archCenterX - archRadius + 2, archBottomY - 26, archRadius * 2 - 4, 26);
+      ctx.restore();
+
+      // High roughness inside the dark arch void so it stays deep matte shadow
+      rCtx.save();
+      rCtx.beginPath();
+      rCtx.arc(archCenterX, archSpringY, archRadius, Math.PI, 0, false);
+      rCtx.lineTo(archCenterX + archRadius, archBottomY);
+      rCtx.lineTo(archCenterX - archRadius, archBottomY);
+      rCtx.closePath();
+      rCtx.fillStyle = 'rgb(248,248,248)';
+      rCtx.fill();
+      rCtx.restore();
+
+      // Engaged Roman travertine half-column between every arch (shaded cylindrically)
+      const colW = 11;
+      const colX = bx - colW * 0.5;
+      const colTop = sy + 18;
+      const colH = storyHeight - 26;
+      const colGrad = ctx.createLinearGradient(colX, 0, colX + colW, 0);
+      colGrad.addColorStop(0, '#a8977e');
+      colGrad.addColorStop(0.35, '#f5ede0');
+      colGrad.addColorStop(0.7, '#dfd2bc');
+      colGrad.addColorStop(1, '#8c7b64');
+      ctx.fillStyle = colGrad;
+      ctx.fillRect(colX, colTop, colW, colH);
+      // Wrap-around column at right edge of tile for col === 0
+      if (col === 0) {
+        ctx.fillRect(w - colW * 0.5, colTop, colW, colH);
+      }
+
+      // Column capital & base plinth
+      ctx.fillStyle = '#f5ede0';
+      ctx.fillRect(colX - 2, colTop, colW + 4, 5);
+      ctx.fillRect(colX - 2, colTop + colH - 5, colW + 4, 5);
+      if (col === 0) {
+        ctx.fillRect(w - colW * 0.5 - 2, colTop, colW + 4, 5);
+        ctx.fillRect(w - colW * 0.5 - 2, colTop + colH - 5, colW + 4, 5);
+      }
+    }
+  }
+
+  const map = new THREE.CanvasTexture(cColor);
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.ClampToEdgeWrapping;
+  map.repeat.set(6, 1);
+  map.anisotropy = 4;
+  map.colorSpace = THREE.SRGBColorSpace;
+
+  const roughnessMap = new THREE.CanvasTexture(cRough);
+  roughnessMap.wrapS = THREE.RepeatWrapping;
+  roughnessMap.wrapT = THREE.ClampToEdgeWrapping;
+  roughnessMap.repeat.set(6, 1);
+  roughnessMap.anisotropy = 4;
+
+  return { map, roughnessMap };
+}
+
+/**
+ * 11. Monumental Ribbed Pink-Beige Granite & Travertine Podium PBR (ZERO office windows!)
+ * Used for Sydney Opera House Bennelong Point podium, bridge piers, and monument bases.
+ */
+export function createGranitePodiumPBR(): {
+  map: THREE.CanvasTexture;
+  roughnessMap: THREE.CanvasTexture;
+} {
+  const w = 512;
+  const h = 512;
+  const cColor = document.createElement('canvas');
+  cColor.width = w;
+  cColor.height = h;
+  const ctx = cColor.getContext('2d')!;
+
+  const cRough = document.createElement('canvas');
+  cRough.width = w;
+  cRough.height = h;
+  const rCtx = cRough.getContext('2d')!;
+
+  // Base warm pink-beige granite & travertine masonry (#d8c7b8)
+  ctx.fillStyle = '#d8c7b8';
+  ctx.fillRect(0, 0, w, h);
+  rCtx.fillStyle = 'rgb(185,185,185)';
+  rCtx.fillRect(0, 0, w, h);
+
+  const rand = makeSeededRand(1111);
+
+  // Monumental rusticated ashlar granite stone courses (ZERO windows!)
+  const rows = 16;
+  const cols = 8;
+  const rowH = h / rows; // 32px
+  const colW = w / cols; // 64px
+
+  for (let r = 0; r < rows; r++) {
+    const y = r * rowH;
+    const offset = (r % 2) * (colW * 0.5);
+    for (let c = -1; c <= cols; c++) {
+      const x = c * colW + offset;
+      const baseR = 206 + Math.floor(rand() * 22);
+      const baseG = baseR - 15 + Math.floor(rand() * 6);
+      const baseB = baseR - 28 + Math.floor(rand() * 6);
+
+      // Stone block face
+      ctx.fillStyle = `rgb(${baseR},${baseG},${baseB})`;
+      ctx.fillRect(x + 2, y + 2, colW - 4, rowH - 4);
+
+      // Top sunlit chamfer highlight & bottom recessed shadow joint
+      ctx.fillStyle = 'rgba(255, 250, 244, 0.35)';
+      ctx.fillRect(x + 2, y + 2, colW - 4, 2);
+      ctx.fillStyle = 'rgba(92, 78, 66, 0.42)';
+      ctx.fillRect(x + 1, y + rowH - 2, colW - 2, 2);
+      ctx.fillRect(x + colW - 2, y + 1, 2, rowH - 2);
+    }
+  }
+
+  // Subtle vertical precast ribbed granite fluting & buttress piers every 64px
+  for (let x = 0; x < w; x += 16) {
+    ctx.fillStyle = x % 64 === 0 ? 'rgba(110, 94, 80, 0.26)' : 'rgba(120, 104, 90, 0.10)';
+    ctx.fillRect(x, 0, x % 64 === 0 ? 4 : 1.5, h);
+    ctx.fillStyle = 'rgba(250, 244, 236, 0.16)';
+    ctx.fillRect(x + 2, 0, 1.5, h);
+  }
+
+  // Projecting upper cornice cap & lower water-table plinth moulding
+  ctx.fillStyle = '#eadfd3';
+  ctx.fillRect(0, 0, w, 18);
+  ctx.fillStyle = '#9c8978';
+  ctx.fillRect(0, 18, w, 5);
+  ctx.fillStyle = '#c4b1a0';
+  ctx.fillRect(0, h - 24, w, 24);
+
+  // Fine mineral granite crystalline speckle
+  for (let i = 0; i < 14000; i++) {
+    const px = rand() * w;
+    const py = rand() * h;
+    const v = 150 + Math.floor(rand() * 90);
+    ctx.fillStyle = `rgba(${v},${v - 8},${v - 16},0.28)`;
+    ctx.fillRect(px, py, 2, 2);
+  }
+
+  const map = new THREE.CanvasTexture(cColor);
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(4, 1);
+  map.anisotropy = 4;
+  map.colorSpace = THREE.SRGBColorSpace;
+
+  const roughnessMap = new THREE.CanvasTexture(cRough);
+  roughnessMap.wrapS = THREE.RepeatWrapping;
+  roughnessMap.wrapT = THREE.RepeatWrapping;
+  roughnessMap.repeat.set(4, 1);
+  roughnessMap.anisotropy = 4;
+
+  return { map, roughnessMap };
 }

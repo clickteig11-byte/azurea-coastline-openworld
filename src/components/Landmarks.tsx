@@ -13,6 +13,8 @@ import {
   createLimestonePBR,
   createPalazzoPBR,
   createSidewalkCobblePBR,
+  createColosseumArcadePBR,
+  createGranitePodiumPBR,
 } from './Textures';
 import { getTerrainHeight } from '../game/worldMath';
 import { simState } from '../game/store';
@@ -54,6 +56,8 @@ export function VegasLandmarks() {
   const limestonePBR = useMemo(() => unwrapPBR(createLimestonePBR()), []);
   const palazzoPBR = useMemo(() => unwrapPBR(createPalazzoPBR()), []);
   const cobblePBR = useMemo(() => unwrapPBR(createSidewalkCobblePBR()), []);
+  const colosseumArcadePBR = useMemo(() => unwrapPBR(createColosseumArcadePBR()), []);
+  const granitePodiumPBR = useMemo(() => unwrapPBR(createGranitePodiumPBR()), []);
 
   // 2. GOLDEN GATE SUSPENSION BRIDGE — Twin Catenary Main Cables & Vertical Suspender Ropes
   const goldenGateGeometry = useMemo(() => {
@@ -108,54 +112,226 @@ export function VegasLandmarks() {
     return { cables, suspenders };
   }, []);
 
-  // 4. PARIS EIFFEL TOWER — 4 Sculpted Curved Lattice Piers & Decorative Base Arches
-  const eiffelPiers = useMemo(() => {
+  // 4. PARIS EIFFEL TOWER — 4 Multi-Chord Lattice Legs, Horizontal Girders & Diagonal X-Bracing Trusses
+  const { eiffelPiers, eiffelTrussStruts } = useMemo(() => {
+    const getSpanAtY = (y: number) => {
+      if (y <= 18) return 13.5 - (y / 18) * (13.5 - 7.8);
+      if (y <= 34) return 7.8 - ((y - 18) / 16) * (7.8 - 4.2);
+      return Math.max(0.85, 4.2 - ((y - 34) / 28) * (4.2 - 0.85));
+    };
+
     const dirs = [
       [1, 1],
       [-1, 1],
       [-1, -1],
       [1, -1],
     ];
-    return dirs.map(([sx, sz]) => {
-      const curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(sx * 13.5, 0, sz * 13.5),
-        new THREE.Vector3(sx * 9.2, 14, sz * 9.2),
-        new THREE.Vector3(sx * 5.4, 28, sz * 5.4),
-        new THREE.Vector3(sx * 2.2, 46, sz * 2.2),
-        new THREE.Vector3(sx * 0.75, 62, sz * 0.75),
-      ]);
-      return new THREE.TubeGeometry(curve, 24, 0.65, 8, false);
+
+    // Each of the 4 main corner piers has an outer and inner chord plus box-lattice thickness
+    const piers: THREE.TubeGeometry[] = [];
+    dirs.forEach(([sx, sz]) => {
+      const chords = [
+        [0, 0],
+        [sx * 0.65, 0],
+        [0, sz * 0.65],
+        [-sx * 0.55, -sz * 0.55],
+      ];
+      chords.forEach(([ox, oz], cIdx) => {
+        const scale = 1 - cIdx * 0.08;
+        const curve = new THREE.CatmullRomCurve3([
+          new THREE.Vector3(sx * 13.5 + ox, 0.8, sz * 13.5 + oz),
+          new THREE.Vector3(sx * 9.8 + ox * 0.85, 11, sz * 9.8 + oz * 0.85),
+          new THREE.Vector3(sx * 7.8 + ox * 0.7, 18, sz * 7.8 + oz * 0.7),
+          new THREE.Vector3(sx * 5.6 + ox * 0.5, 26, sz * 5.6 + oz * 0.5),
+          new THREE.Vector3(sx * 4.2 + ox * 0.35, 34, sz * 4.2 + oz * 0.35),
+          new THREE.Vector3(sx * 2.1 + ox * 0.2, 48, sz * 2.1 + oz * 0.2),
+          new THREE.Vector3(sx * 0.85, 62, sz * 0.85),
+        ]);
+        piers.push(new THREE.TubeGeometry(curve, 24, cIdx === 0 ? 0.52 : 0.28 * scale, 6, false));
+      });
     });
+
+    // Build horizontal & diagonal X-bracing iron truss struts across all 3 tower stages on all 4 faces
+    const struts: { mid: THREE.Vector3; quat: THREE.Quaternion; len: number; radius: number }[] = [];
+    const up = new THREE.Vector3(0, 1, 0);
+    const addStrut = (a: THREE.Vector3, b: THREE.Vector3, radius: number) => {
+      const dir = new THREE.Vector3().subVectors(b, a);
+      const len = dir.length();
+      if (len < 0.1) return;
+      const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
+      const quat = new THREE.Quaternion().setFromUnitVectors(up, dir.normalize());
+      struts.push({ mid, quat, len, radius });
+    };
+
+    // Stage 1: Internal leg X-bracing inside each of the 4 splayed legs (y = 2..17m)
+    const legBands = [2.2, 5.5, 9.0, 12.5, 16.2];
+    dirs.forEach(([sx, sz]) => {
+      for (let i = 0; i < legBands.length - 1; i++) {
+        const y0 = legBands[i];
+        const y1 = legBands[i + 1];
+        const s0 = getSpanAtY(y0);
+        const s1 = getSpanAtY(y1);
+        const w0 = 1.45 - i * 0.12;
+        const w1 = 1.45 - (i + 1) * 0.12;
+        // Outer & inner leg corner posts at y0 and y1
+        const a0 = new THREE.Vector3(sx * (s0 + w0), y0, sz * (s0 - w0));
+        const b0 = new THREE.Vector3(sx * (s0 - w0), y0, sz * (s0 + w0));
+        const a1 = new THREE.Vector3(sx * (s1 + w1), y1, sz * (s1 - w1));
+        const b1 = new THREE.Vector3(sx * (s1 - w1), y1, sz * (s1 + w1));
+        addStrut(a0, b0, 0.16);
+        addStrut(a0, b1, 0.14);
+        addStrut(b0, a1, 0.14);
+      }
+    });
+
+    // Stage 1 Upper Spandrel Lattice Belt above the 4 semicircular base arches (y = 12.5..17.5m)
+    const stage1Belt = [12.5, 15.0, 17.4];
+    for (let i = 0; i < stage1Belt.length - 1; i++) {
+      const y0 = stage1Belt[i];
+      const y1 = stage1Belt[i + 1];
+      const s0 = getSpanAtY(y0);
+      const s1 = getSpanAtY(y1);
+      [-1, 1].forEach((side) => {
+        // North/South faces
+        addStrut(new THREE.Vector3(-s0, y0, side * s0), new THREE.Vector3(s0, y0, side * s0), 0.18);
+        addStrut(new THREE.Vector3(-s0, y0, side * s0), new THREE.Vector3(0, y1, side * s1), 0.15);
+        addStrut(new THREE.Vector3(0, y0, side * s0), new THREE.Vector3(-s1, y1, side * s1), 0.15);
+        addStrut(new THREE.Vector3(0, y0, side * s0), new THREE.Vector3(s1, y1, side * s1), 0.15);
+        addStrut(new THREE.Vector3(s0, y0, side * s0), new THREE.Vector3(0, y1, side * s1), 0.15);
+        // East/West faces
+        addStrut(new THREE.Vector3(side * s0, y0, -s0), new THREE.Vector3(side * s0, y0, s0), 0.18);
+        addStrut(new THREE.Vector3(side * s0, y0, -s0), new THREE.Vector3(side * s1, y1, 0), 0.15);
+        addStrut(new THREE.Vector3(side * s0, y0, 0), new THREE.Vector3(side * s1, y1, -s1), 0.15);
+        addStrut(new THREE.Vector3(side * s0, y0, 0), new THREE.Vector3(side * s1, y1, s1), 0.15);
+        addStrut(new THREE.Vector3(side * s0, y0, s0), new THREE.Vector3(side * s1, y1, 0), 0.15);
+      });
+    }
+
+    // Stage 2 (y = 19..34m) & Stage 3 (y = 35..61m): Full 4-face Horizontal & Diagonal X-Bracing Trusses
+    const upperLevels = [19.2, 22.8, 26.4, 30.0, 33.5, 35.5, 39.5, 43.5, 47.5, 51.5, 55.5, 59.5];
+    for (let i = 0; i < upperLevels.length - 1; i++) {
+      const y0 = upperLevels[i];
+      const y1 = upperLevels[i + 1];
+      if (Math.abs(y0 - 33.5) < 0.2) continue; // 2nd deck break
+      const s0 = getSpanAtY(y0);
+      const s1 = getSpanAtY(y1);
+      const r = y0 < 34 ? 0.16 : 0.13;
+
+      [-1, 1].forEach((side) => {
+        // North & South faces (z = ±s)
+        const nL0 = new THREE.Vector3(-s0, y0, side * s0);
+        const nR0 = new THREE.Vector3(s0, y0, side * s0);
+        const nL1 = new THREE.Vector3(-s1, y1, side * s1);
+        const nR1 = new THREE.Vector3(s1, y1, side * s1);
+        addStrut(nL0, nR0, r * 1.15);
+        addStrut(nL0, nR1, r);
+        addStrut(nR0, nL1, r);
+
+        // East & West faces (x = ±s)
+        const eL0 = new THREE.Vector3(side * s0, y0, -s0);
+        const eR0 = new THREE.Vector3(side * s0, y0, s0);
+        const eL1 = new THREE.Vector3(side * s1, y1, -s1);
+        const eR1 = new THREE.Vector3(side * s1, y1, s1);
+        addStrut(eL0, eR0, r * 1.15);
+        addStrut(eL0, eR1, r);
+        addStrut(eR0, eL1, r);
+      });
+    }
+
+    return { eiffelPiers: piers, eiffelTrussStruts: struts };
   }, []);
 
-  // 7. SYDNEY OPERA HOUSE — 6 Sculpted Vaulted Ceramic Sail Shells
+  // 7. SYDNEY OPERA HOUSE — 6 Sculpted Pointed Gothic-Arch Ceramic Sail Vaults (rising to y = 34m!)
   const operaSailGeometries = useMemo(() => {
-    const makeSailShell = (height: number, width: number, depth: number) => {
-      const shape = new THREE.Shape();
-      shape.moveTo(0, 0);
-      shape.quadraticCurveTo(depth * 0.25, height * 0.68, depth, height);
-      shape.quadraticCurveTo(depth * 0.78, height * 0.35, depth * 0.55, 0);
-      shape.closePath();
+    const makeSailShell = (height: number, width: number, length: number) => {
+      // Utzon's pointed spherical-triangle shell vault:
+      // Springs from a narrow rear pedestal at (0, 0, 0) and sweeps upward & forward
+      // to a pointed Gothic arch peak at (length, height, 0) with vaulted side ribs planted on the podium.
+      const uSegs = 22;
+      const vSegs = 24; // -1..0..+1 across the pointed Gothic arch
+      const positions: number[] = [];
+      const uvs: number[] = [];
+      const indices: number[] = [];
 
-      const geo = new THREE.ExtrudeGeometry(shape, {
-        depth: width,
-        bevelEnabled: true,
-        bevelThickness: 0.45,
-        bevelSize: 0.35,
-        bevelSegments: 3,
-        curveSegments: 16,
-      });
-      geo.translate(0, 0, -width / 2);
+      const evalShellPoint = (u: number, v: number, wallOffset: number) => {
+        const av = Math.abs(v);
+        const signV = v < 0 ? -1 : 1;
+        // Ridge height rises along a dramatic sweeping arc up to `height`
+        const ridgeH = Math.pow(u, 0.68) * height;
+        // Half-width flares from narrow pedestal base to wide middle/front vault
+        const halfW = (0.14 + 0.86 * Math.pow(Math.sin(u * Math.PI * 0.58), 0.85)) * (width * 0.5);
+        // Pointed Gothic arch cross-section (two circular/parabolic arcs meeting at a sharp ridge at v = 0)
+        const archFactor = Math.max(0, 1 - Math.pow(av, 1.38));
+        const y = Math.max(0, ridgeH * archFactor - wallOffset * 0.4);
+        const z = signV * (av * halfW - wallOffset * signV * 0.35);
+        // Side bases plant on podium while the pointed ridge beak sweeps dramatically forward
+        const x = u * length - Math.pow(av, 1.55) * (length * 0.28 * u) - wallOffset * 0.35;
+        return [x, y, z] as const;
+      };
+
+      // Outer shell surface (layer 0) and inner shell surface (layer 1)
+      for (let layer = 0; layer < 2; layer++) {
+        const offset = layer === 0 ? 0 : 0.55;
+        for (let iu = 0; iu <= uSegs; iu++) {
+          const u = iu / uSegs;
+          for (let iv = 0; iv <= vSegs; iv++) {
+            const v = (iv / vSegs) * 2 - 1;
+            const [x, y, z] = evalShellPoint(u, v, offset);
+            positions.push(x, y, z);
+            uvs.push(u * 2.5, (iv / vSegs) * 3.0);
+          }
+        }
+      }
+
+      const stride = vSegs + 1;
+      const layerVerts = (uSegs + 1) * stride;
+
+      // Outer surface triangles
+      for (let iu = 0; iu < uSegs; iu++) {
+        for (let iv = 0; iv < vSegs; iv++) {
+          const a = iu * stride + iv;
+          const b = (iu + 1) * stride + iv;
+          const c = (iu + 1) * stride + (iv + 1);
+          const d = iu * stride + (iv + 1);
+          indices.push(a, b, d, b, c, d);
+        }
+      }
+      // Inner surface triangles (reversed winding)
+      for (let iu = 0; iu < uSegs; iu++) {
+        for (let iv = 0; iv < vSegs; iv++) {
+          const a = layerVerts + iu * stride + iv;
+          const b = layerVerts + (iu + 1) * stride + iv;
+          const c = layerVerts + (iu + 1) * stride + (iv + 1);
+          const d = layerVerts + iu * stride + (iv + 1);
+          indices.push(a, d, b, b, d, c);
+        }
+      }
+      // Stitch front pointed-arch rim (iu = uSegs) between outer and inner shells
+      const frontU = uSegs * stride;
+      for (let iv = 0; iv < vSegs; iv++) {
+        const o0 = frontU + iv;
+        const o1 = frontU + iv + 1;
+        const i0 = layerVerts + frontU + iv;
+        const i1 = layerVerts + frontU + iv + 1;
+        indices.push(o0, i0, o1, o1, i0, i1);
+      }
+
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geo.setIndex(indices);
+      geo.computeVertexNormals();
       return geo;
     };
 
     return {
-      tallHallA: makeSailShell(26, 11.5, 16),
-      midHallA: makeSailShell(21, 9.8, 13.5),
-      lowHallA: makeSailShell(15.5, 8.2, 10.5),
-      tallHallB: makeSailShell(22.5, 10.2, 14.5),
-      midHallB: makeSailShell(17.5, 8.6, 11.8),
-      restaurantShell: makeSailShell(11.5, 6.8, 8.5),
+      // Tallest Concert Hall shell rises 29m above the 5m podium -> y = 34m total!
+      tallHallA: makeSailShell(29.0, 14.5, 17.5),
+      midHallA: makeSailShell(23.5, 12.4, 14.8),
+      lowHallA: makeSailShell(18.0, 10.2, 11.8),
+      tallHallB: makeSailShell(25.5, 13.0, 15.8),
+      midHallB: makeSailShell(20.0, 11.0, 13.0),
+      restaurantShell: makeSailShell(14.0, 8.8, 9.8),
     };
   }, []);
 
@@ -281,8 +457,18 @@ export function VegasLandmarks() {
              Position: [-52, empireY, -28] — West Midtown Block (clear of avenues)
          ================================================================================= */}
       <group position={[-52, empireY, -28]}>
+        {/* Street-Level Pink-Beige Granite Water-Table Foundation Plinth (27.2m × 1.8m × 27.2m) */}
+        <mesh position={[0, 0.9, 0]} castShadow receiveShadow>
+          <boxGeometry args={[27.2, 1.8, 27.2]} />
+          <meshStandardMaterial
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            roughness={0.58}
+            metalness={0.1}
+          />
+        </mesh>
         {/* 5-Story Indiana Limestone Base Podium (26m × 10m × 26m) */}
-        <mesh position={[0, 5, 0]} castShadow receiveShadow>
+        <mesh position={[0, 5.8, 0]} castShadow receiveShadow>
           <boxGeometry args={[26, 10, 26]} />
           <meshStandardMaterial
             map={artDecoPBR.map}
@@ -390,16 +576,16 @@ export function VegasLandmarks() {
              Twin H-Towers straddle x = -23 and x = +23 so 44m roadway is 100% unobstructed!
          ================================================================================= */}
       <group position={[0, goldenGateY, -205]}>
-        {/* North & South Concrete Anchorages outside the roadway at x = ±23, z = ±48 */}
+        {/* North & South Monumental Granite/Concrete Cable Anchorages outside roadway at x = ±23, z = ±48 */}
         {[-48, 48].map((az) =>
           [-23, 23].map((ax) => (
             <mesh key={`anch-${ax}-${az}`} position={[ax, 2.6, az]} castShadow receiveShadow>
-              <boxGeometry args={[4.6, 5.2, 8.5]} />
+              <boxGeometry args={[4.8, 5.4, 8.8]} />
               <meshStandardMaterial
-                map={concreteSteelPBR.map}
-                roughnessMap={concreteSteelPBR.roughnessMap}
-                roughness={0.68}
-                metalness={0.2}
+                map={granitePodiumPBR.map}
+                roughnessMap={granitePodiumPBR.roughnessMap}
+                roughness={0.66}
+                metalness={0.14}
               />
             </mesh>
           ))
@@ -408,15 +594,15 @@ export function VegasLandmarks() {
         {/* Twin Monumental International Orange (#c2410c) Art Deco H-Towers (z = -22 and z = +22) */}
         {[-22, 22].map((tz) => (
           <group key={`tower-${tz}`} position={[0, 0, tz]}>
-            {/* Concrete Pier Fenders at the base of each leg (x = ±23) */}
+            {/* Ribbed Granite/Concrete Pier Fenders at the base of each leg (x = ±23) */}
             {[-23, 23].map((lx) => (
               <React.Fragment key={`leg-${lx}`}>
                 <mesh position={[lx, 2.0, 0]} castShadow receiveShadow>
-                  <boxGeometry args={[5.4, 4.0, 7.2]} />
+                  <boxGeometry args={[5.6, 4.0, 7.4]} />
                   <meshStandardMaterial
-                    map={concreteSteelPBR.map}
-                    roughnessMap={concreteSteelPBR.roughnessMap}
-                    roughness={0.65}
+                    map={granitePodiumPBR.map}
+                    roughnessMap={granitePodiumPBR.roughnessMap}
+                    roughness={0.64}
                   />
                 </mesh>
                 {/* Main Stepped Art Deco Vertical Steel Shafts (height = 68m) */}
@@ -504,8 +690,8 @@ export function VegasLandmarks() {
             <mesh position={[0, 0.35, 0]} receiveShadow>
               <boxGeometry args={[2.2, 0.7, 96]} />
               <meshStandardMaterial
-                map={concreteSteelPBR.map}
-                roughnessMap={concreteSteelPBR.roughnessMap}
+                map={granitePodiumPBR.map}
+                roughnessMap={granitePodiumPBR.roughnessMap}
                 roughness={0.65}
               />
             </mesh>
@@ -528,13 +714,13 @@ export function VegasLandmarks() {
              Position: [-52, bigBenY, -88] — Neo-Gothic Carved Limestone & 4 Illuminated Dials
          ================================================================================= */}
       <group position={[-52, bigBenY, -88]}>
-        {/* Carved Stone Base Plinth (13.5m × 3m × 13.5m) */}
-        <mesh position={[0, 1.5, 0]} castShadow receiveShadow>
-          <boxGeometry args={[13.5, 3, 13.5]} />
+        {/* Carved Granite & Portland Stone Base Plinth (13.8m × 3.2m × 13.8m) */}
+        <mesh position={[0, 1.6, 0]} castShadow receiveShadow>
+          <boxGeometry args={[13.8, 3.2, 13.8]} />
           <meshStandardMaterial
-            map={limestonePBR.map}
-            roughnessMap={limestonePBR.roughnessMap}
-            roughness={0.65}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            roughness={0.64}
           />
         </mesh>
         {/* Main Neo-Gothic Golden Sandstone & Limestone Shaft (11m × 40m × 11m) */}
@@ -684,101 +870,199 @@ export function VegasLandmarks() {
       </group>
 
       {/* =================================================================================
-          4. PARIS — EIFFEL TOWER & CHAMP DE MARS COBBLESTONE PLAZA
+          4. PARIS — EIFFEL TOWER & CHAMP DE MARS PARK PROMENADE
              Position: [95, eiffelY, 35]
          ================================================================================= */}
       <group position={[95, eiffelY, 35]}>
-        {/* Champ de Mars Textured Cobblestone Plaza */}
-        <mesh position={[0, 0.8, 0]} receiveShadow>
-          <boxGeometry args={[32, 1.6, 32]} />
-          <meshStandardMaterial
-            map={cobblePBR.map}
-            roughnessMap={cobblePBR.roughnessMap}
-            roughness={0.72}
-          />
+        {/* Manicured Green Champ de Mars Lawn & Parisian Gravel Cross-Path (NO bulky white box!) */}
+        <mesh position={[0, 0.08, 0]} receiveShadow>
+          <boxGeometry args={[34, 0.16, 34]} />
+          <meshStandardMaterial color="#2d5a27" roughness={0.88} />
         </mesh>
-        {/* 4 Masonry Corner Pier Foundations */}
+        <mesh position={[0, 0.12, 0]} receiveShadow>
+          <boxGeometry args={[34, 0.18, 7.5]} />
+          <meshStandardMaterial map={cobblePBR.map} color="#d6c7b2" roughness={0.78} />
+        </mesh>
+        <mesh position={[0, 0.12, 0]} receiveShadow>
+          <boxGeometry args={[7.5, 0.18, 34]} />
+          <meshStandardMaterial map={cobblePBR.map} color="#d6c7b2" roughness={0.78} />
+        </mesh>
+        {/* Central Ornamental Octagonal Reflecting Basin under the 4 Arches */}
+        <mesh position={[0, 0.16, 0]} receiveShadow>
+          <cylinderGeometry args={[5.2, 5.5, 0.28, 8]} />
+          <meshStandardMaterial map={granitePodiumPBR.map} roughness={0.6} />
+        </mesh>
+
+        {/* 4 Angled Masonry Stone Pier Foundations at the 4 Corners ([±13.5, 0, ±13.5]) */}
         {[
-          [11.5, 11.5],
-          [-11.5, 11.5],
-          [-11.5, -11.5],
-          [11.5, -11.5],
-        ].map(([px, pz], idx) => (
-          <mesh key={idx} position={[px, 2.1, pz]} castShadow receiveShadow>
-            <boxGeometry args={[4.8, 2.6, 4.8]} />
-            <meshStandardMaterial map={limestonePBR.map} roughness={0.62} />
-          </mesh>
+          [1, 1],
+          [-1, 1],
+          [-1, -1],
+          [1, -1],
+        ].map(([sx, sz], idx) => (
+          <group key={idx} position={[sx * 13.5, 0, sz * 13.5]}>
+            {/* Lower Granite Footing Plinth */}
+            <mesh position={[0, 0.85, 0]} castShadow receiveShadow>
+              <boxGeometry args={[4.4, 1.7, 4.4]} />
+              <meshStandardMaterial
+                map={granitePodiumPBR.map}
+                roughnessMap={granitePodiumPBR.roughnessMap}
+                roughness={0.62}
+              />
+            </mesh>
+            {/* Angled Haussmann Stone Pier Shoe cradling the iron leg */}
+            <mesh
+              position={[-sx * 0.45, 2.0, -sz * 0.45]}
+              rotation={[sz * 0.24, 0, -sx * 0.24]}
+              castShadow
+              receiveShadow
+            >
+              <boxGeometry args={[3.4, 2.2, 3.4]} />
+              <meshStandardMaterial
+                map={granitePodiumPBR.map}
+                roughnessMap={granitePodiumPBR.roughnessMap}
+                color="#d8c7b8"
+                roughness={0.58}
+              />
+            </mesh>
+          </group>
         ))}
-        {/* 4 Curved Bronze-Steel Lattice Piers */}
+
+        {/* 4 Multi-Chord Curved Parisian Bronze-Iron Lattice Piers (#6b4c35) */}
         {eiffelPiers.map((geo, idx) => (
-          <mesh key={idx} geometry={geo} castShadow>
+          <mesh key={idx} geometry={geo} castShadow receiveShadow>
             <meshStandardMaterial
               map={steelTrussPBR.map}
               roughnessMap={steelTrussPBR.roughnessMap}
-              color="#92400e"
-              metalness={0.74}
-              roughness={0.28}
+              color="#6b4c35"
+              metalness={0.72}
+              roughness={0.32}
             />
           </mesh>
         ))}
-        {/* Decorative Lower Arches spanning between the 4 piers */}
-        {[0, Math.PI / 2].map((rotY, idx) => (
-          <React.Fragment key={idx}>
-            <mesh position={[0, 4.5, idx === 0 ? 10.2 : 0]} rotation={[0, rotY, 0]}>
-              <torusGeometry args={[7.8, 0.42, 8, 24, Math.PI]} />
-              <meshStandardMaterial color="#92400e" metalness={0.75} roughness={0.3} />
-            </mesh>
-            <mesh position={[idx === 1 ? -10.2 : 0, 4.5, idx === 0 ? -10.2 : 0]} rotation={[0, rotY, 0]}>
-              <torusGeometry args={[7.8, 0.42, 8, 24, Math.PI]} />
-              <meshStandardMaterial color="#92400e" metalness={0.75} roughness={0.3} />
-            </mesh>
-          </React.Fragment>
+
+        {/* Horizontal & Diagonal X-Bracing Iron Truss Struts across all 3 Tower Stages */}
+        {eiffelTrussStruts.map((s, idx) => (
+          <mesh key={idx} position={s.mid} quaternion={s.quat} castShadow>
+            <cylinderGeometry args={[s.radius, s.radius, s.len, 6]} />
+            <meshStandardMaterial
+              map={steelTrussPBR.map}
+              color="#6b4c35"
+              metalness={0.74}
+              roughness={0.3}
+            />
+          </mesh>
         ))}
-        {/* 1st Observation Deck (y = 18m) */}
-        <mesh position={[0, 18, 0]} castShadow>
-          <boxGeometry args={[17.5, 2.0, 17.5]} />
+
+        {/* 4 Semicircular Iron Lattice Base Arches on North, South, East, and West Faces (connecting the 4 piers at y = 8m) */}
+        {[
+          { pos: [0, 2.2, 10.6] as [number, number, number], rotY: 0, tiltX: -0.22 },
+          { pos: [0, 2.2, -10.6] as [number, number, number], rotY: Math.PI, tiltX: -0.22 },
+          { pos: [10.6, 2.2, 0] as [number, number, number], rotY: Math.PI / 2, tiltX: -0.22 },
+          { pos: [-10.6, 2.2, 0] as [number, number, number], rotY: -Math.PI / 2, tiltX: -0.22 },
+        ].map((arch, idx) => (
+          <group key={idx} position={arch.pos} rotation={[0, arch.rotY, 0]}>
+            <group rotation={[arch.tiltX, 0, 0]}>
+            {/* Outer Arch Ring */}
+            <mesh castShadow>
+              <torusGeometry args={[8.8, 0.36, 8, 32, Math.PI]} />
+              <meshStandardMaterial
+                map={steelTrussPBR.map}
+                color="#6b4c35"
+                metalness={0.75}
+                roughness={0.28}
+              />
+            </mesh>
+            {/* Inner Concentric Lattice Arch Ring */}
+            <mesh castShadow>
+              <torusGeometry args={[7.6, 0.28, 8, 32, Math.PI]} />
+              <meshStandardMaterial
+                map={steelTrussPBR.map}
+                color="#7c583e"
+                metalness={0.75}
+                roughness={0.28}
+              />
+            </mesh>
+            {/* Radial Spandrel Lattice Spokes connecting Inner & Outer Arch Rings */}
+            {Array.from({ length: 13 }).map((_, sIdx) => {
+              const ang = (sIdx / 12) * Math.PI;
+              const rMid = 8.2;
+              return (
+                <mesh
+                  key={sIdx}
+                  position={[Math.cos(ang) * rMid, Math.sin(ang) * rMid, 0]}
+                  rotation={[0, 0, ang - Math.PI / 2]}
+                >
+                  <cylinderGeometry args={[0.1, 0.1, 1.3, 6]} />
+                  <meshStandardMaterial color="#6b4c35" metalness={0.75} roughness={0.3} />
+                </mesh>
+              );
+            })}
+            </group>
+          </group>
+        ))}
+
+        {/* 1st Observation Deck Double-Gallery Pavilion (y = 18m) with Warm Parisian Illumination */}
+        <mesh position={[0, 18.0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[17.8, 1.6, 17.8]} />
           <meshStandardMaterial
             map={steelTrussPBR.map}
             roughnessMap={steelTrussPBR.roughnessMap}
-            color="#b45309"
-            metalness={0.7}
+            color="#6b4c35"
+            metalness={0.72}
             roughness={0.3}
           />
         </mesh>
-        <mesh position={[0, 19.2, 0]}>
-          <boxGeometry args={[17.8, 0.35, 17.8]} />
-          <meshStandardMaterial color="#fef3c7" emissive="#f59e0b" emissiveIntensity={1.6} />
+        <mesh position={[0, 19.1, 0]}>
+          <boxGeometry args={[16.2, 0.75, 16.2]} />
+          <meshStandardMaterial color="#fef3c7" emissive="#f59e0b" emissiveIntensity={1.35} />
         </mesh>
-        {/* 2nd Observation Deck (y = 34m) */}
-        <mesh position={[0, 34, 0]} castShadow>
-          <boxGeometry args={[10.0, 1.8, 10.0]} />
+        <mesh position={[0, 19.75, 0]} castShadow>
+          <boxGeometry args={[17.2, 0.55, 17.2]} />
+          <meshStandardMaterial color="#7c583e" metalness={0.74} roughness={0.28} />
+        </mesh>
+
+        {/* 2nd Observation Deck Double-Gallery Platform (y = 34m) */}
+        <mesh position={[0, 34.0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[10.4, 1.4, 10.4]} />
           <meshStandardMaterial
             map={steelTrussPBR.map}
             roughnessMap={steelTrussPBR.roughnessMap}
-            color="#d97706"
+            color="#6b4c35"
             metalness={0.72}
-            roughness={0.26}
+            roughness={0.28}
           />
         </mesh>
-        {/* Upper Tapered Lattice Shaft (y = 35m..52m) */}
-        <mesh position={[0, 43.5, 0]} castShadow>
-          <cylinderGeometry args={[1.8, 3.6, 18, 4]} />
+        <mesh position={[0, 34.95, 0]}>
+          <boxGeometry args={[9.4, 0.55, 9.4]} />
+          <meshStandardMaterial color="#fef3c7" emissive="#f59e0b" emissiveIntensity={1.45} />
+        </mesh>
+
+        {/* Upper Tapered Iron Lattice Shaft Core (y = 35m..60m) */}
+        <mesh position={[0, 47.5, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
+          <cylinderGeometry args={[1.25, 3.6, 25, 4, 6, true]} />
           <meshStandardMaterial
             map={steelTrussPBR.map}
             roughnessMap={steelTrussPBR.roughnessMap}
-            color="#b45309"
+            color="#6b4c35"
             metalness={0.75}
-            roughness={0.26}
+            roughness={0.28}
+            side={THREE.DoubleSide}
           />
         </mesh>
-        {/* Summit Cupola Deck + Rotating Golden Sky-Beacon */}
-        <mesh position={[0, 53, 0]} castShadow>
-          <boxGeometry args={[4.4, 2.4, 4.4]} />
-          <meshStandardMaterial color="#fbbf24" metalness={0.85} roughness={0.2} />
+
+        {/* Summit Cupola Observatory (y = 60.5m) + Rotating Golden Sky-Beacon */}
+        <mesh position={[0, 60.5, 0]} castShadow>
+          <cylinderGeometry args={[2.2, 2.5, 2.4, 8]} />
+          <meshStandardMaterial color="#6b4c35" metalness={0.78} roughness={0.24} />
         </mesh>
-        <group ref={eiffelBeaconRef} position={[0, 56, 0]}>
+        <mesh position={[0, 62.1, 0]}>
+          <cylinderGeometry args={[1.7, 2.0, 1.1, 12]} />
+          <meshStandardMaterial color="#fef3c7" emissive="#fbbf24" emissiveIntensity={1.8} />
+        </mesh>
+        <group ref={eiffelBeaconRef} position={[0, 64.0, 0]}>
           <mesh>
-            <cylinderGeometry args={[1.2, 1.2, 2.2, 12]} />
+            <cylinderGeometry args={[1.15, 1.15, 2.2, 12]} />
             <meshStandardMaterial color="#fef9c3" emissive="#fde047" emissiveIntensity={2.8} />
           </mesh>
           <mesh position={[0, 0, 6]} rotation={[Math.PI / 2, 0, 0]}>
@@ -786,9 +1070,9 @@ export function VegasLandmarks() {
             <meshBasicMaterial color="#fef08a" transparent opacity={0.35} side={THREE.DoubleSide} />
           </mesh>
         </group>
-        <mesh position={[0, 64, 0]}>
-          <cylinderGeometry args={[0.16, 0.85, 18, 12]} />
-          <meshStandardMaterial color="#fef08a" emissive="#f59e0b" emissiveIntensity={0.9} metalness={0.9} />
+        <mesh position={[0, 71.5, 0]}>
+          <cylinderGeometry args={[0.12, 0.7, 15, 12]} />
+          <meshStandardMaterial color="#f8fafc" emissive="#f59e0b" emissiveIntensity={0.75} metalness={0.9} />
         </mesh>
       </group>
 
@@ -797,14 +1081,14 @@ export function VegasLandmarks() {
              Position: [54, burjY, -148] — Stepped Y-Plan Spiral Buttressed Glass Tower
          ================================================================================= */}
       <group position={[54, burjY, -148]}>
-        {/* Sculpted Reflective Pool & Terraced Travertine Podium */}
+        {/* Sculpted Reflective Pool & Terraced Travertine/Granite Podium (ZERO office windows on base!) */}
         <mesh position={[0, 1.0, 0]} receiveShadow>
           <cylinderGeometry args={[18, 20, 2.0, 6]} />
           <meshStandardMaterial
-            map={concreteSteelPBR.map}
-            roughnessMap={concreteSteelPBR.roughnessMap}
-            roughness={0.45}
-            metalness={0.35}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            roughness={0.52}
+            metalness={0.18}
           />
         </mesh>
         <mesh position={[0, 2.15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -883,92 +1167,119 @@ export function VegasLandmarks() {
 
       {/* =================================================================================
           6. ROME — THE COLOSSEUM (FLAVIAN AMPHITHEATRE)
-             Position: [-105, colosseumY, 45] — Travertine Limestone Arched Facade & Cavea
+             Position: [-105, colosseumY, 45] — Open Semi-Circular Arched Travertine Arcade & Cavea
          ================================================================================= */}
       <group position={[-105, colosseumY, 45]}>
         {/* Travertine Stone Stylobate Base Plaza */}
-        <mesh position={[0, 0.7, 0]} receiveShadow>
-          <cylinderGeometry args={[23.5, 24.5, 1.4, 48]} />
+        <mesh position={[0, 0.55, 0]} receiveShadow>
+          <cylinderGeometry args={[24.0, 25.0, 1.1, 64]} />
           <meshStandardMaterial
-            map={limestonePBR.map}
-            roughnessMap={limestonePBR.roughnessMap}
-            roughness={0.7}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            roughness={0.68}
           />
         </mesh>
-        {/* Sandy Elliptical Arena Floor + Hypogeum Substructure Walls */}
-        <mesh position={[0, 1.45, 0]} receiveShadow>
-          <cylinderGeometry args={[14.5, 14.5, 0.4, 36]} />
+
+        {/* Sandy Elliptical Arena Floor (y = 1.2m) + Travertine Arena Podium Wall */}
+        <mesh position={[0, 1.2, 0]} receiveShadow>
+          <cylinderGeometry args={[14.2, 14.2, 0.35, 48]} />
           <meshStandardMaterial color="#d6b88a" roughness={0.88} />
         </mesh>
-        {/* 3 Stacked Tiers of Arched Travertine Outer Wall (open-ended cylinder) */}
-        {[
-          { y: 4.5, h: 6.2, r: 22.0 },
-          { y: 11.2, h: 6.2, r: 21.8 },
-          { y: 17.8, h: 5.8, r: 21.6 },
-        ].map((tier, tIdx) => (
-          <group key={tIdx}>
-            <mesh position={[0, tier.y, 0]} castShadow receiveShadow>
-              <cylinderGeometry args={[tier.r, tier.r, tier.h, 36, 1, true]} />
-              <meshStandardMaterial
-                map={artDecoPBR.map}
-                roughnessMap={artDecoPBR.roughnessMap}
-                color="#e7d8c1"
-                roughness={0.62}
-                side={THREE.DoubleSide}
-              />
-            </mesh>
-            {/* Travertine Cornice Ring between stories */}
-            <mesh position={[0, tier.y + tier.h / 2, 0]} rotation={[Math.PI / 2, 0, 0]}>
-              <torusGeometry args={[tier.r + 0.25, 0.42, 8, 48]} />
-              <meshStandardMaterial map={limestonePBR.map} color="#d6c4ab" roughness={0.58} />
-            </mesh>
-          </group>
-        ))}
-
-        {/* Historic Iconic Surviving North-East Outer Attic Wall (4th Story at y = 22.5m) */}
-        <mesh position={[0, 22.2, 0]} rotation={[0, -0.4, 0]} castShadow receiveShadow>
-          <cylinderGeometry args={[22.2, 22.2, 4.6, 28, 1, true, 0, Math.PI * 1.18]} />
+        <mesh position={[0, 2.8, 0]} receiveShadow>
+          <cylinderGeometry args={[14.3, 14.3, 3.2, 48, 1, true]} />
           <meshStandardMaterial
-            map={artDecoPBR.map}
-            roughnessMap={artDecoPBR.roughnessMap}
-            color="#dfcbb0"
+            map={limestonePBR.map}
+            color="#d6c4ab"
+            roughness={0.68}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+
+        {/* Outer Open-Ended Cylindrical Travertine Facade with 3 Stories of Semi-Circular Roman Arches */}
+        <mesh position={[0, 10.6, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[22.0, 22.0, 19.2, 64, 1, true]} />
+          <meshStandardMaterial
+            map={colosseumArcadePBR.map}
+            roughnessMap={colosseumArcadePBR.roughnessMap}
+            color="#efe4d2"
+            roughness={0.62}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+
+        {/* Historic Surviving North-East Outer Ring rising to the 4th-Story Corinthian Attic (y = 12.6m, height = 23.2m) */}
+        <mesh position={[0, 12.6, 0]} rotation={[0, -0.45, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[22.45, 22.45, 23.2, 48, 1, true, 0, Math.PI * 1.24]} />
+          <meshStandardMaterial
+            map={colosseumArcadePBR.map}
+            roughnessMap={colosseumArcadePBR.roughnessMap}
+            color="#e7d8c1"
             roughness={0.6}
             side={THREE.DoubleSide}
           />
         </mesh>
 
-        {/* 24 Perimeter Travertine Engaged Columns & Warm Roman Arch Uplighting */}
-        {Array.from({ length: 24 }).map((_, i) => {
-          const ang = (i * Math.PI * 2) / 24;
-          const cx = Math.cos(ang) * 22.25;
-          const cz = Math.sin(ang) * 22.25;
+        {/* Inner Concentric Travertine Arched Ambulatory Wall (r = 19.6m, openEnded = true) */}
+        <mesh position={[0, 9.8, 0]} castShadow receiveShadow>
+          <cylinderGeometry args={[19.6, 19.6, 17.6, 64, 1, true]} />
+          <meshStandardMaterial
+            map={colosseumArcadePBR.map}
+            roughnessMap={colosseumArcadePBR.roughnessMap}
+            color="#dfd0b8"
+            roughness={0.66}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+
+        {/* Sculpted Travertine Cornice Rings between Arcade Stories */}
+        {[
+          { y: 6.2, r: 22.15 },
+          { y: 11.4, r: 22.15 },
+          { y: 16.5, r: 22.15 },
+          { y: 20.2, r: 22.15 },
+        ].map((ring, rIdx) => (
+          <mesh key={rIdx} position={[0, ring.y, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[ring.r, 0.34, 8, 64]} />
+            <meshStandardMaterial map={limestonePBR.map} color="#e2d3bc" roughness={0.58} />
+          </mesh>
+        ))}
+
+        {/* 36 Perimeter Travertine Engaged Columns & Warm Roman Arch Intrados Uplighting */}
+        {Array.from({ length: 36 }).map((_, i) => {
+          const ang = (i * Math.PI * 2) / 36;
+          const cx = Math.cos(ang) * 22.2;
+          const cz = Math.sin(ang) * 22.2;
           return (
             <group key={i} position={[cx, 0, cz]} rotation={[0, -ang, 0]}>
-              <mesh position={[0, 11.0, 0]} castShadow>
-                <cylinderGeometry args={[0.42, 0.5, 19.5, 10]} />
-                <meshStandardMaterial map={limestonePBR.map} color="#efe4d2" roughness={0.55} />
+              <mesh position={[0, 10.6, 0]} castShadow>
+                <cylinderGeometry args={[0.32, 0.38, 19.0, 10]} />
+                <meshStandardMaterial map={limestonePBR.map} color="#efe4d2" roughness={0.56} />
               </mesh>
-              {/* Warm Amber Roman Arch Glow */}
-              <mesh position={[-0.65, 4.2, 0]}>
-                <boxGeometry args={[0.3, 3.6, 1.6]} />
-                <meshStandardMaterial color="#fef3c7" emissive="#f59e0b" emissiveIntensity={1.35} />
-              </mesh>
-              <mesh position={[-0.65, 10.8, 0]}>
-                <boxGeometry args={[0.3, 3.6, 1.6]} />
-                <meshStandardMaterial color="#fef3c7" emissive="#d97706" emissiveIntensity={1.15} />
-              </mesh>
+              {i % 2 === 0 && (
+                <>
+                  {/* Warm Amber Roman Arch Glow recessed inside the ambulatory */}
+                  <mesh position={[-1.1, 3.6, 0]}>
+                    <boxGeometry args={[0.35, 3.2, 1.4]} />
+                    <meshStandardMaterial color="#fef3c7" emissive="#f59e0b" emissiveIntensity={1.15} />
+                  </mesh>
+                  <mesh position={[-1.1, 9.0, 0]}>
+                    <boxGeometry args={[0.35, 3.0, 1.4]} />
+                    <meshStandardMaterial color="#fef3c7" emissive="#d97706" emissiveIntensity={0.95} />
+                  </mesh>
+                </>
+              )}
             </group>
           );
         })}
 
-        {/* Tiered Interior Marble Cavea Seating Bowls sloping down to the Arena */}
+        {/* Tiered Interior Travertine Cavea Seating Rings stepping down inside to the Arena Floor */}
         {[
-          { rOut: 21.0, rIn: 18.8, y: 15.5, h: 3.2 },
-          { rOut: 18.8, rIn: 16.6, y: 11.2, h: 3.2 },
-          { rOut: 16.6, rIn: 14.5, y: 6.8, h: 3.2 },
+          { rOut: 19.4, rIn: 17.8, y: 14.8, h: 3.0 },
+          { rOut: 17.8, rIn: 16.0, y: 10.6, h: 3.0 },
+          { rOut: 16.0, rIn: 14.3, y: 6.4, h: 3.0 },
         ].map((cavea, cIdx) => (
           <mesh key={cIdx} position={[0, cavea.y, 0]} receiveShadow>
-            <cylinderGeometry args={[cavea.rOut, cavea.rIn, cavea.h, 36, 1, true]} />
+            <cylinderGeometry args={[cavea.rOut, cavea.rIn, cavea.h, 48, 1, true]} />
             <meshStandardMaterial
               map={limestonePBR.map}
               roughnessMap={limestonePBR.roughnessMap}
@@ -981,125 +1292,180 @@ export function VegasLandmarks() {
       </group>
 
       {/* =================================================================================
-          7. SYDNEY — SYDNEY OPERA HOUSE (6 Vaulted White Ceramic Sail Shells & Podium)
+          7. SYDNEY — SYDNEY OPERA HOUSE (6 Pointed Gothic-Arch Ceramic Sail Shells & Granite Podium)
              Position: [148, sydneyY, 108]
          ================================================================================= */}
       <group position={[148, sydneyY, 108]}>
-        {/* Bennelong Point Monumental Red-Granite & Concrete Harbor Podium (44m × 5m × 32m) */}
+        {/* Bennelong Point Monumental Pink-Beige Granite Harbor Podium (46m × 5m × 34m — ZERO office windows!) */}
         <mesh position={[0, 2.5, 0]} castShadow receiveShadow>
-          <boxGeometry args={[44, 5, 32]} />
+          <boxGeometry args={[46, 5, 34]} />
           <meshStandardMaterial
-            map={concreteSteelPBR.map}
-            roughnessMap={concreteSteelPBR.roughnessMap}
-            color="#d6c7b8"
-            roughness={0.62}
-            metalness={0.18}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            color="#dfd0c2"
+            roughness={0.6}
+            metalness={0.1}
           />
         </mesh>
-        {/* Ceremonial Grand Staircase facing West toward the Avenue */}
-        {[0, 1, 2, 3, 4].map((step) => (
-          <mesh key={step} position={[-22.5 - step * 1.4, 4.4 - step * 0.85, 0]} receiveShadow>
-            <boxGeometry args={[1.6, 0.9, 24]} />
-            <meshStandardMaterial map={limestonePBR.map} color="#e5d5c5" roughness={0.66} />
+        {/* Waterfront Broadwalk Granite Balustrade Promenade around the Harbor Podium */}
+        <mesh position={[1.0, 5.35, 16.6]} castShadow receiveShadow>
+          <boxGeometry args={[44, 0.7, 0.6]} />
+          <meshStandardMaterial map={granitePodiumPBR.map} color="#e7d9cc" roughness={0.55} />
+        </mesh>
+        <mesh position={[1.0, 5.35, -16.6]} castShadow receiveShadow>
+          <boxGeometry args={[44, 0.7, 0.6]} />
+          <meshStandardMaterial map={granitePodiumPBR.map} color="#e7d9cc" roughness={0.55} />
+        </mesh>
+        <mesh position={[22.7, 5.35, 0]} castShadow receiveShadow>
+          <boxGeometry args={[0.6, 0.7, 33.8]} />
+          <meshStandardMaterial map={granitePodiumPBR.map} color="#e7d9cc" roughness={0.55} />
+        </mesh>
+
+        {/* Ceremonial Monumental Grand Staircase facing West toward the Forecourt */}
+        {[0, 1, 2, 3, 4, 5].map((step) => (
+          <mesh key={step} position={[-23.2 - step * 1.35, 4.5 - step * 0.75, 0]} receiveShadow>
+            <boxGeometry args={[1.5, 0.85, 26]} />
+            <meshStandardMaterial
+              map={granitePodiumPBR.map}
+              roughnessMap={granitePodiumPBR.roughnessMap}
+              color="#e5d5c5"
+              roughness={0.62}
+            />
           </mesh>
         ))}
 
-        {/* Concert Hall (North Wing) — 3 Interlocking Vaulted White Ceramic Sail Shells */}
-        <group position={[-8, 5.0, -6.5]}>
-          <mesh geometry={operaSailGeometries.tallHallA} position={[-6, 0, 0]} rotation={[0, 0.08, 0]} castShadow>
+        {/* Concert Hall (North Wing) — 3 Interlocking Pointed Gothic-Arch White Ceramic Sail Vaults (rising to y = 34m!) */}
+        <group position={[-11, 5.0, -7.2]}>
+          {/* Shell A1: Main Tallest Vault (height 29m + 5m podium = 34m peak!) */}
+          <mesh geometry={operaSailGeometries.tallHallA} position={[-7.5, 0, 0]} rotation={[0, 0.06, 0]} castShadow receiveShadow>
             <meshPhysicalMaterial
               map={ceramicShellPBR.map}
               roughnessMap={ceramicShellPBR.roughnessMap}
               color="#f8fafc"
-              roughness={0.18}
-              metalness={0.12}
+              roughness={0.16}
+              metalness={0.1}
               clearcoat={1.0}
               clearcoatRoughness={0.08}
+              side={THREE.DoubleSide}
             />
           </mesh>
-          <mesh geometry={operaSailGeometries.midHallA} position={[2.5, 0, 0]} rotation={[0, 0.04, 0]} castShadow>
+          {/* Shell A2: Middle Interlocking Vault */}
+          <mesh geometry={operaSailGeometries.midHallA} position={[1.5, 0, 0]} rotation={[0, 0.03, 0]} castShadow receiveShadow>
             <meshPhysicalMaterial
               map={ceramicShellPBR.map}
               roughnessMap={ceramicShellPBR.roughnessMap}
               color="#f8fafc"
-              roughness={0.18}
-              metalness={0.12}
+              roughness={0.16}
+              metalness={0.1}
               clearcoat={1.0}
+              clearcoatRoughness={0.08}
+              side={THREE.DoubleSide}
             />
           </mesh>
-          <mesh geometry={operaSailGeometries.lowHallA} position={[9.5, 0, 0]} castShadow>
+          {/* Shell A3: Harbor-Facing Vault */}
+          <mesh geometry={operaSailGeometries.lowHallA} position={[9.2, 0, 0]} castShadow receiveShadow>
             <meshPhysicalMaterial
               map={ceramicShellPBR.map}
               roughnessMap={ceramicShellPBR.roughnessMap}
               color="#f8fafc"
-              roughness={0.18}
-              metalness={0.12}
+              roughness={0.16}
+              metalness={0.1}
               clearcoat={1.0}
+              clearcoatRoughness={0.08}
+              side={THREE.DoubleSide}
             />
           </mesh>
-          {/* Bronze-Framed Acoustic Curtain Glass Foyer */}
-          <mesh position={[-4.5, 5.5, 0]} rotation={[0, 0, 0.22]}>
-            <cylinderGeometry args={[3.2, 5.2, 11, 12]} />
+          {/* Dark Bronze-Framed Acoustic Glass Curtain Walls recessed into the Shell Openings */}
+          <mesh position={[5.8, 8.2, 0]} rotation={[0, 0, -0.28]}>
+            <coneGeometry args={[5.8, 16.5, 4]} />
             <meshPhysicalMaterial
-              color="#fef3c7"
+              color="#1e293b"
               emissive="#fbbf24"
-              emissiveIntensity={0.85}
-              metalness={0.45}
-              roughness={0.15}
+              emissiveIntensity={0.42}
+              metalness={0.78}
+              roughness={0.14}
+              clearcoat={1.0}
+            />
+          </mesh>
+          <mesh position={[17.2, 5.8, 0]} rotation={[0, 0, -0.32]}>
+            <coneGeometry args={[4.2, 11.5, 4]} />
+            <meshPhysicalMaterial
+              color="#1e293b"
+              emissive="#f59e0b"
+              emissiveIntensity={0.48}
+              metalness={0.78}
+              roughness={0.14}
+              clearcoat={1.0}
             />
           </mesh>
         </group>
 
-        {/* Joan Sutherland Theatre (South Wing) — 2 Interlocking Vaulted White Ceramic Sail Shells */}
-        <group position={[-5, 5.0, 7.2]}>
-          <mesh geometry={operaSailGeometries.tallHallB} position={[-4, 0, 0]} rotation={[0, -0.08, 0]} castShadow>
+        {/* Joan Sutherland Theatre (South Wing) — 2 Interlocking Pointed Gothic-Arch Ceramic Sail Vaults */}
+        <group position={[-8, 5.0, 7.6]}>
+          <mesh geometry={operaSailGeometries.tallHallB} position={[-5.5, 0, 0]} rotation={[0, -0.06, 0]} castShadow receiveShadow>
             <meshPhysicalMaterial
               map={ceramicShellPBR.map}
               roughnessMap={ceramicShellPBR.roughnessMap}
               color="#f8fafc"
-              roughness={0.18}
-              metalness={0.12}
+              roughness={0.16}
+              metalness={0.1}
               clearcoat={1.0}
+              clearcoatRoughness={0.08}
+              side={THREE.DoubleSide}
             />
           </mesh>
-          <mesh geometry={operaSailGeometries.midHallB} position={[4, 0, 0]} rotation={[0, -0.04, 0]} castShadow>
+          <mesh geometry={operaSailGeometries.midHallB} position={[3.5, 0, 0]} rotation={[0, -0.03, 0]} castShadow receiveShadow>
             <meshPhysicalMaterial
               map={ceramicShellPBR.map}
               roughnessMap={ceramicShellPBR.roughnessMap}
               color="#f8fafc"
-              roughness={0.18}
-              metalness={0.12}
+              roughness={0.16}
+              metalness={0.1}
               clearcoat={1.0}
+              clearcoatRoughness={0.08}
+              side={THREE.DoubleSide}
             />
           </mesh>
-          <mesh position={[-2.5, 4.8, 0]} rotation={[0, 0, 0.22]}>
-            <cylinderGeometry args={[2.8, 4.6, 9.5, 12]} />
+          {/* Dark Bronze-Framed Glass Curtain Wall recessed into South Hall Opening */}
+          <mesh position={[12.5, 6.8, 0]} rotation={[0, 0, -0.3]}>
+            <coneGeometry args={[4.8, 13.5, 4]} />
             <meshPhysicalMaterial
-              color="#fef3c7"
+              color="#1e293b"
               emissive="#fbbf24"
-              emissiveIntensity={0.85}
-              metalness={0.45}
-              roughness={0.15}
+              emissiveIntensity={0.45}
+              metalness={0.78}
+              roughness={0.14}
+              clearcoat={1.0}
             />
           </mesh>
         </group>
 
-        {/* 6th Bennelong Restaurant Entrance Shell at Forecourt */}
-        <mesh
-          geometry={operaSailGeometries.restaurantShell}
-          position={[-16, 5.0, 9.5]}
-          rotation={[0, Math.PI, 0]}
-          castShadow
-        >
-          <meshPhysicalMaterial
-            map={ceramicShellPBR.map}
-            roughnessMap={ceramicShellPBR.roughnessMap}
-            color="#f8fafc"
-            roughness={0.18}
-            metalness={0.12}
-            clearcoat={1.0}
-          />
-        </mesh>
+        {/* 6th Bennelong Restaurant Entrance Shell at Forecourt (facing West) */}
+        <group position={[-13.5, 5.0, 9.8]} rotation={[0, Math.PI, 0]}>
+          <mesh geometry={operaSailGeometries.restaurantShell} castShadow receiveShadow>
+            <meshPhysicalMaterial
+              map={ceramicShellPBR.map}
+              roughnessMap={ceramicShellPBR.roughnessMap}
+              color="#f8fafc"
+              roughness={0.16}
+              metalness={0.1}
+              clearcoat={1.0}
+              clearcoatRoughness={0.08}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+          <mesh position={[6.8, 4.4, 0]} rotation={[0, 0, -0.3]}>
+            <coneGeometry args={[3.4, 8.8, 4]} />
+            <meshPhysicalMaterial
+              color="#1e293b"
+              emissive="#fbbf24"
+              emissiveIntensity={0.45}
+              metalness={0.78}
+              roughness={0.14}
+              clearcoat={1.0}
+            />
+          </mesh>
+        </group>
       </group>
 
       {/* =================================================================================
@@ -1107,38 +1473,58 @@ export function VegasLandmarks() {
              Position: [52, tokyoY, -28] — 78m Red & White Lattice Tower + Neon Billboards
          ================================================================================= */}
       <group position={[52, tokyoY, -28]}>
-        {/* Shibuya Plaza Base Podium */}
-        <mesh position={[0, 0.7, 0]} receiveShadow>
-          <boxGeometry args={[26, 1.4, 26]} />
+        {/* Shibuya Plaza Granite & Cobble Base Podium */}
+        <mesh position={[0, 0.5, 0]} receiveShadow>
+          <boxGeometry args={[26, 1.0, 26]} />
           <meshStandardMaterial
-            map={cobblePBR.map}
-            roughnessMap={cobblePBR.roughnessMap}
-            roughness={0.65}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            roughness={0.64}
           />
         </mesh>
-        {/* 4 Splayed Red Steel Lattice Corner Legs */}
+        {/* 4 Splayed Red Steel Lattice Corner Legs + Granite Footings */}
         {[
           [1, 1],
           [-1, 1],
           [-1, -1],
           [1, -1],
         ].map(([sx, sz], idx) => (
-          <mesh
-            key={idx}
-            position={[sx * 6.5, 13, sz * 6.5]}
-            rotation={[sz * 0.2, 0, -sx * 0.2]}
-            castShadow
-          >
-            <boxGeometry args={[1.6, 27, 1.6]} />
-            <meshStandardMaterial
-              map={steelTrussPBR.map}
-              roughnessMap={steelTrussPBR.roughnessMap}
-              color="#dc2626"
-              metalness={0.68}
-              roughness={0.3}
-            />
-          </mesh>
+          <React.Fragment key={idx}>
+            <mesh position={[sx * 8.6, 1.4, sz * 8.6]} castShadow receiveShadow>
+              <boxGeometry args={[2.8, 1.8, 2.8]} />
+              <meshStandardMaterial map={granitePodiumPBR.map} roughness={0.6} />
+            </mesh>
+            <mesh
+              position={[sx * 6.5, 13, sz * 6.5]}
+              rotation={[sz * 0.2, 0, -sx * 0.2]}
+              castShadow
+            >
+              <boxGeometry args={[1.6, 27, 1.6]} />
+              <meshStandardMaterial
+                map={steelTrussPBR.map}
+                roughnessMap={steelTrussPBR.roughnessMap}
+                color="#dc2626"
+                metalness={0.68}
+                roughness={0.3}
+              />
+            </mesh>
+          </React.Fragment>
         ))}
+        {/* Horizontal & Arch-Truss Bracing Rings between the 4 Lower Red Legs */}
+        {[9, 15, 21].map((ly, lIdx) => {
+          const span = (8.5 - lIdx * 1.4) * 2;
+          return (
+            <mesh key={lIdx} position={[0, ly, 0]} castShadow>
+              <boxGeometry args={[span, 0.9, span]} />
+              <meshStandardMaterial
+                map={steelTrussPBR.map}
+                color={lIdx === 1 ? '#f8fafc' : '#dc2626'}
+                metalness={0.68}
+                roughness={0.3}
+              />
+            </mesh>
+          );
+        })}
 
         {/* 2-Story White & Red Main Observation Deck (y = 26m) */}
         <mesh position={[0, 26, 0]} castShadow>
@@ -1206,17 +1592,17 @@ export function VegasLandmarks() {
         {/* Sculpted 11-Point Fort Wood Granite Star-Fort Base */}
         <mesh geometry={starFortGeo} position={[0, 0, 0]} castShadow receiveShadow>
           <meshStandardMaterial
-            map={limestonePBR.map}
-            roughnessMap={limestonePBR.roughnessMap}
-            roughness={0.72}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            roughness={0.7}
           />
         </mesh>
-        {/* Richard Morris Hunt Rusticated Granite Pedestal + Colonnade Balcony */}
+        {/* Richard Morris Hunt Rusticated Granite Pedestal + Colonnade Balcony (ZERO office windows!) */}
         <mesh position={[0, 10.5, 0]} castShadow receiveShadow>
           <boxGeometry args={[12.5, 12, 12.5]} />
           <meshStandardMaterial
-            map={artDecoPBR.map}
-            roughnessMap={artDecoPBR.roughnessMap}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
             roughness={0.62}
           />
         </mesh>
@@ -1303,17 +1689,17 @@ export function VegasLandmarks() {
         <mesh position={[0, 1.5, 0]} castShadow receiveShadow>
           <cylinderGeometry args={[16, 19, 3.0, 8]} />
           <meshStandardMaterial
-            map={limestonePBR.map}
-            roughnessMap={limestonePBR.roughnessMap}
-            roughness={0.7}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
+            roughness={0.68}
           />
         </mesh>
-        {/* 12m Octagonal Art Deco Pedestal (createArtDecoLimestonePBR) */}
+        {/* 12m Octagonal Ribbed Granite Pedestal (ZERO office windows!) */}
         <mesh position={[0, 9.0, 0]} castShadow receiveShadow>
           <cylinderGeometry args={[5.2, 6.8, 12.0, 8]} />
           <meshStandardMaterial
-            map={artDecoPBR.map}
-            roughnessMap={artDecoPBR.roughnessMap}
+            map={granitePodiumPBR.map}
+            roughnessMap={granitePodiumPBR.roughnessMap}
             color="#e7e5e4"
             roughness={0.55}
           />
