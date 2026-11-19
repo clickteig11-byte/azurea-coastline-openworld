@@ -220,6 +220,13 @@ export const CITY_BUILDING_AABBS: { x: number; z: number; halfW: number; halfD: 
     halfD,
   }));
 
+export const REPAIR_BAY_COORDS: [number, number][] = [
+  [14, 48],
+  [-14, -68],
+  [68, 0],
+  [-68, 80],
+];
+
 export function SkyDome() {
   const uniforms = useMemo(
     () => ({
@@ -570,6 +577,7 @@ export function VegasStripDetails() {
   const stormRingRef = useRef<THREE.Mesh>(null);
   const lootCratesGroupRef = useRef<THREE.Group>(null);
   const marinaGroupRef = useRef<THREE.Group>(null);
+  const repairBaysRef = useRef<THREE.Group>(null);
 
   const [streetLightModel, setStreetLightModel] = useState<THREE.Group | null>(null);
   const [palmModel, setPalmModel] = useState<THREE.Group | null>(null);
@@ -880,6 +888,20 @@ export function VegasStripDetails() {
       marinaGroupRef.current.children.forEach((vessel, idx) => {
         vessel.position.y = (simState.tideOffset ?? 0) + 0.35 + Math.sin(t * 1.6 + idx * 1.1) * 0.16;
         vessel.rotation.z = Math.sin(t * 1.2 + idx * 0.9) * 0.025;
+      });
+    }
+    if (repairBaysRef.current) {
+      repairBaysRef.current.children.forEach((bayGroup, idx) => {
+        const beacon = bayGroup.getObjectByName('repair-beacon');
+        const ring = bayGroup.getObjectByName('repair-ring');
+        if (beacon) {
+          beacon.rotation.y = t * 2.1 + idx * 0.8;
+          beacon.position.y = 5.45 + Math.sin(t * 3.0 + idx) * 0.24;
+        }
+        if (ring) {
+          const pulse = 0.96 + 0.06 * Math.sin(t * 3.6 + idx);
+          ring.scale.set(pulse, pulse, 1);
+        }
       });
     }
   });
@@ -1378,6 +1400,133 @@ export function VegasStripDetails() {
           <cylinderGeometry args={[0.18, 0.45, 76, 8]} />
           <meshBasicMaterial color="#22d3ee" transparent opacity={0.16} depthWrite={false} />
         </mesh>
+      </group>
+
+      {/* 4 Roadside Pit-Stop / Vehicle Repair Bays at REPAIR_BAY_COORDS */}
+      <group ref={repairBaysRef}>
+        {REPAIR_BAY_COORDS.map(([rx, rz], bIdx) => {
+          const ry = getTerrainHeight(rx, rz);
+          // Align E-W cross-street bays (|rx| > 30) along X axis, N-S avenue bays along Z axis
+          const rotY = Math.abs(rx) > 30 ? Math.PI / 2 : 0;
+          return (
+            <group key={`repair-bay-${bIdx}`} position={[rx, ry, rz]} rotation={[0, rotY, 0]}>
+              {/* Glowing Emerald Ground Target Ring */}
+              <mesh
+                name="repair-ring"
+                position={[0, 0.14, 0]}
+                rotation={[-Math.PI / 2, 0, 0]}
+              >
+                <ringGeometry args={[3.4, 4.1, 32]} />
+                <meshBasicMaterial
+                  color="#10b981"
+                  transparent
+                  opacity={0.72}
+                  side={THREE.DoubleSide}
+                  depthWrite={false}
+                />
+              </mesh>
+              <mesh position={[0, 0.12, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                <circleGeometry args={[3.35, 32]} />
+                <meshBasicMaterial
+                  color="#10b981"
+                  transparent
+                  opacity={0.14}
+                  side={THREE.DoubleSide}
+                  depthWrite={false}
+                />
+              </mesh>
+
+              {/* Two Slim Dark-Steel Side Pylons & Street Bollards (x = ±4.2, outside lane) */}
+              {[-4.2, 4.2].map((px) => (
+                <group key={`pylon-${px}`} position={[px, 0, 0]}>
+                  {/* Concrete & Steel Plinth */}
+                  <mesh position={[0, 0.28, 0]} castShadow receiveShadow>
+                    <boxGeometry args={[0.72, 0.56, 0.92]} />
+                    <meshStandardMaterial color="#1e293b" metalness={0.72} roughness={0.32} />
+                  </mesh>
+                  {/* Slim Dark-Steel Upright Pylon */}
+                  <mesh position={[0, 2.25, 0]} castShadow>
+                    <boxGeometry args={[0.34, 4.3, 0.42]} />
+                    <meshStandardMaterial color="#0f172a" metalness={0.84} roughness={0.22} />
+                  </mesh>
+                  {/* Vertical Emerald Accent Strip */}
+                  <mesh position={[px > 0 ? -0.19 : 0.19, 2.25, 0]}>
+                    <boxGeometry args={[0.06, 3.6, 0.16]} />
+                    <meshStandardMaterial
+                      color="#34d399"
+                      emissive="#10b981"
+                      emissiveIntensity={2.0}
+                    />
+                  </mesh>
+                  {/* Protective Roadside Steel Bollards flanking each pylon */}
+                  {[-1.5, 1.5].map((bz) => (
+                    <group key={`bollard-${bz}`} position={[0, 0, bz]}>
+                      <mesh position={[0, 0.48, 0]} castShadow>
+                        <cylinderGeometry args={[0.11, 0.13, 0.96, 10]} />
+                        <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.28} />
+                      </mesh>
+                      <mesh position={[0, 0.78, 0]}>
+                        <cylinderGeometry args={[0.125, 0.125, 0.14, 10]} />
+                        <meshStandardMaterial
+                          color="#34d399"
+                          emissive="#10b981"
+                          emissiveIntensity={1.6}
+                        />
+                      </mesh>
+                    </group>
+                  ))}
+                </group>
+              ))}
+
+              {/* Overhead Dark-Steel Gantry Crossbar & Illuminated Emerald Service Light Bar (y = 4.2m) */}
+              <mesh position={[0, 4.42, 0]} castShadow>
+                <boxGeometry args={[8.9, 0.32, 0.48]} />
+                <meshStandardMaterial color="#0f172a" metalness={0.85} roughness={0.2} />
+              </mesh>
+              <mesh position={[0, 4.2, 0]}>
+                <boxGeometry args={[8.1, 0.16, 0.36]} />
+                <meshStandardMaterial
+                  color="#34d399"
+                  emissive="#34d399"
+                  emissiveIntensity={2.4}
+                  roughness={0.18}
+                />
+              </mesh>
+
+              {/* Rotating Floating Emerald Cross / Repair Beacon */}
+              <group name="repair-beacon" position={[0, 5.45, 0]}>
+                <mesh>
+                  <boxGeometry args={[1.35, 0.34, 0.34]} />
+                  <meshStandardMaterial
+                    color="#34d399"
+                    emissive="#10b981"
+                    emissiveIntensity={2.2}
+                    roughness={0.15}
+                    metalness={0.35}
+                  />
+                </mesh>
+                <mesh>
+                  <boxGeometry args={[0.34, 1.35, 0.34]} />
+                  <meshStandardMaterial
+                    color="#34d399"
+                    emissive="#10b981"
+                    emissiveIntensity={2.2}
+                    roughness={0.15}
+                    metalness={0.35}
+                  />
+                </mesh>
+                <mesh rotation={[Math.PI / 2, 0, 0]}>
+                  <torusGeometry args={[1.05, 0.07, 8, 24]} />
+                  <meshStandardMaterial
+                    color="#6ee7b7"
+                    emissive="#10b981"
+                    emissiveIntensity={2.0}
+                  />
+                </mesh>
+              </group>
+            </group>
+          );
+        })}
       </group>
 
       {/* Curbside Shoulder Stunt Launch Ramp (Relocated to [14.5, rampY + 0.1, 115] so main 4 lanes are wide open) */}

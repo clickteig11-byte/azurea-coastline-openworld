@@ -127,6 +127,24 @@ class SoundEngine {
     chord.forEach((f, i) => this.tone(ctx, f, 'triangle', i * 0.09, 0.45, 0.08));
   }
 
+  public playCrash(intensity = 0.6): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const clamped = Math.max(0.15, Math.min(1.0, intensity));
+    // Low-end rigid impact thud + metallic crunch overtones
+    this.tone(ctx, 88 - clamped * 32, 'sawtooth', 0, 0.14 + clamped * 0.18, 0.14 + clamped * 0.14);
+    this.tone(ctx, 54, 'triangle', 0.01, 0.22 + clamped * 0.2, 0.18 + clamped * 0.12);
+    this.tone(ctx, 210 + clamped * 140, 'square', 0.005, 0.09 + clamped * 0.08, 0.06 + clamped * 0.06);
+  }
+
+  public playRepair(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+      this.tone(ctx, f, 'sine', i * 0.055, 0.18, 0.09);
+    });
+  }
+
   private tone(ctx: AudioContext, freq: number, type: OscillatorType, delay: number, dur: number, peak: number): void {
     const t0 = ctx.currentTime + delay;
     const osc = ctx.createOscillator();

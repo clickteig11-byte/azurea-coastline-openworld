@@ -591,6 +591,10 @@ export interface GameHudSnapshot {
   activePlaneName?: string;
   activeBoatName?: string;
   presetName?: string;
+  // Vehicle Integrity & World Rigidity Damage System
+  vehicleHp?: number;
+  vehicleMaxHp?: number;
+  vehicleWrecked?: boolean;
 }
 
 export const INITIAL_CHIPS: ChipNode[] = [
@@ -654,6 +658,12 @@ export const simState = {
   maxAmmo: 30,
   playerHp: 100,
   playerShield: 100,
+  vehicleHp: 100,
+  vehicleMaxHp: 100,
+  vehicleWrecked: false,
+  cameraShake: 0,
+  crashFlashTimer: 0,
+  lastCrashPos: [0, 0, 0] as [number, number, number],
   eliminations: 0,
   aliveCount: 25,
   stormRadius: 235,

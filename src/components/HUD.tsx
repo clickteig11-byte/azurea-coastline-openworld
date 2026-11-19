@@ -26,6 +26,7 @@ import {
   Navigation,
   Maximize2,
   Minimize2,
+  Wrench,
 } from 'lucide-react';
 import {
   CHARACTER_PRESETS,
@@ -891,6 +892,14 @@ export function HUD({ hud, onSelectMode }: Props) {
   const aliveCount = hud.aliveCount ?? aliveBotsCount;
   const eliminations = hud.eliminations ?? simState.eliminations ?? 0;
   const stormRadius = Math.round(hud.stormRadius ?? simState.stormRadius ?? 235);
+  const vehicleHp = Math.max(
+    0,
+    Math.min(100, Math.round(hud.vehicleHp ?? simState.vehicleHp ?? 100))
+  );
+  const vehicleWrecked = Boolean(hud.vehicleWrecked ?? simState.vehicleWrecked);
+  const crashFlashTimer = Math.max(0, simState.crashFlashTimer ?? 0);
+  const vehicleBarColor =
+    vehicleHp >= 60 ? 'bg-emerald-400' : vehicleHp >= 30 ? 'bg-amber-400' : 'bg-rose-500';
 
   const isCustomizerOpen = Boolean(simState.customizerOpen);
   const custom = simState.customization;
@@ -1162,6 +1171,14 @@ export function HUD({ hud, onSelectMode }: Props) {
   // =========================================================================
   return (
     <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans">
+      {/* 0. IMPACT VIGNETTE FLASH */}
+      {crashFlashTimer > 0 && (
+        <div
+          style={{ opacity: Math.min(1, crashFlashTimer * 2.4) }}
+          className="pointer-events-none fixed inset-0 z-10 border-4 border-rose-500/45 shadow-[inset_0_0_80px_rgba(244,63,94,0.38)] transition-opacity duration-150"
+        />
+      )}
+
       {/* 1. CENTER CROSSHAIR (Battle Royale on foot / driving) */}
       {activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
         <div className="pointer-events-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
@@ -1961,12 +1978,45 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       </div>
 
-      {/* 7. BOTTOM-RIGHT: Speedometer + Battle Royale Weapon Bar */}
+      {/* 7. BOTTOM-RIGHT: Vehicle Integrity + Speedometer + Battle Royale Weapon Bar */}
       <div
         className={`pointer-events-auto fixed z-30 flex flex-col items-end gap-1.5 ${
           touchUi ? 'right-3 top-14 sm:bottom-3 sm:top-auto' : 'bottom-3 right-3'
         }`}
       >
+        {/* Vehicle Integrity Readout & Quick Repair Pill (whenever driving/sailing/flying) */}
+        {hud.mode !== 'FOOT' && (
+          <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-neutral-950/75 px-3 py-1.5 shadow-xl backdrop-blur-md">
+            <div className="h-1.5 w-20 overflow-hidden rounded-full bg-white/15">
+              <div
+                style={{ width: `${vehicleHp}%` }}
+                className={`h-full rounded-full transition-all duration-150 ${vehicleBarColor}`}
+              />
+            </div>
+            <span
+              className={`text-xs font-semibold tabular-nums ${
+                vehicleWrecked || vehicleHp < 30
+                  ? 'text-rose-400'
+                  : vehicleHp < 60
+                  ? 'text-amber-300'
+                  : 'text-emerald-300'
+              }`}
+            >
+              {vehicleHp}%
+            </span>
+            {(vehicleHp < 95 || vehicleWrecked) && (
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent('repair-vehicle'))}
+                className="flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/35 hover:text-white"
+              >
+                <Wrench className="h-3 w-3" />
+                <span>Repair (H)</span>
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Clean Digital Speedometer */}
         <div className="flex items-baseline gap-3 rounded-2xl border border-white/10 bg-neutral-950/75 px-3.5 py-1.5 shadow-xl backdrop-blur-md sm:px-4 sm:py-2">
           <div className="flex items-baseline gap-1">

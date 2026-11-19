@@ -7,6 +7,30 @@ import { simState, GameHudSnapshot, WEAPON_SPECS } from '../game/store';
 import { getTerrainHeight, getWaveHeight, LANDMARKS, RouletteOutcome } from '../game/worldMath';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
+import { CITY_BUILDING_AABBS } from './World';
+
+const REPAIR_BAYS: [number, number][] = [
+  [14, 48],
+  [-14, -68],
+  [68, 0],
+  [-68, 80],
+];
+
+const SOLID_LANDMARKS: [number, number, number, string][] = [
+  [-52, -28, 13.5, 'EMPIRE STATE'],
+  [-52, -88, 7.5, 'BIG BEN'],
+  [95, 35, 14, 'EIFFEL TOWER'],
+  [54, -148, 14, 'BURJ KHALIFA'],
+  [-105, 45, 25, 'COLOSSEUM'],
+  [148, 108, 20, 'SYDNEY OPERA'],
+  [52, -28, 11, 'TOKYO TOWER'],
+  [-118, -28, 24, 'GIZA PYRAMID'],
+  [98, -35, 24, 'SCIENCE SPHERE'],
+  [-158, -145, 16, 'STATUE OF LIBERTY'],
+  [58, 148, 10, 'CHRIST THE REDEEMER'],
+  [-23, -205, 3.8, 'BRIDGE PIER'],
+  [23, -205, 3.8, 'BRIDGE PIER'],
+];
 
 interface Props {
   onHudUpdate: (snap: GameHudSnapshot) => void;
@@ -427,6 +451,14 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const smokeMeshRefs = useRef<(THREE.Mesh | null)[]>([]);
   const smokeAngles = useRef<number[]>([0, 1, 2, 3, 4, 5]);
 
+  // Vehicle damage VFX & impact cooldown refs
+  const crashCooldownRef = useRef<number>(0);
+  const sparkTimerRef = useRef<number>(0);
+  const crashSparksGroupRef = useRef<THREE.Group>(null);
+  const crashSparkMeshRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const damageSmokeRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const damageFireRefs = useRef<(THREE.Mesh | null)[]>([]);
+
   // Speedboat bow spray & Jet contrails
   const boatSprayRef = useRef<THREE.Group>(null);
   const contrailLeftRef = useRef<THREE.Mesh>(null);
@@ -607,6 +639,53 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     simState.lastShotTo = [to.x, to.y, to.z];
   };
 
+  const repairVehicle = () => {
+    simState.vehicleHp = 100;
+    simState.vehicleWrecked = false;
+    simState.playerHp = 100;
+    simState.playerShield = 100;
+    simState.cameraShake = 0;
+    soundEngine.playRepair();
+    simState.stuntText = 'VEHICLE REPAIRED · 100%';
+    simState.stuntTimer = 2.5;
+  };
+
+  const registerVehicleImpact = (impactSpeedMps: number, hitPos: THREE.Vector3, sourceLabel: string) => {
+    if (crashCooldownRef.current > 0) return;
+    if (impactSpeedMps <= 5.5) return;
+
+    crashCooldownRef.current = 0.28;
+    const severity = Math.min(1, (impactSpeedMps - 5.5) / 34);
+    const dmg = Math.round(4 + severity * 34);
+    simState.vehicleHp = Math.max(0, simState.vehicleHp - dmg);
+    simState.cameraShake = Math.min(1.2, simState.cameraShake + 0.22 + severity * 0.75);
+    simState.crashFlashTimer = 0.22 + severity * 0.2;
+    simState.lastCrashPos = [hitPos.x, hitPos.y + 0.8, hitPos.z];
+    sparkTimerRef.current = 0.35;
+    soundEngine.playCrash(severity);
+
+    if (severity > 0.45) {
+      let jolt = Math.round(severity * 12);
+      if (simState.playerShield > 0) {
+        const absorb = Math.min(simState.playerShield, jolt);
+        simState.playerShield = Math.max(0, simState.playerShield - absorb);
+        jolt -= absorb;
+      }
+      if (jolt > 0) {
+        simState.playerHp = Math.max(10, simState.playerHp - jolt);
+      }
+    }
+
+    if (simState.vehicleHp <= 0) {
+      simState.vehicleWrecked = true;
+      simState.stuntText = 'VEHICLE WRECKED · PRESS [H] TO REPAIR';
+      simState.stuntTimer = 4.0;
+    } else if (severity > 0.35) {
+      simState.stuntText = `${sourceLabel} IMPACT -${dmg}% INTEGRITY`;
+      simState.stuntTimer = 2.0;
+    }
+  };
+
   // Cycle between 5 Hero Cars, 6 Aircraft, 6 Boats/Ships, Character Customizer Studio, Parachute Sky-Drop & Weapons
   useEffect(() => {
     const s = simState as any;
@@ -619,6 +698,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       activeCarIdxRef.current = nextIdx;
       s.activeCarIdx = nextIdx;
       s.activeCarName = CAR_NAMES[nextIdx];
+      simState.vehicleHp = 100;
+      simState.vehicleWrecked = false;
       carRigsRef.current.forEach((rig, idx) => {
         if (rig) rig.wrapper.visible = idx === nextIdx;
       });
@@ -631,6 +712,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       activePlaneIdxRef.current = nextIdx;
       s.activePlaneIdx = nextIdx;
       s.activePlaneName = PLANE_NAMES[nextIdx];
+      simState.vehicleHp = 100;
+      simState.vehicleWrecked = false;
       planeRigsRef.current.forEach((rig, idx) => {
         if (rig) rig.wrapper.visible = idx === nextIdx;
       });
@@ -643,6 +726,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       activeBoatIdxRef.current = nextIdx;
       s.activeBoatIdx = nextIdx;
       s.activeBoatName = BOAT_NAMES[nextIdx];
+      simState.vehicleHp = 100;
+      simState.vehicleWrecked = false;
       boatRigsRef.current.forEach((rig, idx) => {
         if (rig) rig.wrapper.visible = idx === nextIdx;
       });
@@ -683,6 +768,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         triggerBattleRoyaleDrop();
       } else if (e.code === 'KeyQ' && !e.repeat) {
         selectWeaponSlot(simState.activeWeaponIdx + 1);
+      } else if (e.code === 'KeyH' && !e.repeat) {
+        repairVehicle();
       } else if (e.code === 'KeyF') {
         fireActiveWeapon();
       }
@@ -695,6 +782,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     const onToggleCustomizerEvent = () => toggleCharacterCustomizer();
     const onCustomizerUpdatedEvent = () => applyCharacterCustomization();
     const onBrDropEvent = () => triggerBattleRoyaleDrop();
+    const onRepairVehicleEvent = () => repairVehicle();
     const onSelectWeaponEvent = (e: Event) => {
       const custom = e as CustomEvent<number>;
       if (typeof custom.detail === 'number') {
@@ -723,6 +811,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     window.addEventListener('toggle-customizer', onToggleCustomizerEvent);
     window.addEventListener('customizer-updated', onCustomizerUpdatedEvent);
     window.addEventListener('br-drop', onBrDropEvent);
+    window.addEventListener('repair-vehicle', onRepairVehicleEvent);
     window.addEventListener('select-weapon', onSelectWeaponEvent);
     window.addEventListener('fire-weapon', onFireWeaponEvent);
     window.addEventListener('pointerdown', onPointerDown);
@@ -736,6 +825,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       window.removeEventListener('toggle-customizer', onToggleCustomizerEvent);
       window.removeEventListener('customizer-updated', onCustomizerUpdatedEvent);
       window.removeEventListener('br-drop', onBrDropEvent);
+      window.removeEventListener('repair-vehicle', onRepairVehicleEvent);
       window.removeEventListener('select-weapon', onSelectWeaponEvent);
       window.removeEventListener('fire-weapon', onFireWeaponEvent);
       window.removeEventListener('pointerdown', onPointerDown);
@@ -1264,47 +1354,78 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     };
   }, []);
 
-  // Collision-Free Street Corridors & Gentle Off-Street Landmark Radial Pushback for CAR and FOOT modes
+  // Real World Rigidity: Solid 48 City Buildings, 13 Off-Street Landmarks, & Rigid Car-to-Traffic Collisions
+  // Central avenues remain 100% unobstructed because all buildings & landmarks sit cleanly outside road corridors.
   const applyWorldCollisions = (pos: THREE.Vector3, isCar: boolean) => {
     if (!isCar && pos.y > 32) return;
 
-    // Rule 1 (Guaranteed Open Street Corridors):
-    // Grand Central Ave (x in -24..+24, z = -230..+200), Midtown Cross Ave (|z| < 15),
-    // North Cross Blvd (|z + 120| < 13), South Cross Blvd (|z - 80| < 13),
-    // and Golden Gate Bridge roadway (-19..+19) are 100% open and never blocked!
-    if (
-      (Math.abs(pos.x) < 24 && Math.abs(pos.z + 205) > 3.6) ||
-      Math.abs(pos.x) < 19.4 ||
-      Math.abs(pos.z) < 15 ||
-      Math.abs(pos.z + 120) < 13 ||
-      Math.abs(pos.z - 80) < 13
-    ) {
-      return;
+    // A. All 48 City Buildings (CITY_BUILDING_AABBS)
+    const pad = isCar ? 1.45 : 0.65;
+    for (let i = 0; i < CITY_BUILDING_AABBS.length; i++) {
+      const b = CITY_BUILDING_AABBS[i];
+      const dx = pos.x - b.x;
+      const dz = pos.z - b.z;
+      const minX = b.halfW + pad;
+      const minZ = b.halfD + pad;
+      const overlapX = minX - Math.abs(dx);
+      const overlapZ = minZ - Math.abs(dz);
+      if (overlapX > 0 && overlapZ > 0) {
+        const impactSpeed = isCar ? Math.abs(simState.carSpeed) : 0;
+        if (overlapX < overlapZ) {
+          pos.x = b.x + (dx >= 0 ? minX : -minX);
+        } else {
+          pos.z = b.z + (dz >= 0 ? minZ : -minZ);
+        }
+        if (isCar) {
+          simState.carSpeed *= impactSpeed > 12 ? -0.25 : 0.35;
+          registerVehicleImpact(impactSpeed, pos, 'BUILDING');
+        }
+      }
     }
 
-    // Rule 2 (Updated Off-Street Landmark Radii):
-    const landmarks: [number, number, number][] = [
-      [-52, -28, 13],    // Empire State Building
-      [-52, -88, 7],     // Big Ben
-      [95, 35, 14],      // Eiffel Tower
-      [54, -148, 14],    // Burj Khalifa
-      [-105, 45, 26],    // Colosseum
-      [148, 108, 18],    // Sydney Opera House
-      [52, -28, 11],     // Tokyo Tower
-      [-118, -28, 24],   // Giza Pyramid
-      [98, -35, 24],     // Science Sphere
-      [-23, -205, 3.5],  // Golden Gate Bridge West Pier Leg
-      [23, -205, 3.5],   // Golden Gate Bridge East Pier Leg
-    ];
-    for (const [cx, cz, rad] of landmarks) {
+    // B. All Off-Street Landmarks & Golden Gate Bridge Side Piers
+    for (let i = 0; i < SOLID_LANDMARKS.length; i++) {
+      const [cx, cz, rad, label] = SOLID_LANDMARKS[i];
       const ldx = pos.x - cx;
       const ldz = pos.z - cz;
       const dist = Math.hypot(ldx, ldz);
-      if (dist < rad && dist > 0.01) {
+      if (dist < rad && dist > 0.001) {
+        const impactSpeed = isCar ? Math.abs(simState.carSpeed) : 0;
         const push = (rad - dist) / dist;
         pos.x += ldx * push;
         pos.z += ldz * push;
-        if (isCar) simState.carSpeed *= 0.85;
+        if (isCar) {
+          simState.carSpeed *= impactSpeed > 12 ? -0.25 : 0.45;
+          registerVehicleImpact(impactSpeed, pos, label);
+        }
+      }
+    }
+
+    // C. Rigid Car-to-Traffic Collisions (simState.trafficPositions)
+    if (isCar && simState.trafficPositions.length > 0) {
+      const fwdX = Math.sin(simState.carYaw);
+      const fwdZ = Math.cos(simState.carYaw);
+      for (let i = 0; i < simState.trafficPositions.length; i++) {
+        const [tx, , tz] = simState.trafficPositions[i];
+        const dx = pos.x - tx;
+        const dz = pos.z - tz;
+        const dist = Math.hypot(dx, dz);
+        if (dist < 3.4 && dist > 0.001) {
+          const nx = dx / dist;
+          const nz = dz / dist;
+          const pushDist = 3.4 - dist;
+          pos.x += nx * pushDist;
+          pos.z += nz * pushDist;
+
+          const impactSpeed = Math.abs(simState.carSpeed);
+          const headOnAlignment = Math.abs(fwdX * -nx + fwdZ * -nz);
+          if (impactSpeed > 10 && headOnAlignment > 0.55) {
+            simState.carSpeed *= -0.25;
+          } else {
+            simState.carSpeed *= 0.45;
+          }
+          registerVehicleImpact(Math.max(impactSpeed, 7.0), pos, 'TRAFFIC');
+        }
       }
     }
   };
@@ -1470,13 +1591,21 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     }
 
-    // Battle Royale timers & Storm ring shrink
+    // Battle Royale timers, Damage/Shake decays & Storm ring shrink
     if (simState.shotCooldown > 0) {
       simState.shotCooldown = Math.max(0, simState.shotCooldown - dt);
     }
     if (simState.firingTimer > 0) {
       simState.firingTimer = Math.max(0, simState.firingTimer - dt);
     }
+    if (crashCooldownRef.current > 0) {
+      crashCooldownRef.current = Math.max(0, crashCooldownRef.current - dt);
+    }
+    if (sparkTimerRef.current > 0) {
+      sparkTimerRef.current = Math.max(0, sparkTimerRef.current - dt);
+    }
+    simState.cameraShake = Math.max(0, simState.cameraShake - dt * 2.6);
+    simState.crashFlashTimer = Math.max(0, simState.crashFlashTimer - dt);
     if (simState.killFeedTimer > 0) {
       simState.killFeedTimer = Math.max(0, simState.killFeedTimer - dt);
       if (simState.killFeedTimer === 0) {
@@ -1670,7 +1799,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     // 2. HERO SUPERCAR FLEET (FERRARI 458 / GT3 / WEDGE / MUSCLE / VIP LIMO + DRIFT + SNAPPY PHYSICS)
     if (simState.mode === 'CAR') {
       const throttleInput = fwd - back;
-      const accel = throttleInput * (boost || simState.roulette === 'RED' ? 82 : 52);
+      const accelPower = simState.vehicleWrecked
+        ? 16
+        : boost || simState.roulette === 'RED'
+        ? 82
+        : 52;
+      const accel = throttleInput * accelPower;
       simState.carSpeed += accel * dt;
 
       // Snappy braking: when reversing/braking against current motion, stop on a dime
@@ -1678,9 +1812,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.carSpeed += throttleInput * 95 * dt;
       }
 
-      simState.carSpeed *= Math.pow(throttleInput === 0 ? 0.18 : 0.28, dt); // rolling drag
+      simState.carSpeed *= Math.pow(
+        simState.vehicleWrecked ? 0.14 : throttleInput === 0 ? 0.18 : 0.28,
+        dt
+      ); // rolling drag
+      if (simState.vehicleWrecked) {
+        simState.carSpeed = THREE.MathUtils.clamp(simState.carSpeed, -7.5, 7.5);
+      }
 
-      isDrifting = space && left !== right && Math.abs(simState.carSpeed) > 6;
+      isDrifting = !simState.vehicleWrecked && space && left !== right && Math.abs(simState.carSpeed) > 6;
       const driftTurnMult = isDrifting ? 1.55 : 1.0;
       const steer =
         (left - right) *
@@ -1703,8 +1843,19 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.driftScore = 0;
       }
 
-      // Collision-Free Street Corridors & Gentle Off-Street Landmark Pushback
+      // Real World Rigidity: Solid Buildings, Landmarks & Traffic
       applyWorldCollisions(simState.carPos, true);
+
+      // Drive-through Roadside Pit-Stop Repair Bays
+      if (simState.vehicleHp < 98) {
+        for (let i = 0; i < REPAIR_BAYS.length; i++) {
+          const [bx, bz] = REPAIR_BAYS[i];
+          if (Math.hypot(simState.carPos.x - bx, simState.carPos.z - bz) < 6.5) {
+            repairVehicle();
+            break;
+          }
+        }
+      }
 
       // South Strip Stunt Ramp boost
       const rampDist = Math.hypot(simState.carPos.x - 6.5, simState.carPos.z - 86);
@@ -1727,18 +1878,45 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       activeYaw = simState.carYaw;
     }
 
-    // 3. 6-VESSEL MARITIME & CRUISE LINER FLEET (GERSTNER WAVE BUOYANCY)
+    // 3. 6-VESSEL MARITIME & CRUISE LINER FLEET (GERSTNER WAVE BUOYANCY + RIGID SHORELINE)
     if (simState.mode === 'BOAT') {
-      const accel = (fwd - back) * (boost ? 68 : 44);
+      const accel = (fwd - back) * (simState.vehicleWrecked ? 14 : boost ? 68 : 44);
       simState.boatSpeed += accel * dt;
       if ((fwd - back) * simState.boatSpeed < 0) {
         simState.boatSpeed += (fwd - back) * 60 * dt;
       }
-      simState.boatSpeed *= Math.pow(0.32, dt);
+      simState.boatSpeed *= Math.pow(simState.vehicleWrecked ? 0.2 : 0.32, dt);
+      if (simState.vehicleWrecked) {
+        simState.boatSpeed = THREE.MathUtils.clamp(simState.boatSpeed, -6, 6);
+      }
       simState.boatYaw += (left - right) * 2.5 * dt;
 
-      simState.boatPos.x += Math.sin(simState.boatYaw) * simState.boatSpeed * dt;
-      simState.boatPos.z += Math.cos(simState.boatYaw) * simState.boatSpeed * dt;
+      const prevX = simState.boatPos.x;
+      const prevZ = simState.boatPos.z;
+      const nextX = prevX + Math.sin(simState.boatYaw) * simState.boatSpeed * dt;
+      const nextZ = prevZ + Math.cos(simState.boatYaw) * simState.boatSpeed * dt;
+      const nextGround = getTerrainHeight(nextX, nextZ);
+
+      if (nextGround > 0.25) {
+        const impactSpeed = Math.abs(simState.boatSpeed);
+        const slideXGround = getTerrainHeight(nextX, prevZ);
+        const slideZGround = getTerrainHeight(prevX, nextZ);
+        if (slideXGround <= 0.25) {
+          simState.boatPos.x = nextX;
+          simState.boatSpeed *= 0.72;
+        } else if (slideZGround <= 0.25) {
+          simState.boatPos.z = nextZ;
+          simState.boatSpeed *= 0.72;
+        } else {
+          simState.boatSpeed *= -0.35;
+        }
+        if (impactSpeed > 8) {
+          registerVehicleImpact(impactSpeed, simState.boatPos, 'SHORELINE');
+        }
+      } else {
+        simState.boatPos.x = nextX;
+        simState.boatPos.z = nextZ;
+      }
 
       const waveY = getWaveHeight(simState.boatPos.x, simState.boatPos.z, t) + simState.tideOffset;
       const terrainY = getTerrainHeight(simState.boatPos.x, simState.boatPos.z);
@@ -1750,9 +1928,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       activeYaw = simState.boatYaw;
     }
 
-    // 4. 6-AIRCRAFT AVIATION FLEET (6-DOF FLIGHT)
+    // 4. 6-AIRCRAFT AVIATION FLEET (6-DOF FLIGHT + RIGID TOWER & TERRAIN IMPACT)
     if (simState.mode === 'PLANE') {
-      const targetSpeed = boost ? 84 : space ? 62 : fwd ? 50 : back ? 20 : 38;
+      const rawTargetSpeed = boost ? 84 : space ? 62 : fwd ? 50 : back ? 20 : 38;
+      const targetSpeed = simState.vehicleWrecked ? Math.min(rawTargetSpeed, 22) : rawTargetSpeed;
       simState.planeSpeed = THREE.MathUtils.lerp(simState.planeSpeed, targetSpeed, 3.0 * dt);
 
       const pitchInput = (back - fwd) * 1.65;
@@ -1769,9 +1948,38 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
       const groundY =
         Math.max(getTerrainHeight(simState.planePos.x, simState.planePos.z) + 0.08, simState.tideOffset + 0.2);
-      if (simState.planePos.y < groundY) {
-        simState.planePos.y = groundY;
-        simState.planePitch = Math.max(0, simState.planePitch);
+      if (simState.planePos.y <= groundY + 0.15) {
+        if (simState.planePitch < -0.22) {
+          registerVehicleImpact(simState.planeSpeed * 0.65, simState.planePos, 'TERRAIN');
+          simState.planeSpeed = Math.max(18, simState.planeSpeed * 0.55);
+        }
+        simState.planePos.y = groundY + 0.15;
+        simState.planePitch = Math.max(0.06, simState.planePitch);
+      }
+
+      // Rigid Aircraft-to-Tower collision when flying below skyscraper roof deck
+      if (simState.planePos.y < 52) {
+        const planePad = 3.2;
+        for (let i = 0; i < CITY_BUILDING_AABBS.length; i++) {
+          const b = CITY_BUILDING_AABBS[i];
+          const dx = simState.planePos.x - b.x;
+          const dz = simState.planePos.z - b.z;
+          const minX = b.halfW + planePad;
+          const minZ = b.halfD + planePad;
+          const overlapX = minX - Math.abs(dx);
+          const overlapZ = minZ - Math.abs(dz);
+          if (overlapX > 0 && overlapZ > 0) {
+            if (overlapX < overlapZ) {
+              simState.planePos.x = b.x + (dx >= 0 ? minX : -minX);
+            } else {
+              simState.planePos.z = b.z + (dz >= 0 ? minZ : -minZ);
+            }
+            simState.planeYaw += 0.45;
+            simState.planeSpeed = Math.max(18, simState.planeSpeed * 0.55);
+            registerVehicleImpact(simState.planeSpeed * 0.75, simState.planePos, 'TOWER');
+            break;
+          }
+        }
       }
 
       simState.playerPos.copy(simState.planePos);
@@ -1942,6 +2150,72 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       mat.opacity = (1 - life) * (isDrifting ? 0.55 : 0.32);
     }
 
+    // 3D Engine Hood Damage Smoke & Fire Plume on carRef
+    const showHoodSmoke = simState.vehicleHp < 65;
+    const damageRatio = Math.max(0, Math.min(1, (65 - simState.vehicleHp) / 65));
+    for (let i = 0; i < 4; i++) {
+      const puff = damageSmokeRefs.current[i];
+      if (!puff) continue;
+      if (!showHoodSmoke) {
+        puff.visible = false;
+        continue;
+      }
+      puff.visible = true;
+      const phase = (t * (1.2 + damageRatio * 1.1) + i * 0.25) % 1;
+      const maxHeight = 0.85 + damageRatio * 1.45;
+      puff.position.set(
+        Math.sin(t * 4.5 + i * 1.7) * 0.18 * (0.4 + phase),
+        phase * maxHeight,
+        -phase * (0.35 + Math.min(0.9, Math.abs(simState.carSpeed) * 0.04))
+      );
+      puff.scale.setScalar(0.35 + phase * (0.75 + damageRatio * 0.65));
+      const mat = puff.material as THREE.MeshStandardMaterial;
+      const shade = Math.round(140 - damageRatio * 115);
+      mat.color.setRGB(shade / 255, shade / 255, shade / 255);
+      mat.opacity = (1 - phase) * (0.38 + damageRatio * 0.42);
+    }
+
+    const showHoodFire = simState.vehicleHp < 32;
+    for (let i = 0; i < 2; i++) {
+      const flame = damageFireRefs.current[i];
+      if (!flame) continue;
+      flame.visible = showHoodFire;
+      if (showHoodFire) {
+        const flicker = 0.78 + Math.sin(t * (38 + i * 13) + i * 2.1) * 0.32;
+        flame.scale.set(0.85 + Math.cos(t * 29 + i) * 0.18, flicker, 0.85 + Math.sin(t * 31 + i) * 0.18);
+        flame.rotation.y = t * (i === 0 ? 7 : -9);
+      }
+    }
+
+    // 3D Impact Spark Burst at simState.lastCrashPos
+    if (crashSparksGroupRef.current) {
+      const sparksActive = sparkTimerRef.current > 0;
+      crashSparksGroupRef.current.visible = sparksActive;
+      if (sparksActive) {
+        crashSparksGroupRef.current.position.set(
+          simState.lastCrashPos[0],
+          simState.lastCrashPos[1],
+          simState.lastCrashPos[2]
+        );
+        const progress = 1 - sparkTimerRef.current / 0.35;
+        for (let i = 0; i < 8; i++) {
+          const sp = crashSparkMeshRefs.current[i];
+          if (!sp) continue;
+          const angle = (i / 8) * Math.PI * 2 + 0.35;
+          const elev = 0.25 + (i % 3) * 0.32;
+          const radius = 0.4 + progress * 3.8;
+          sp.position.set(
+            Math.cos(angle) * radius,
+            Math.sin(elev) * radius - progress * progress * 1.4,
+            Math.sin(angle) * radius
+          );
+          sp.rotation.set(elev, -angle, 0);
+          const s = Math.max(0.05, 1.1 - progress * 0.95);
+          sp.scale.set(s, s, s * (1.2 + progress * 0.8));
+        }
+      }
+    }
+
     if (boatRef.current) {
       boatRef.current.position.copy(simState.boatPos);
       const pitchWaveAmp = activeBoatIdxRef.current === 1 ? 0.015 : 0.04;
@@ -2108,6 +2382,14 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         activePos.z - Math.cos(activeYaw) * camDist
       );
       state.camera.position.lerp(desiredCam, Math.min(1, 11.5 * dt));
+
+      // Camera Trauma Shake on Rigid-Body Impacts
+      if (simState.cameraShake > 0.01) {
+        const shake = simState.cameraShake;
+        state.camera.position.x += Math.sin(t * 55) * shake * 0.42;
+        state.camera.position.y += Math.cos(t * 63) * shake * 0.32;
+      }
+
       const lookYOffset = isPara ? 0.65 : isCruiseShip ? 2.6 : 1.25;
       camTarget.current.lerp(
         new THREE.Vector3(activePos.x, activePos.y + lookYOffset, activePos.z),
@@ -2188,6 +2470,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         activeCarName: CAR_NAMES[activeCarIdxRef.current],
         activePlaneName: PLANE_NAMES[activePlaneIdxRef.current],
         activeBoatName: BOAT_NAMES[activeBoatIdxRef.current],
+        vehicleHp: Math.round(simState.vehicleHp),
+        vehicleMaxHp: simState.vehicleMaxHp,
+        vehicleWrecked: simState.vehicleWrecked,
       };
 
       onHudUpdate(hudPayload);
@@ -2400,6 +2685,62 @@ export function VehicleDirector({ onHudUpdate }: Props) {
             <meshStandardMaterial color="#f1f5f9" roughness={0.95} transparent opacity={0.45} depthWrite={false} />
           </mesh>
         ))}
+
+        {/* 3D Engine Hood Damage Smoke & Fire Plume */}
+        <group position={[0, 0.85, 1.35]}>
+          {[0, 1, 2, 3].map((i) => (
+            <mesh
+              key={`damage-smoke-${i}`}
+              ref={(el) => {
+                damageSmokeRefs.current[i] = el;
+              }}
+              visible={false}
+            >
+              <sphereGeometry args={[0.32, 8, 8]} />
+              <meshStandardMaterial
+                color="#334155"
+                roughness={0.98}
+                transparent
+                opacity={0.55}
+                depthWrite={false}
+              />
+            </mesh>
+          ))}
+          <mesh
+            ref={(el) => {
+              damageFireRefs.current[0] = el;
+            }}
+            position={[0, 0.28, 0]}
+            visible={false}
+          >
+            <coneGeometry args={[0.24, 0.78, 8]} />
+            <meshStandardMaterial
+              color="#f97316"
+              emissive="#ea580c"
+              emissiveIntensity={3.6}
+              transparent
+              opacity={0.88}
+              depthWrite={false}
+            />
+          </mesh>
+          <mesh
+            ref={(el) => {
+              damageFireRefs.current[1] = el;
+            }}
+            position={[0.04, 0.22, -0.04]}
+            visible={false}
+          >
+            <coneGeometry args={[0.15, 0.54, 8]} />
+            <meshStandardMaterial
+              color="#fde047"
+              emissive="#f59e0b"
+              emissiveIntensity={4.5}
+              transparent
+              opacity={0.92}
+              depthWrite={false}
+            />
+          </mesh>
+        </group>
       </group>
 
       {/* REAL 3D SWITCHABLE 6-VESSEL MARITIME & CRUISE LINER FLEET */}
@@ -2472,6 +2813,26 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           opacity={0.85}
         />
       </mesh>
+
+      {/* 3D RIGID-BODY IMPACT SPARK BURST */}
+      <group ref={crashSparksGroupRef} visible={false}>
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+          <mesh
+            key={`crash-spark-${i}`}
+            ref={(el) => {
+              crashSparkMeshRefs.current[i] = el;
+            }}
+          >
+            <boxGeometry args={[0.12, 0.12, 0.45]} />
+            <meshStandardMaterial
+              color={i % 2 === 0 ? '#fde047' : '#f59e0b'}
+              emissive={i % 2 === 0 ? '#fbbf24' : '#ea580c'}
+              emissiveIntensity={4.8}
+              roughness={0.15}
+            />
+          </mesh>
+        ))}
+      </group>
     </group>
   );
 }

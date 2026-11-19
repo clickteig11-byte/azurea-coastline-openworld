@@ -5,6 +5,7 @@ import {
   Flame,
   Repeat,
   Umbrella,
+  Wrench,
   Zap,
 } from 'lucide-react';
 import { simState, WEAPON_SPECS } from '../game/store';
@@ -50,6 +51,7 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
 
   const showFire = mode === 'FOOT' || mode === 'CAR' || gameMode === 'BATTLE_ROYALE';
   const showDrop = gameMode === 'BATTLE_ROYALE' || mode === 'FOOT';
+  const showRepair = mode !== 'FOOT' && (simState.vehicleHp ?? 100) < 85;
 
   // Ensure no keys ever stick on hide or unmount
   useEffect(() => {
@@ -246,6 +248,12 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
     window.dispatchEvent(new CustomEvent('br-drop'));
   }, []);
 
+  const handleRepair = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    window.dispatchEvent(new CustomEvent('repair-vehicle'));
+  }, []);
+
   if (!visible) return null;
 
   const spaceLabel =
@@ -313,8 +321,22 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
 
       {/* Right Thumb — Ergonomic Tactile Action Buttons */}
       <div className="pointer-events-none fixed bottom-6 right-5 z-40 flex flex-col items-end gap-2.5">
-        {/* Top utility row: Sky-Drop & Next Vehicle / Next Gun */}
+        {/* Top utility row: Repair, Sky-Drop & Next Vehicle / Next Gun */}
         <div className="pointer-events-auto flex items-center gap-2.5">
+          {showRepair && (
+            <button
+              type="button"
+              aria-label="Repair Vehicle"
+              onPointerDown={handleRepair}
+              className="pointer-events-auto flex h-12 w-12 flex-col items-center justify-center gap-0.5 rounded-full border border-emerald-400/50 bg-emerald-950/75 text-emerald-200 shadow-[0_6px_20px_rgba(16,185,129,0.35)] backdrop-blur-md touch-none select-none active:scale-95 active:border-emerald-300/80 active:bg-emerald-500/35"
+            >
+              <Wrench className="h-4 w-4" strokeWidth={2.2} />
+              <span className="text-[9px] font-semibold uppercase tracking-wider leading-none">
+                Repair
+              </span>
+            </button>
+          )}
+
           {showDrop && (
             <button
               type="button"
