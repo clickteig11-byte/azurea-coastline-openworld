@@ -1617,10 +1617,26 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     const isCustomizerOpen = Boolean(s.customizerOpen);
     const isStartMenuOpen = Boolean(s.startMenuOpen);
     const isMenuOpen = Boolean(s.customizerOpen || s.startMenuOpen);
-    const fwd = !isMenuOpen && (keys.has('KeyW') || keys.has('ArrowUp')) ? 1 : 0;
-    const back = !isMenuOpen && (keys.has('KeyS') || keys.has('ArrowDown')) ? 1 : 0;
-    const left = !isStartMenuOpen && (keys.has('KeyA') || keys.has('ArrowLeft')) ? 1 : 0;
-    const right = !isStartMenuOpen && (keys.has('KeyD') || keys.has('ArrowRight')) ? 1 : 0;
+    const ctrl = simState.controlSettings;
+    const steerSens = ctrl?.steeringSensitivity ?? 1.0;
+    const throttleSens = ctrl?.throttleSensitivity ?? 1.0;
+    const camSmooth = ctrl?.cameraSmoothness ?? 1.0;
+    const steerAssist = ctrl?.steeringAssist ?? true;
+    const invertFlightY = ctrl?.invertFlightY ?? false;
+
+    // Blend digital keyboard keys with smooth proportional analog mobile joystick
+    const analogX = !isMenuOpen ? simState.analogMoveX || 0 : 0; // -1 left .. +1 right
+    const analogY = !isMenuOpen ? simState.analogMoveY || 0 : 0; // -1 back .. +1 fwd
+
+    const kbFwd = !isMenuOpen && (keys.has('KeyW') || keys.has('ArrowUp')) ? 1 : 0;
+    const kbBack = !isMenuOpen && (keys.has('KeyS') || keys.has('ArrowDown')) ? 1 : 0;
+    const kbLeft = !isStartMenuOpen && (keys.has('KeyA') || keys.has('ArrowLeft')) ? 1 : 0;
+    const kbRight = !isStartMenuOpen && (keys.has('KeyD') || keys.has('ArrowRight')) ? 1 : 0;
+
+    const fwd = Math.max(kbFwd, Math.max(0, analogY));
+    const back = Math.max(kbBack, Math.max(0, -analogY));
+    const left = Math.max(kbLeft, Math.max(0, -analogX));
+    const right = Math.max(kbRight, Math.max(0, analogX));
     const boost = !isMenuOpen && (keys.has('ShiftLeft') || keys.has('ShiftRight'));
     const space = !isMenuOpen && keys.has('Space');
 
@@ -1679,9 +1695,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
         speedKmh = Math.round(Math.hypot(paraFwdSpeed, descentRate) * 3.2);
       } else {
-        const turn = (left - right) * 3.2 * dt;
+        const turn = (left - right) * 3.0 * steerSens * dt;
         simState.playerYaw += turn;
-        const moveSpeed = boost ? 26 : 16;
+        const moveSpeed = (boost ? 26 : 16) * throttleSens;
         const dirX = Math.sin(simState.playerYaw);
         const dirZ = Math.cos(simState.playerYaw);
         const throttle = fwd - back;
@@ -1799,11 +1815,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     // 2. HERO SUPERCAR FLEET (FERRARI 458 / GT3 / WEDGE / MUSCLE / VIP LIMO + DRIFT + SNAPPY PHYSICS)
     if (simState.mode === 'CAR') {
       const throttleInput = fwd - back;
-      const accelPower = simState.vehicleWrecked
-        ? 16
-        : boost || simState.roulette === 'RED'
-        ? 82
-        : 52;
+      const accelPower =
+        (simState.vehicleWrecked
+          ? 16
+          : boost || simState.roulette === 'RED'
+          ? 82
+          : 52) * throttleSens;
       const accel = throttleInput * accelPower;
       simState.carSpeed += accel * dt;
 
@@ -1820,11 +1837,17 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.carSpeed = THREE.MathUtils.clamp(simState.carSpeed, -7.5, 7.5);
       }
 
-      isDrifting = !simState.vehicleWrecked && space && left !== right && Math.abs(simState.carSpeed) > 6;
+      isDrifting = !simState.vehicleWrecked && space && Math.abs(left - right) > 0.1 && Math.abs(simState.carSpeed) > 6;
       const driftTurnMult = isDrifting ? 1.55 : 1.0;
+      // Easy Steering Assist gently dampens twitchy oversteer at high speed
+      const highSpeedDamp = steerAssist
+        ? Math.max(0.55, 1.0 - Math.abs(simState.carSpeed) / 95)
+        : 1.0;
       const steer =
         (left - right) *
-        3.0 *
+        2.85 *
+        steerSens *
+        highSpeedDamp *
         driftTurnMult *
         Math.min(1, Math.abs(simState.carSpeed) / 7 + 0.35) *
         (simState.carSpeed >= 0 ? 1 : -1);
@@ -1880,7 +1903,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     // 3. 6-VESSEL MARITIME & CRUISE LINER FLEET (GERSTNER WAVE BUOYANCY + RIGID SHORELINE)
     if (simState.mode === 'BOAT') {
-      const accel = (fwd - back) * (simState.vehicleWrecked ? 14 : boost ? 68 : 44);
+      const accel = (fwd - back) * (simState.vehicleWrecked ? 14 : boost ? 68 : 44) * throttleSens;
       simState.boatSpeed += accel * dt;
       if ((fwd - back) * simState.boatSpeed < 0) {
         simState.boatSpeed += (fwd - back) * 60 * dt;
@@ -1889,7 +1912,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (simState.vehicleWrecked) {
         simState.boatSpeed = THREE.MathUtils.clamp(simState.boatSpeed, -6, 6);
       }
-      simState.boatYaw += (left - right) * 2.5 * dt;
+      simState.boatYaw += (left - right) * 2.4 * steerSens * dt;
 
       const prevX = simState.boatPos.x;
       const prevZ = simState.boatPos.z;
@@ -1922,6 +1945,27 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const terrainY = getTerrainHeight(simState.boatPos.x, simState.boatPos.z);
       simState.boatPos.y = Math.max(waveY + 0.15, terrainY + 0.15);
 
+      // Soft open-ocean boundary turn-back so sailing far out curves smoothly back toward the island
+      const boatRadius = Math.hypot(simState.boatPos.x, simState.boatPos.z);
+      if (boatRadius > 660) {
+        const toCenterYaw = Math.atan2(-simState.boatPos.x, -simState.boatPos.z);
+        const yawDiff = Math.atan2(
+          Math.sin(toCenterYaw - simState.boatYaw),
+          Math.cos(toCenterYaw - simState.boatYaw)
+        );
+        const pull = THREE.MathUtils.clamp((boatRadius - 660) / 140, 0.15, 1.0);
+        simState.boatYaw += yawDiff * Math.min(1, 2.4 * pull * dt);
+        if (boatRadius > 820) {
+          const clampScale = 820 / boatRadius;
+          simState.boatPos.x *= clampScale;
+          simState.boatPos.z *= clampScale;
+        }
+        if (simState.stuntTimer <= 0.2) {
+          simState.stuntText = 'OPEN OCEAN HORIZON · TURNING BACK';
+          simState.stuntTimer = 1.4;
+        }
+      }
+
       simState.playerPos.copy(simState.boatPos);
       speedKmh = Math.round(Math.abs(simState.boatSpeed) * 3.0);
       activePos = simState.boatPos;
@@ -1930,16 +1974,23 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     // 4. 6-AIRCRAFT AVIATION FLEET (6-DOF FLIGHT + RIGID TOWER & TERRAIN IMPACT)
     if (simState.mode === 'PLANE') {
-      const rawTargetSpeed = boost ? 84 : space ? 62 : fwd ? 50 : back ? 20 : 38;
+      const rawTargetSpeed = (boost ? 84 : space ? 62 : fwd > 0.2 ? 50 : back > 0.2 ? 20 : 38) * throttleSens;
       const targetSpeed = simState.vehicleWrecked ? Math.min(rawTargetSpeed, 22) : rawTargetSpeed;
       simState.planeSpeed = THREE.MathUtils.lerp(simState.planeSpeed, targetSpeed, 3.0 * dt);
 
-      const pitchInput = (back - fwd) * 1.65;
-      const rollInput = (left - right) * 2.4;
+      const pitchSign = invertFlightY ? -1 : 1;
+      const rawPitchDelta = (back - fwd) * pitchSign;
+      const pitchInput = rawPitchDelta * 1.55 * steerSens;
+      const rollInput = (left - right) * 2.2 * steerSens;
 
-      simState.planePitch = THREE.MathUtils.clamp(simState.planePitch + pitchInput * dt, -0.78, 0.78);
+      if (Math.abs(rawPitchDelta) < 0.08 && steerAssist) {
+        // Gentle auto-leveling when hands are off pitch so flying is super easy
+        simState.planePitch = THREE.MathUtils.lerp(simState.planePitch, 0, Math.min(1, 2.2 * dt));
+      } else {
+        simState.planePitch = THREE.MathUtils.clamp(simState.planePitch + pitchInput * dt, -0.78, 0.78);
+      }
       simState.planeRoll = THREE.MathUtils.lerp(simState.planeRoll, rollInput * 0.65, 5.5 * dt);
-      simState.planeYaw += (left - right) * 1.65 * dt;
+      simState.planeYaw += (left - right) * 1.55 * steerSens * dt;
 
       const cosP = Math.cos(simState.planePitch);
       simState.planePos.x += Math.sin(simState.planeYaw) * cosP * simState.planeSpeed * dt;
@@ -1980,6 +2031,36 @@ export function VehicleDirector({ onHudUpdate }: Props) {
             break;
           }
         }
+      }
+
+      // Soft outer-airspace turn-back so flying far over the ocean smoothly banks back toward the city
+      const planeRadius = Math.hypot(simState.planePos.x, simState.planePos.z);
+      if (planeRadius > 700) {
+        const toCenterYaw = Math.atan2(-simState.planePos.x, -simState.planePos.z);
+        const yawDiff = Math.atan2(
+          Math.sin(toCenterYaw - simState.planeYaw),
+          Math.cos(toCenterYaw - simState.planeYaw)
+        );
+        const pull = THREE.MathUtils.clamp((planeRadius - 700) / 180, 0.2, 1.0);
+        simState.planeYaw += yawDiff * Math.min(1, 2.2 * pull * dt);
+        simState.planeRoll = THREE.MathUtils.lerp(
+          simState.planeRoll,
+          THREE.MathUtils.clamp(yawDiff * 0.9, -0.75, 0.75),
+          4.0 * dt
+        );
+        if (planeRadius > 920) {
+          const clampScale = 920 / planeRadius;
+          simState.planePos.x *= clampScale;
+          simState.planePos.z *= clampScale;
+        }
+        if (simState.stuntTimer <= 0.2) {
+          simState.stuntText = 'OPEN OCEAN AIRSPACE · RETURNING TO CITY';
+          simState.stuntTimer = 1.4;
+        }
+      }
+      if (simState.planePos.y > 260) {
+        simState.planePos.y = THREE.MathUtils.lerp(simState.planePos.y, 260, 2.5 * dt);
+        simState.planePitch = Math.min(simState.planePitch, -0.05);
       }
 
       simState.playerPos.copy(simState.planePos);
@@ -2381,7 +2462,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         activePos.y + camHeight,
         activePos.z - Math.cos(activeYaw) * camDist
       );
-      state.camera.position.lerp(desiredCam, Math.min(1, 11.5 * dt));
+      state.camera.position.lerp(desiredCam, Math.min(1, 11.5 * camSmooth * dt));
 
       // Camera Trauma Shake on Rigid-Body Impacts
       if (simState.cameraShake > 0.01) {
@@ -2393,7 +2474,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const lookYOffset = isPara ? 0.65 : isCruiseShip ? 2.6 : 1.25;
       camTarget.current.lerp(
         new THREE.Vector3(activePos.x, activePos.y + lookYOffset, activePos.z),
-        Math.min(1, 15 * dt)
+        Math.min(1, 15 * camSmooth * dt)
       );
       state.camera.lookAt(camTarget.current);
 

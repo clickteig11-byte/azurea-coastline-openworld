@@ -27,14 +27,18 @@ import {
   Maximize2,
   Minimize2,
   Wrench,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   CHARACTER_PRESETS,
   CharacterArchetype,
   CharacterCustomization,
+  ControlSettings,
+  DEFAULT_CONTROL_SETTINGS,
   EyewearStyle,
   GameHudSnapshot,
   GamePlayMode,
+  saveControlSettings,
   simState,
   WEAPON_SPECS,
 } from '../game/store';
@@ -454,6 +458,13 @@ export function HUD({ hud, onSelectMode }: Props) {
   const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('empire');
   const [mobileTeleportOpen, setMobileTeleportOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const controlSettings = simState.controlSettings;
+
+  const updateControls = (patch: Partial<ControlSettings>) => {
+    saveControlSettings(patch);
+    setUiTick((t) => t + 1);
+  };
 
   useEffect(() => {
     const onFsChange = () => {
@@ -533,6 +544,7 @@ export function HUD({ hud, onSelectMode }: Props) {
     if (next) {
       simState.customizerOpen = false;
       setMobileTeleportOpen(false);
+      setControlsOpen(false);
     }
     window.dispatchEvent(new CustomEvent('toggle-start-menu'));
     setUiTick((t) => t + 1);
@@ -542,6 +554,7 @@ export function HUD({ hud, onSelectMode }: Props) {
     const prev = Boolean(simState.customizerOpen);
     s.startMenuOpen = false;
     setMobileTeleportOpen(false);
+    setControlsOpen(false);
     window.dispatchEvent(new CustomEvent('toggle-customizer'));
     if (Boolean(simState.customizerOpen) === prev) {
       simState.customizerOpen = !prev;
@@ -1207,6 +1220,22 @@ export function HUD({ hud, onSelectMode }: Props) {
         </button>
 
         <button
+          onClick={() => {
+            setControlsOpen((o) => !o);
+            if (!controlsOpen) simState.customizerOpen = false;
+          }}
+          title="Customize Controls & Sensitivity"
+          className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition ${
+            controlsOpen
+              ? 'bg-white text-neutral-950'
+              : 'text-neutral-200 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Controls</span>
+        </button>
+
+        <button
           onClick={handleToggleCustomizer}
           className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
             isCustomizerOpen
@@ -1425,6 +1454,231 @@ export function HUD({ hud, onSelectMode }: Props) {
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>
+        </div>
+      )}
+
+      {/* CONTROLS & SENSITIVITY PANEL */}
+      {controlsOpen && !isCustomizerOpen && (
+        <div className="pointer-events-auto fixed left-3 top-16 z-40 max-h-[calc(100dvh-7rem)] w-72 overflow-y-auto rounded-2xl border border-white/10 bg-neutral-950/90 p-4 font-sans text-white shadow-2xl backdrop-blur-md sm:w-80">
+          <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2.5">
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-sky-400" />
+              <span className="text-xs font-semibold tracking-wide">Controls &amp; Sensitivity</span>
+            </div>
+            <button
+              onClick={() => setControlsOpen(false)}
+              className="rounded-full p-1 text-neutral-400 transition hover:bg-white/10 hover:text-white"
+              title="Close Controls"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* One-Tap Handling Presets */}
+          <div className="mb-4">
+            <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+              Quick Presets
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  {
+                    label: 'Easy',
+                    desc: 'Smooth',
+                    patch: {
+                      steeringSensitivity: 0.75,
+                      throttleSensitivity: 0.85,
+                      cameraSmoothness: 0.85,
+                      steeringAssist: true,
+                    },
+                  },
+                  {
+                    label: 'Balanced',
+                    desc: 'Default',
+                    patch: {
+                      steeringSensitivity: 1.0,
+                      throttleSensitivity: 1.0,
+                      cameraSmoothness: 1.0,
+                      steeringAssist: true,
+                    },
+                  },
+                  {
+                    label: 'Pro',
+                    desc: 'Sharp',
+                    patch: {
+                      steeringSensitivity: 1.45,
+                      throttleSensitivity: 1.25,
+                      cameraSmoothness: 1.35,
+                      steeringAssist: false,
+                    },
+                  },
+                ] as const
+              ).map((preset) => {
+                const isActive =
+                  Math.abs(controlSettings.steeringSensitivity - preset.patch.steeringSensitivity) < 0.04 &&
+                  Math.abs(controlSettings.throttleSensitivity - preset.patch.throttleSensitivity) < 0.04 &&
+                  controlSettings.steeringAssist === preset.patch.steeringAssist;
+                return (
+                  <button
+                    key={preset.label}
+                    onClick={() => updateControls(preset.patch)}
+                    className={`rounded-xl border px-2 py-2 text-center transition ${
+                      isActive
+                        ? 'border-sky-400/60 bg-sky-500/20 text-white'
+                        : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold">{preset.label}</div>
+                    <div className="text-[10px] text-neutral-400">{preset.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Sliders */}
+          <div className="space-y-3.5">
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs">
+                <span className="text-neutral-300">Steering Sensitivity</span>
+                <span className="font-mono text-[11px] font-semibold text-sky-300">
+                  {Math.round(controlSettings.steeringSensitivity * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={40}
+                max={200}
+                step={5}
+                value={Math.round(controlSettings.steeringSensitivity * 100)}
+                onChange={(e) =>
+                  updateControls({ steeringSensitivity: Number(e.target.value) / 100 })
+                }
+                className="h-1.5 w-full cursor-pointer accent-sky-400"
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs">
+                <span className="text-neutral-300">Speed &amp; Acceleration</span>
+                <span className="font-mono text-[11px] font-semibold text-sky-300">
+                  {Math.round(controlSettings.throttleSensitivity * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={50}
+                max={180}
+                step={5}
+                value={Math.round(controlSettings.throttleSensitivity * 100)}
+                onChange={(e) =>
+                  updateControls({ throttleSensitivity: Number(e.target.value) / 100 })
+                }
+                className="h-1.5 w-full cursor-pointer accent-sky-400"
+              />
+            </div>
+
+            <div>
+              <div className="mb-1 flex items-center justify-between text-xs">
+                <span className="text-neutral-300">Camera Responsiveness</span>
+                <span className="font-mono text-[11px] font-semibold text-sky-300">
+                  {Math.round(controlSettings.cameraSmoothness * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min={40}
+                max={200}
+                step={5}
+                value={Math.round(controlSettings.cameraSmoothness * 100)}
+                onChange={(e) =>
+                  updateControls({ cameraSmoothness: Number(e.target.value) / 100 })
+                }
+                className="h-1.5 w-full cursor-pointer accent-sky-400"
+              />
+            </div>
+          </div>
+
+          {/* Toggles */}
+          <div className="mt-4 space-y-2 border-t border-white/10 pt-3">
+            <button
+              onClick={() => updateControls({ steeringAssist: !controlSettings.steeringAssist })}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-xs transition hover:bg-white/10"
+            >
+              <div>
+                <div className="font-medium text-white">Steering &amp; Flight Assist</div>
+                <div className="text-[10px] text-neutral-400">
+                  Smooths high-speed turns &amp; auto-levels planes
+                </div>
+              </div>
+              <span
+                className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                  controlSettings.steeringAssist
+                    ? 'bg-emerald-500/25 text-emerald-300'
+                    : 'bg-white/10 text-neutral-400'
+                }`}
+              >
+                {controlSettings.steeringAssist ? 'ON' : 'OFF'}
+              </span>
+            </button>
+
+            <button
+              onClick={() => updateControls({ invertFlightY: !controlSettings.invertFlightY })}
+              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-xs transition hover:bg-white/10"
+            >
+              <div>
+                <div className="font-medium text-white">Invert Flight Pitch</div>
+                <div className="text-[10px] text-neutral-400">
+                  Swap W/S nose up &amp; down in aircraft
+                </div>
+              </div>
+              <span
+                className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                  controlSettings.invertFlightY
+                    ? 'bg-sky-500/25 text-sky-300'
+                    : 'bg-white/10 text-neutral-400'
+                }`}
+              >
+                {controlSettings.invertFlightY ? 'ON' : 'OFF'}
+              </span>
+            </button>
+          </div>
+
+          {/* Mobile Touch Joystick Size */}
+          <div className="mt-3.5 border-t border-white/10 pt-3">
+            <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+              Touch Joystick Size
+            </div>
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  { id: 'SM', label: 'Small' },
+                  { id: 'MD', label: 'Medium' },
+                  { id: 'LG', label: 'Large' },
+                ] as const
+              ).map((sz) => (
+                <button
+                  key={sz.id}
+                  onClick={() => updateControls({ joystickSize: sz.id })}
+                  className={`rounded-lg border py-1.5 text-xs font-medium transition ${
+                    controlSettings.joystickSize === sz.id
+                      ? 'border-sky-400/60 bg-sky-500/20 text-white'
+                      : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10'
+                  }`}
+                >
+                  {sz.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Reset */}
+          <button
+            onClick={() => updateControls({ ...DEFAULT_CONTROL_SETTINGS })}
+            className="mt-3.5 w-full rounded-xl border border-white/10 bg-white/5 py-1.5 text-xs font-medium text-neutral-300 transition hover:bg-white/10 hover:text-white"
+          >
+            Reset to Defaults
+          </button>
         </div>
       )}
 

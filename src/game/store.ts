@@ -614,11 +614,86 @@ export const INITIAL_CHIPS: ChipNode[] = [
   { id: 'a5', position: [95, 68, 35], value: 500, collected: false, isAerial: true },
 ];
 
+export interface ControlSettings {
+  steeringSensitivity: number; // 0.4 .. 2.0 (default 1.0)
+  throttleSensitivity: number; // 0.5 .. 1.8 (default 1.0)
+  cameraSmoothness: number; // 0.4 .. 2.0 (default 1.0)
+  steeringAssist: boolean; // smooth high-speed stability (default true)
+  invertFlightY: boolean; // invert plane pitch (default false)
+  joystickSize: 'SM' | 'MD' | 'LG'; // mobile joystick diameter
+}
+
+export const DEFAULT_CONTROL_SETTINGS: ControlSettings = {
+  steeringSensitivity: 1.0,
+  throttleSensitivity: 1.0,
+  cameraSmoothness: 1.0,
+  steeringAssist: true,
+  invertFlightY: false,
+  joystickSize: 'MD',
+};
+
+function loadControlSettings(): ControlSettings {
+  if (typeof window === 'undefined') return { ...DEFAULT_CONTROL_SETTINGS };
+  try {
+    const raw = window.localStorage.getItem('world-horizon-controls-v1');
+    if (!raw) return { ...DEFAULT_CONTROL_SETTINGS };
+    const parsed = JSON.parse(raw) as Partial<ControlSettings>;
+    return {
+      steeringSensitivity:
+        typeof parsed.steeringSensitivity === 'number'
+          ? Math.max(0.4, Math.min(2.0, parsed.steeringSensitivity))
+          : DEFAULT_CONTROL_SETTINGS.steeringSensitivity,
+      throttleSensitivity:
+        typeof parsed.throttleSensitivity === 'number'
+          ? Math.max(0.5, Math.min(1.8, parsed.throttleSensitivity))
+          : DEFAULT_CONTROL_SETTINGS.throttleSensitivity,
+      cameraSmoothness:
+        typeof parsed.cameraSmoothness === 'number'
+          ? Math.max(0.4, Math.min(2.0, parsed.cameraSmoothness))
+          : DEFAULT_CONTROL_SETTINGS.cameraSmoothness,
+      steeringAssist:
+        typeof parsed.steeringAssist === 'boolean'
+          ? parsed.steeringAssist
+          : DEFAULT_CONTROL_SETTINGS.steeringAssist,
+      invertFlightY:
+        typeof parsed.invertFlightY === 'boolean'
+          ? parsed.invertFlightY
+          : DEFAULT_CONTROL_SETTINGS.invertFlightY,
+      joystickSize:
+        parsed.joystickSize === 'SM' || parsed.joystickSize === 'MD' || parsed.joystickSize === 'LG'
+          ? parsed.joystickSize
+          : DEFAULT_CONTROL_SETTINGS.joystickSize,
+    };
+  } catch {
+    return { ...DEFAULT_CONTROL_SETTINGS };
+  }
+}
+
+export function saveControlSettings(next: Partial<ControlSettings>): ControlSettings {
+  Object.assign(simState.controlSettings, next);
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem(
+        'world-horizon-controls-v1',
+        JSON.stringify(simState.controlSettings)
+      );
+    } catch {
+      // ignore storage quota errors
+    }
+    window.dispatchEvent(new CustomEvent('controls-updated'));
+  }
+  return simState.controlSettings;
+}
+
 // Mutable high-frequency simulation state (0 React re-renders per frame)
 export const simState = {
   mode: 'CAR' as VehicleMode,
   gameMode: 'FREE_ROAM' as GamePlayMode,
   startMenuOpen: true,
+  controlsOpen: false,
+  controlSettings: loadControlSettings(),
+  analogMoveX: 0, // -1 (left) .. +1 (right) smooth analog joystick
+  analogMoveY: 0, // -1 (back) .. +1 (forward) smooth analog joystick
   touchControlsEnabled: false,
   tourVisitedIds: [] as string[],
   gliding: false,

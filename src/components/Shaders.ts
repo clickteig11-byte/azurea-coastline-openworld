@@ -177,6 +177,14 @@ export const waterFragmentShader = /* glsl */ `
 
     vec3 col = mix(base, uFoam, totalFoam);
     float alpha = mix(0.84, 0.95, clamp(offshoreDepth + totalFoam * 0.5, 0.0, 1.0));
+
+    // Seamless atmospheric horizon mist so the ocean dissolves cleanly into the sky
+    float camDist = length(vWorldPos - uCameraPos);
+    float horizonMist = smoothstep(320.0, 1500.0, camDist);
+    vec3 horizonSkyCol = vec3(0.81, 0.90, 0.96);
+    col = mix(col, horizonSkyCol, horizonMist);
+    alpha = mix(alpha, 1.0, horizonMist);
+
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -608,6 +616,9 @@ export const terrainFragmentShader = /* glsl */ `
     vec3 specCol = vec3(1.0, 0.95, 0.84) * spec;
 
     vec3 finalCol = albedo * (skyAmb * 0.52 + sunLight) + specCol;
+    float camDist = length(vWorldPos - uCameraPos);
+    float distHaze = smoothstep(420.0, 1500.0, camDist);
+    finalCol = mix(finalCol, vec3(0.81, 0.90, 0.96), distHaze * 0.88);
     gl_FragColor = vec4(finalCol, 1.0);
   }
 `;

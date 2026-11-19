@@ -17,10 +17,9 @@ export interface MobileControlsProps {
   visible: boolean;
 }
 
-const JOYSTICK_SIZE = 124;
+const JOYSTICK_SIZES = { SM: 108, MD: 128, LG: 152 } as const;
 const KNOB_SIZE = 52;
-const MAX_RADIUS = (JOYSTICK_SIZE - KNOB_SIZE) / 2; // 36px
-const DEADZONE = 0.22;
+const DEADZONE = 0.14;
 
 const MOVEMENT_KEYS = ['KeyW', 'KeyS', 'KeyA', 'KeyD'] as const;
 const ACTION_KEYS = ['ShiftLeft', 'Space', 'KeyF'] as const;
@@ -29,6 +28,8 @@ function clearMovementKeys() {
   for (const key of MOVEMENT_KEYS) {
     simState.keys.delete(key);
   }
+  simState.analogMoveX = 0;
+  simState.analogMoveY = 0;
 }
 
 function clearActionKeys() {
@@ -43,6 +44,20 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
   const joyPointerIdRef = useRef<number | null>(null);
   const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [joyActive, setJoyActive] = useState(false);
+  const [joySizeKey, setJoySizeKey] = useState<'SM' | 'MD' | 'LG'>(
+    () => simState.controlSettings?.joystickSize ?? 'MD'
+  );
+
+  useEffect(() => {
+    const onControlsUpdated = () => {
+      setJoySizeKey(simState.controlSettings?.joystickSize ?? 'MD');
+    };
+    window.addEventListener('controls-updated', onControlsUpdated);
+    return () => window.removeEventListener('controls-updated', onControlsUpdated);
+  }, []);
+
+  const joystickSize = JOYSTICK_SIZES[joySizeKey] ?? 128;
+  const maxRadius = (joystickSize - KNOB_SIZE) / 2;
 
   // Action button pressed states for tactile visual feedback
   const [boostPressed, setBoostPressed] = useState(false);
@@ -79,40 +94,56 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
     }
   }, [showFire]);
 
-  const updateJoystickFromClient = useCallback((clientX: number, clientY: number) => {
-    const pad = padRef.current;
-    if (!pad) return;
-    const rect = pad.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
+  const updateJoystickFromClient = useCallback(
+    (clientX: number, clientY: number) => {
+      const pad = padRef.current;
+      if (!pad) return;
+      const rect = pad.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
 
-    let offsetX = clientX - cx;
-    let offsetY = clientY - cy;
-    const dist = Math.hypot(offsetX, offsetY);
+      let offsetX = clientX - cx;
+      let offsetY = clientY - cy;
+      const dist = Math.hypot(offsetX, offsetY);
 
-    if (dist > MAX_RADIUS) {
-      const scale = MAX_RADIUS / dist;
-      offsetX *= scale;
-      offsetY *= scale;
-    }
+      if (dist > maxRadius) {
+        const scale = maxRadius / dist;
+        offsetX *= scale;
+        offsetY *= scale;
+      }
 
-    setKnobPos({ x: offsetX, y: offsetY });
+      setKnobPos({ x: offsetX, y: offsetY });
 
-    const dx = offsetX / MAX_RADIUS;
-    const dy = offsetY / MAX_RADIUS;
+      const rawX = offsetX / maxRadius;
+      const rawY = offsetY / maxRadius;
 
-    if (dy < -DEADZONE) simState.keys.add('KeyW');
-    else simState.keys.delete('KeyW');
+      // Smooth proportional curve after deadzone so small pushes steer gently and full pushes turn sharply
+      const shape = (v: number) => {
+        const abs = Math.abs(v);
+        if (abs <= DEADZONE) return 0;
+        const norm = (abs - DEADZONE) / (1 - DEADZONE);
+        return Math.sign(v) * Math.pow(norm, 1.3);
+      };
 
-    if (dy > DEADZONE) simState.keys.add('KeyS');
-    else simState.keys.delete('KeyS');
+      const shapedX = shape(rawX);
+      const shapedY = shape(-rawY); // up on screen is positive forward
+      simState.analogMoveX = shapedX;
+      simState.analogMoveY = shapedY;
 
-    if (dx < -DEADZONE) simState.keys.add('KeyA');
-    else simState.keys.delete('KeyA');
+      if (shapedY > 0.08) simState.keys.add('KeyW');
+      else simState.keys.delete('KeyW');
 
-    if (dx > DEADZONE) simState.keys.add('KeyD');
-    else simState.keys.delete('KeyD');
-  }, []);
+      if (shapedY < -0.08) simState.keys.add('KeyS');
+      else simState.keys.delete('KeyS');
+
+      if (shapedX < -0.08) simState.keys.add('KeyA');
+      else simState.keys.delete('KeyA');
+
+      if (shapedX > 0.08) simState.keys.add('KeyD');
+      else simState.keys.delete('KeyD');
+    },
+    [maxRadius]
+  );
 
   const releaseJoystick = useCallback(() => {
     joyPointerIdRef.current = null;
@@ -288,7 +319,7 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
         onPointerUp={handleJoyPointerEnd}
         onPointerCancel={handleJoyPointerEnd}
         onLostPointerCapture={releaseJoystick}
-        style={{ width: JOYSTICK_SIZE, height: JOYSTICK_SIZE }}
+        style={{ width: joystickSize, height: joystickSize }}
         className={`pointer-events-auto fixed bottom-6 left-5 z-40 flex items-center justify-center rounded-full border backdrop-blur-md touch-none select-none transition-colors duration-150 ${
           joyActive
             ? 'border-white/40 bg-neutral-950/65 shadow-[0_0_24px_rgba(255,255,255,0.14)]'

@@ -255,7 +255,7 @@ export function SkyDome() {
 
   return (
     <mesh scale={[-1, 1, 1]}>
-      <sphereGeometry args={[1400, 32, 20]} />
+      <sphereGeometry args={[2200, 32, 20]} />
       <shaderMaterial
         vertexShader={skyVertexShader}
         fragmentShader={skyFragmentShader}
@@ -291,7 +291,7 @@ export function StylizedOcean() {
 
   return (
     <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-      <planeGeometry args={[1800, 1800, 64, 64]} />
+      <planeGeometry args={[4600, 4600, 72, 72]} />
       <shaderMaterial
         vertexShader={waterVertexShader}
         fragmentShader={waterFragmentShader}

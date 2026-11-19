@@ -243,7 +243,7 @@ export function App() {
     <div className="fixed inset-0 h-[100dvh] w-[100dvw] overflow-hidden bg-slate-950">
       <Canvas
         dpr={[0.85, 1.15]}
-        camera={{ fov: 60, near: 0.5, far: 2200, position: [0, 12, 38] }}
+        camera={{ fov: 60, near: 0.5, far: 3400, position: [0, 12, 38] }}
         gl={{
           antialias: false,
           powerPreference: 'high-performance',
@@ -270,7 +270,7 @@ export function App() {
           shadow-bias={-0.0005}
         />
         <directionalLight position={[-120, 80, 120]} intensity={0.75} color="#7dd3fc" />
-        <fog attach="fog" args={['#cde4f5', 380, 1300]} />
+        <fog attach="fog" args={['#cfe5f5', 420, 1600]} />
 
         <SkyDome />
         <IslandTerrain />
