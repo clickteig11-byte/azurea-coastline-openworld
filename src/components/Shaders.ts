@@ -32,23 +32,48 @@ export const skyFragmentShader = /* glsl */ `
   void main() {
     vec3 dir = normalize(vWorldPos);
     float h = clamp(dir.y, 0.0, 1.0);
-    vec3 col = mix(uHorizon, uZenith, pow(h, 0.48));
 
-    // Warm atmospheric horizon scatter + Mie sun scattering + crisp solar corona
-    float sunDot = max(dot(dir, normalize(uSunDir)), 0.0);
-    float horizonGlow = pow(1.0 - h, 4.0);
-    col += vec3(1.0, 0.89, 0.74) * horizonGlow * (0.22 + 0.42 * pow(sunDot, 2.0));
-    col += uSunColor * pow(sunDot, 6.0) * 0.30;
-    col += uSunColor * pow(sunDot, 48.0) * 0.58;
-    col += vec3(1.0, 0.95, 0.82) * pow(sunDot, 180.0) * 0.95;
-    col += vec3(1.0, 0.99, 0.94) * smoothstep(0.9974, 0.9995, sunDot) * 2.0;
+    // Natural photographic daytime sky palette (#1d6fa5 cerulean zenith -> #cfe4f5 pale-azure horizon)
+    // Preserves warm roulette tint when uZenith shifts red/amber
+    float isDaySky = smoothstep(0.15, 0.45, uZenith.b - uZenith.r);
+    vec3 photoZenith = mix(uZenith, vec3(0.114, 0.435, 0.647), isDaySky * 0.82);
+    vec3 photoHorizon = mix(uHorizon, vec3(0.812, 0.894, 0.961), isDaySky * 0.82);
+    vec3 midSky = mix(photoHorizon, photoZenith, 0.46) + vec3(0.015, 0.03, 0.045) * isDaySky;
+
+    vec3 col = mix(photoHorizon, midSky, smoothstep(0.0, 0.28, h));
+    col = mix(col, photoZenith, pow(smoothstep(0.12, 1.0, h), 0.72));
+
+    // Subtle warm golden-hour Mie halo around the sun + horizon atmospheric scatter
+    vec3 sunN = normalize(uSunDir);
+    float sunDot = max(dot(dir, sunN), 0.0);
+    float horizonGlow = pow(1.0 - h, 4.5);
+    col += vec3(1.0, 0.91, 0.78) * horizonGlow * (0.16 + 0.34 * pow(sunDot, 2.2));
+    col += mix(uSunColor, vec3(1.0, 0.86, 0.64), 0.45) * pow(sunDot, 5.0) * 0.24;
+    col += vec3(1.0, 0.90, 0.72) * pow(sunDot, 32.0) * 0.42;
+    col += vec3(1.0, 0.95, 0.84) * pow(sunDot, 160.0) * 0.85;
+    col += vec3(1.0, 0.99, 0.95) * smoothstep(0.9976, 0.9995, sunDot) * 1.9;
+
+    // Soft procedural high-altitude cirrus cloud wisps
+    if (dir.y > 0.06) {
+      vec2 cirrusUv = dir.xz / (dir.y + 0.24) * vec2(0.85, 2.6) + vec2(uTime * 0.0045, uTime * 0.0018);
+      float warp = noise(cirrusUv * 1.6) * 0.85;
+      float wisp = noise(cirrusUv * 2.8 + vec2(warp, -warp * 0.5)) * 0.58
+                 + noise(cirrusUv * 6.4 + vec2(-warp * 0.4, warp)) * 0.30
+                 + noise(cirrusUv * 13.0) * 0.12;
+      float cirrusAlpha = smoothstep(0.57, 0.82, wisp)
+                        * smoothstep(0.06, 0.26, dir.y)
+                        * (1.0 - smoothstep(0.72, 0.98, dir.y));
+      vec3 cirrusCol = mix(vec3(0.95, 0.97, 1.0), vec3(1.0, 0.95, 0.88), pow(sunDot, 3.0) * 0.65);
+      col = mix(col, cirrusCol, cirrusAlpha * 0.38);
+    }
 
     // Soft layered cumulus clouds
     if (dir.y > 0.03) {
       vec2 uv = dir.xz / (dir.y + 0.18) * 1.3 + vec2(uTime * 0.008, uTime * 0.004);
       float c = noise(uv * 2.0) * 0.6 + noise(uv * 4.5) * 0.3 + noise(uv * 9.0) * 0.1;
-      float cloudAlpha = smoothstep(0.54, 0.78, c) * smoothstep(0.03, 0.22, dir.y) * (1.0 - smoothstep(0.65, 0.95, dir.y));
-      col = mix(col, vec3(0.99, 0.98, 0.96), cloudAlpha * 0.65);
+      float cloudAlpha = smoothstep(0.56, 0.80, c) * smoothstep(0.03, 0.22, dir.y) * (1.0 - smoothstep(0.62, 0.92, dir.y));
+      vec3 cloudCol = mix(vec3(0.97, 0.98, 0.99), vec3(1.0, 0.96, 0.90), pow(sunDot, 4.0) * 0.55);
+      col = mix(col, cloudCol, cloudAlpha * 0.58);
     }
 
     gl_FragColor = vec4(col, 1.0);
@@ -95,39 +120,45 @@ export const waterFragmentShader = /* glsl */ `
     float dist = length(vWorldPos.xz);
     bool inCanal = abs(vWorldPos.z + 95.0) < 24.0 && vWorldPos.x > 65.0 && vWorldPos.x < 290.0;
 
-    // Per-fragment multi-octave wave normal for silky sun glints (zero triangle faceting)
-    float dx = 0.08 * cos(0.09 * p.x + 1.2 * uTime)
-             + 0.05 * cos(0.24 * p.x + 0.16 * p.y + 1.8 * uTime)
-             + 0.03 * cos(0.55 * p.x - 0.35 * p.y + 2.6 * uTime);
-    float dz = 0.08 * cos(0.08 * p.y - 1.1 * uTime)
-             + 0.05 * cos(0.16 * p.x + 0.24 * p.y + 1.8 * uTime)
-             + 0.03 * cos(-0.35 * p.x + 0.55 * p.y + 2.4 * uTime);
+    // Per-fragment multi-octave wave normal with crisp capillary micro-ripples
+    float dx = 0.085 * cos(0.09 * p.x + 1.2 * uTime)
+             + 0.052 * cos(0.24 * p.x + 0.16 * p.y + 1.8 * uTime)
+             + 0.032 * cos(0.55 * p.x - 0.35 * p.y + 2.6 * uTime)
+             + 0.018 * cos(1.35 * p.x + 0.92 * p.y - 3.4 * uTime);
+    float dz = 0.085 * cos(0.08 * p.y - 1.1 * uTime)
+             + 0.052 * cos(0.16 * p.x + 0.24 * p.y + 1.8 * uTime)
+             + 0.032 * cos(-0.35 * p.x + 0.55 * p.y + 2.4 * uTime)
+             + 0.018 * cos(-0.95 * p.x + 1.28 * p.y + 3.1 * uTime);
     vec3 n = normalize(vec3(-dx, 1.0, -dz));
 
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
-    float fresnel = pow(1.0 - max(dot(viewDir, n), 0.0), 3.4);
+    float ndv = max(dot(viewDir, n), 0.0);
+    float fresnel = clamp(0.04 + 0.96 * pow(1.0 - ndv, 4.0), 0.0, 1.0);
 
-    // Depth-based coastal turquoise to offshore Mediterranean sapphire gradient
-    vec3 shallowTurquoise = mix(uShallow, vec3(0.08, 0.78, 0.88), 0.75);
-    vec3 deepSapphire = mix(uDeep, vec3(0.02, 0.32, 0.62), 0.8);
-    float offshoreDepth = inCanal ? 0.06 : smoothstep(220.0, 290.0, dist);
-    vec3 base = mix(shallowTurquoise, deepSapphire, clamp(offshoreDepth * 0.78 + fresnel * 0.38, 0.0, 1.0));
+    // Depth-based coastal turquoise to offshore deep Mediterranean sapphire gradient
+    vec3 shallowTurquoise = mix(uShallow, vec3(0.06, 0.77, 0.85), 0.78);
+    vec3 deepSapphire = mix(uDeep, vec3(0.016, 0.25, 0.54), 0.82);
+    float offshoreDepth = inCanal ? 0.05 : smoothstep(218.0, 295.0, dist);
+    vec3 base = mix(shallowTurquoise, deepSapphire, clamp(offshoreDepth * 0.82 + fresnel * 0.32, 0.0, 1.0));
 
     // Subtle caustic shimmer in shallow coastal & Venetian canal waters
     float caustic = sin(p.x * 0.38 + uTime * 2.1) * cos(p.y * 0.38 - uTime * 1.7);
-    base += vec3(0.06, 0.18, 0.20) * max(caustic, 0.0) * (1.0 - offshoreDepth) * 0.45;
+    base += vec3(0.06, 0.19, 0.21) * max(caustic, 0.0) * (1.0 - offshoreDepth) * 0.48;
 
-    // Sky reflection tint on grazing angles
-    vec3 skyReflect = vec3(0.76, 0.91, 0.99);
-    base = mix(base, skyReflect, fresnel * 0.50);
+    // Photographic Fresnel sky reflection (cerulean zenith to pale-azure horizon)
+    vec3 reflDir = reflect(-viewDir, n);
+    vec3 skyReflect = mix(vec3(0.81, 0.90, 0.96), vec3(0.16, 0.48, 0.72), clamp(reflDir.y * 1.8, 0.0, 1.0));
+    base = mix(base, skyReflect, fresnel * 0.58);
 
-    // Warm golden sun-glare path across waves + crisp sunlit specular sparkle
+    // Warm golden sun-glare path + crisp multi-scale sunlight specular glints on waves
     vec3 halfVec = normalize(viewDir + normalize(uSunDir));
     float ndh = max(dot(n, halfVec), 0.0);
-    float goldenPath = pow(ndh, 26.0);
-    float spec = pow(ndh, 150.0);
-    base += vec3(1.0, 0.86, 0.55) * goldenPath * 0.42;
-    base += vec3(1.0, 0.97, 0.88) * spec * 1.45;
+    float goldenPath = pow(ndh, 28.0);
+    float waveGlint = pow(ndh, 160.0);
+    float crispSparkle = pow(ndh, 380.0);
+    base += vec3(1.0, 0.87, 0.58) * goldenPath * 0.38;
+    base += vec3(1.0, 0.97, 0.88) * waveGlint * 1.35;
+    base += vec3(1.0, 0.99, 0.95) * crispSparkle * 2.2;
 
     // Open-water whitecap interference
     float wA = sin(0.18 * p.x + 0.11 * p.y + 1.6 * uTime);
@@ -291,29 +322,30 @@ export const terrainFragmentShader = /* glsl */ `
     float specPower = 24.0;
 
     if (onRoad) {
-      // Rich dark weathered asphalt base with multi-frequency aggregate sparkle
+      // Crisp dark-charcoal weathered asphalt base with mineral micro-grain sparkle
       float aggCoarse = noise(p * 8.5);
       float aggFine = noise(p * 32.0);
       float aggMicro = noise(p * 95.0);
-      vec3 asphaltBase = vec3(0.11, 0.12, 0.14);
-      asphaltBase += (aggFine - 0.5) * 0.032 + (aggMicro - 0.5) * 0.048 + (aggCoarse - 0.5) * 0.022;
+      float aggSparkle = smoothstep(0.76, 0.96, noise(p * 175.0));
+      vec3 asphaltBase = vec3(0.088, 0.095, 0.112);
+      asphaltBase += (aggFine - 0.5) * 0.028 + (aggMicro - 0.5) * 0.042 + (aggCoarse - 0.5) * 0.018;
 
       // Subtle tar repair seams
       float tarSeam = smoothstep(0.485, 0.5, abs(sin(p.y * 0.19 + noise(p * 0.6) * 2.2))) *
                       smoothstep(0.62, 0.78, noise(p * 0.35));
-      asphaltBase = mix(asphaltBase, vec3(0.06, 0.065, 0.075), tarSeam * 0.65);
+      asphaltBase = mix(asphaltBase, vec3(0.048, 0.052, 0.062), tarSeam * 0.7);
 
       // Polished dual wheel-track wear lanes
       float wearTrack1 = exp(-pow((abs(p.x) - 4.5) / 2.0, 2.0));
       float wearTrack2 = exp(-pow((abs(p.x) - 12.5) / 2.0, 2.0));
       float tireWear = clamp(wearTrack1 + wearTrack2, 0.0, 1.0) * (onGrandCentral ? 1.0 : 0.35);
-      asphaltBase = mix(asphaltBase, vec3(0.145, 0.155, 0.175), tireWear * 0.42);
+      asphaltBase = mix(asphaltBase, vec3(0.122, 0.132, 0.150), tireWear * 0.46);
 
-      // Perturb road normal slightly with micro-aggregate
-      n = normalize(n + vec3((aggMicro - 0.5) * 0.06, 0.0, (aggFine - 0.5) * 0.06));
+      // Perturb road normal subtly with mineral micro-grain
+      n = normalize(n + vec3((aggMicro - 0.5) * 0.075, 0.0, (aggFine - 0.5) * 0.075));
       albedo = asphaltBase;
-      specStrength = 0.12 + tireWear * 0.26 + aggMicro * 0.08;
-      specPower = 28.0;
+      specStrength = 0.14 + tireWear * 0.28 + aggMicro * 0.09 + aggSparkle * 0.18;
+      specPower = mix(34.0, 52.0, tireWear * 0.6 + aggSparkle * 0.4);
 
       float paintNoise = 0.88 + 0.12 * aggFine;
       vec3 yellowPaint = vec3(0.96, 0.73, 0.14) * paintNoise;
@@ -454,12 +486,13 @@ export const terrainFragmentShader = /* glsl */ `
         float tileTone = hash(blockId) * 0.05 - 0.025;
         vec3 plazaStone = mix(vec3(0.42, 0.44, 0.47), vec3(0.66, 0.68, 0.70) + tileTone, tileJoint);
 
-        // Manicured city park turf strips inside open lawn pockets
-        vec3 cityTurfA = vec3(0.16, 0.36, 0.16);
-        vec3 cityTurfB = vec3(0.22, 0.44, 0.20);
-        float mowStripe = step(0.5, fract((p.x + p.y) * 0.18));
-        vec3 manicuredTurf = mix(cityTurfA, cityTurfB, mowStripe * 0.45 + macroN * 0.55);
-        manicuredTurf *= 0.90 + 0.20 * microBlades;
+        // Manicured city park turf strips with smooth velvety lawn shading
+        vec3 cityTurfA = vec3(0.15, 0.35, 0.15);
+        vec3 cityTurfB = vec3(0.23, 0.45, 0.19);
+        float mowStripe = smoothstep(0.32, 0.68, fract((p.x + p.y) * 0.16));
+        vec3 manicuredTurf = mix(cityTurfA, cityTurfB, mowStripe * 0.36 + smoothstep(0.25, 0.75, macroN) * 0.64);
+        manicuredTurf = mix(manicuredTurf, vec3(0.28, 0.48, 0.21), smoothstep(0.45, 0.85, medN) * 0.24);
+        manicuredTurf *= 0.92 + 0.16 * microBlades;
 
         // Blend paved stone plazas near avenues (|x| < 68 or near cross boulevards) with park turf
         float nearAve = max(
@@ -471,8 +504,8 @@ export const terrainFragmentShader = /* glsl */ `
         );
         float plazaMask = clamp(nearAve + smoothstep(0.45, 0.68, macroN) * 0.65, 0.0, 1.0);
         albedo = mix(manicuredTurf, plazaStone, plazaMask);
-        specStrength = mix(0.06, 0.14, plazaMask);
-        specPower = 28.0;
+        specStrength = mix(0.08, 0.15, plazaMask);
+        specPower = mix(20.0, 32.0, plazaMask);
       } else {
         // Wet Shoreline Sand (h < 0.75)
         vec3 wetSand = vec3(0.46, 0.40, 0.31) + (bladeN2 - 0.5) * 0.035;
@@ -481,18 +514,18 @@ export const terrainFragmentShader = /* glsl */ `
         float ripple = sin(p.x * 3.5 + p.y * 2.2 + noise(p * 0.5) * 4.0) * 0.5 + 0.5;
         vec3 drySand = vec3(0.82, 0.74, 0.58) + (ripple - 0.5) * 0.045 + (bladeN1 - 0.5) * 0.03;
 
-        // Lush Coastal Grass & Parkland (h >= 1.85)
-        vec3 meadowFescue = vec3(0.16, 0.32, 0.13);
-        vec3 oliveSage = vec3(0.26, 0.40, 0.17);
-        vec3 dryTufts = vec3(0.42, 0.42, 0.22);
-        vec3 darkLoam = vec3(0.18, 0.15, 0.11);
+        // Lush Coastal Grass & Parkland (h >= 1.85) with smooth sunlit organic shading
+        vec3 meadowFescue = vec3(0.15, 0.33, 0.13);
+        vec3 oliveSage = vec3(0.26, 0.42, 0.17);
+        vec3 dryTufts = vec3(0.40, 0.41, 0.21);
+        vec3 darkLoam = vec3(0.16, 0.14, 0.10);
 
-        vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.28, 0.72, macroN));
-        float sunCuredMask = smoothstep(0.52, 0.82, medN * 0.75 + (1.0 - macroN) * 0.35);
-        grassCol = mix(grassCol, dryTufts, sunCuredMask * 0.45);
-        float creviceMask = smoothstep(0.42, 0.18, microBlades);
-        grassCol = mix(grassCol, darkLoam, creviceMask * 0.45);
-        grassCol *= 0.88 + 0.26 * microBlades;
+        vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.24, 0.76, macroN));
+        float sunCuredMask = smoothstep(0.54, 0.84, medN * 0.72 + (1.0 - macroN) * 0.32);
+        grassCol = mix(grassCol, dryTufts, sunCuredMask * 0.36);
+        float creviceMask = smoothstep(0.38, 0.16, microBlades);
+        grassCol = mix(grassCol, darkLoam, creviceMask * 0.34);
+        grassCol *= 0.90 + 0.20 * microBlades;
 
         // Sedimentary Limestone Cliff Rock (steep slopes or high peaks)
         float strata = sin(vWorldPos.y * 4.2 + noise(p * 0.3) * 2.0) * 0.5 + 0.5;

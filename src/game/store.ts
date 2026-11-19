@@ -614,7 +614,9 @@ export const INITIAL_CHIPS: ChipNode[] = [
 export const simState = {
   mode: 'CAR' as VehicleMode,
   gameMode: 'FREE_ROAM' as GamePlayMode,
-  startMenuOpen: false,
+  startMenuOpen: true,
+  touchControlsEnabled: false,
+  tourVisitedIds: [] as string[],
   gliding: false,
   chips: 0,
   multiplier: 1,

@@ -13,15 +13,37 @@ class SoundEngine {
   private engineGain: GainNode | null = null;
   private engineFilter: BiquadFilterNode | null = null;
   private muted = false;
+  private userUnlocked = false;
+
+  constructor() {
+    if (typeof window !== 'undefined') {
+      const unlock = () => {
+        this.userUnlocked = true;
+        window.removeEventListener('pointerdown', unlock);
+        window.removeEventListener('keydown', unlock);
+        window.removeEventListener('touchstart', unlock);
+      };
+      window.addEventListener('pointerdown', unlock, { passive: true });
+      window.addEventListener('keydown', unlock, { passive: true });
+      window.addEventListener('touchstart', unlock, { passive: true });
+    }
+  }
 
   private ensureContext(): AudioContext | null {
-    if (this.muted || typeof window === 'undefined') return null;
-    if (!this.ctx) {
-      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.ctx = new Ctx();
+    if (this.muted || !this.userUnlocked || typeof window === 'undefined') return null;
+    try {
+      if (!this.ctx) {
+        const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (!Ctx) return null;
+        this.ctx = new Ctx();
+      }
+      if (this.ctx.state === 'suspended') {
+        void this.ctx.resume().catch(() => {});
+      }
+      return this.ctx.state === 'running' ? this.ctx : null;
+    } catch {
+      return null;
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
-    return this.ctx;
   }
 
   public toggleMute(): boolean {

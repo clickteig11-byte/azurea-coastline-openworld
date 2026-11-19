@@ -146,8 +146,10 @@ export function App() {
     const s = simState as any;
     if (typeof window !== 'undefined' && window.location.search.includes('nomenu')) {
       s.startMenuOpen = false;
+      window.dispatchEvent(new CustomEvent('toggle-start-menu'));
     } else if (typeof window !== 'undefined' && window.location.search.includes('menu')) {
       s.startMenuOpen = true;
+      window.dispatchEvent(new CustomEvent('toggle-start-menu'));
     }
     if (!s.gameMode) {
       s.gameMode = 'FREE_ROAM';
@@ -197,7 +199,7 @@ export function App() {
   }, [switchMode]);
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-slate-950">
+    <div className="relative h-[100dvh] w-screen overflow-hidden bg-slate-950">
       <Canvas
         dpr={[0.85, 1.15]}
         camera={{ fov: 60, near: 0.5, far: 2200, position: [0, 12, 38] }}
@@ -210,11 +212,11 @@ export function App() {
       >
         <ProceduralEnvMap />
         <PerformanceGovernor />
-        <hemisphereLight args={['#bae6fd', '#e7d2a9', 0.95]} />
+        <hemisphereLight args={['#dbeafe', '#d6c8b4', 0.92]} />
         <directionalLight
           position={[140, 180, -140]}
-          intensity={2.4}
-          color="#fffbeb"
+          intensity={2.5}
+          color="#fff8e7"
           castShadow
           shadow-mapSize-width={1024}
           shadow-mapSize-height={1024}
@@ -226,8 +228,8 @@ export function App() {
           shadow-camera-bottom={-110}
           shadow-bias={-0.0005}
         />
-        <directionalLight position={[-120, 80, 120]} intensity={0.8} color="#7dd3fc" />
-        <fog attach="fog" args={['#bae6fd', 360, 1250]} />
+        <directionalLight position={[-120, 80, 120]} intensity={0.75} color="#7dd3fc" />
+        <fog attach="fog" args={['#cde4f5', 380, 1300]} />
 
         <SkyDome />
         <IslandTerrain />

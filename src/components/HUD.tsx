@@ -15,6 +15,15 @@ import {
   Backpack,
   UserCheck,
   X,
+  Gamepad2,
+  MapPin,
+  ChevronRight,
+  RotateCcw,
+  Flag,
+  Skull,
+  Radio,
+  Globe,
+  Navigation,
 } from 'lucide-react';
 import {
   CHARACTER_PRESETS,
@@ -22,22 +31,20 @@ import {
   CharacterCustomization,
   EyewearStyle,
   GameHudSnapshot,
+  GamePlayMode,
   simState,
   WEAPON_SPECS,
 } from '../game/store';
 import { getTerrainHeight, VehicleMode } from '../game/worldMath';
 import { soundEngine } from '../game/soundEngine';
+import { MobileControls } from './MobileControls';
 
 interface Props {
   hud: GameHudSnapshot;
   onSelectMode: (m: VehicleMode) => void;
 }
 
-export type MetropolisGameMode =
-  | 'FREE_ROAM'
-  | 'BATTLE_ROYALE'
-  | 'GRAND_PRIX'
-  | 'LANDMARK_TOUR';
+export type MetropolisGameMode = GamePlayMode;
 
 const RADAR_SIZE = 128;
 const RADAR_CENTER = RADAR_SIZE / 2; // 64
@@ -47,6 +54,14 @@ function worldToRadar(x: number, z: number): [number, number] {
   const rx = Math.max(7, Math.min(RADAR_SIZE - 7, RADAR_CENTER + x * RADAR_SCALE));
   const rz = Math.max(7, Math.min(RADAR_SIZE - 7, RADAR_CENTER + z * RADAR_SCALE));
   return [rx, rz];
+}
+
+function formatLapTime(seconds: number): string {
+  const safe = Math.max(0, seconds);
+  const mins = Math.floor(safe / 60);
+  const secs = Math.floor(safe % 60);
+  const tenths = Math.floor((safe * 10) % 10);
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${tenths}`;
 }
 
 const STUDIO_TOP_COLORS = [
@@ -94,6 +109,38 @@ const STUDIO_CAP_COLORS = [
   '#f59e0b',
   '#f8fafc',
   '#10b981',
+];
+
+const GAME_MODE_OPTIONS: Array<{
+  id: GamePlayMode;
+  title: string;
+  description: string;
+  badge: string;
+}> = [
+  {
+    id: 'FREE_ROAM',
+    title: 'Free Roam',
+    description: 'Drive, fly, sail, or walk freely across the city.',
+    badge: 'Sandbox',
+  },
+  {
+    id: 'BATTLE_ROYALE',
+    title: 'Battle Royale',
+    description: 'Parachute from 120m, loot crates & outlast 8 bots inside the storm.',
+    badge: 'Combat',
+  },
+  {
+    id: 'GRAND_PRIX',
+    title: 'Grand Prix',
+    description: 'Race the 8-checkpoint street circuit for the fastest lap.',
+    badge: 'Circuit',
+  },
+  {
+    id: 'WORLD_TOUR',
+    title: 'World Tour',
+    description: 'Guided tour of all 12 global city landmarks.',
+    badge: '12 Wonders',
+  },
 ];
 
 const CAR_FLEET_MENU = [
@@ -155,6 +202,8 @@ export interface LandmarkDestination {
   menuLabel: string;
   fullTitle: string;
   cityBadge: string;
+  note: string;
+  isWorldWonder?: boolean;
   x: number;
   z: number;
   color: string;
@@ -170,8 +219,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'empire',
     shortLabel: 'NYC Empire',
     menuLabel: 'New York',
-    fullTitle: 'New York — Empire State Building',
+    fullTitle: 'Empire State Building',
     cityBadge: 'NEW YORK',
+    note: 'Art Deco limestone skyscraper anchoring Midtown Avenue with its stepped spire.',
+    isWorldWonder: true,
     x: -52,
     z: -28,
     color: '#38bdf8',
@@ -184,8 +235,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'goldengate',
     shortLabel: 'Golden Gate',
     menuLabel: 'Golden Gate',
-    fullTitle: 'San Francisco — Golden Gate Bridge',
+    fullTitle: 'Golden Gate Bridge',
     cityBadge: 'SAN FRANCISCO',
+    note: 'Twin International Orange suspension towers spanning the northern bay channel.',
+    isWorldWonder: true,
     x: 0,
     z: -205,
     color: '#f97316',
@@ -198,8 +251,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'bigben',
     shortLabel: 'Big Ben',
     menuLabel: 'London',
-    fullTitle: 'London — Big Ben Clock Tower',
+    fullTitle: 'Big Ben Clock Tower',
     cityBadge: 'LONDON',
+    note: 'Neo-Gothic Westminster spire crowned by four illuminated gilded clock faces.',
+    isWorldWonder: true,
     x: -52,
     z: -88,
     color: '#fbbf24',
@@ -212,8 +267,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'eiffel',
     shortLabel: 'Eiffel Tower',
     menuLabel: 'Paris',
-    fullTitle: 'Paris — Eiffel Tower',
+    fullTitle: 'Eiffel Tower',
     cityBadge: 'PARIS',
+    note: 'Wrought-iron lattice tower rising above the eastern Champ de Mars promenade.',
+    isWorldWonder: true,
     x: 95,
     z: 35,
     color: '#f43f5e',
@@ -226,8 +283,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'burj',
     shortLabel: 'Burj Khalifa',
     menuLabel: 'Dubai',
-    fullTitle: 'Dubai — Burj Khalifa',
+    fullTitle: 'Burj Khalifa',
     cityBadge: 'DUBAI',
+    note: 'Tiered stainless-and-glass megatall tower soaring above the northern skyline.',
+    isWorldWonder: true,
     x: 54,
     z: -148,
     color: '#22d3ee',
@@ -240,8 +299,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'colosseum',
     shortLabel: 'Colosseum',
     menuLabel: 'Rome',
-    fullTitle: 'Rome — The Colosseum',
+    fullTitle: 'The Colosseum',
     cityBadge: 'ROME',
+    note: 'Elliptical travertine amphitheater ringed by three tiers of classical arcades.',
+    isWorldWonder: true,
     x: -105,
     z: 45,
     color: '#f59e0b',
@@ -254,8 +315,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'sydney',
     shortLabel: 'Sydney Opera',
     menuLabel: 'Sydney',
-    fullTitle: 'Sydney — Opera House',
+    fullTitle: 'Sydney Opera House',
     cityBadge: 'SYDNEY',
+    note: 'Sculptural precast concrete sail shells overlooking the southeastern harbor.',
+    isWorldWonder: true,
     x: 148,
     z: 108,
     color: '#e2e8f0',
@@ -268,8 +331,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'tokyo',
     shortLabel: 'Tokyo Tower',
     menuLabel: 'Tokyo',
-    fullTitle: 'Tokyo — Tokyo Tower',
+    fullTitle: 'Tokyo Tower',
     cityBadge: 'TOKYO',
+    note: 'Aviation-orange and white steel communications spire lighting up central boulevard.',
+    isWorldWonder: true,
     x: 52,
     z: -28,
     color: '#ef4444',
@@ -282,8 +347,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'liberty',
     shortLabel: 'Lady Liberty',
     menuLabel: 'Statue of Liberty',
-    fullTitle: 'New York — Statue of Liberty',
+    fullTitle: 'Statue of Liberty',
     cityBadge: 'NY HARBOR',
+    note: 'Patina-green neoclassical copper monument holding its golden torch over the bay.',
+    isWorldWonder: true,
     x: -158,
     z: -145,
     color: '#34d399',
@@ -296,8 +363,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'redeemer',
     shortLabel: 'Rio',
     menuLabel: 'Rio',
-    fullTitle: 'Rio — Christ the Redeemer',
+    fullTitle: 'Christ the Redeemer',
     cityBadge: 'RIO DE JANEIRO',
+    note: 'Art Deco soapstone monument standing watch from the southern coastal peak.',
+    isWorldWonder: true,
     x: 58,
     z: 148,
     color: '#a855f7',
@@ -310,8 +379,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'venice',
     shortLabel: 'Venice',
     menuLabel: 'Venice',
-    fullTitle: 'Venice — Rialto Bridge & Canal',
+    fullTitle: 'Rialto Bridge & Grand Canal',
     cityBadge: 'VENICE',
+    note: 'Renaissance stone arch spanning the turquoise Venetian canalway.',
+    isWorldWonder: true,
     x: 135,
     z: -95,
     color: '#06b6d4',
@@ -324,8 +395,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     id: 'giza',
     shortLabel: 'Pyramids',
     menuLabel: 'Pyramids',
-    fullTitle: 'Cairo — Great Pyramid of Giza',
+    fullTitle: 'Great Pyramid of Giza',
     cityBadge: 'CAIRO / GIZA',
+    note: 'Monumental stepped limestone pyramid rising from the western golden plateau.',
+    isWorldWonder: true,
     x: -118,
     z: -28,
     color: '#eab308',
@@ -340,6 +413,8 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     menuLabel: 'Cruise Harbor',
     fullTitle: 'Cruise Harbor',
     cityBadge: 'MARITIME PORT',
+    note: 'Deep-water pier and marina berth for ocean liners, yachts, and speedboats.',
+    isWorldWonder: false,
     x: 234,
     z: -95,
     color: '#38bdf8',
@@ -355,6 +430,8 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     menuLabel: 'Airport',
     fullTitle: 'International Airport',
     cityBadge: 'AVIATION HUB',
+    note: 'Coastal runway and terminal apron ready for jet, turboprop, and heli departures.',
+    isWorldWonder: false,
     x: -125,
     z: 155,
     color: '#fbbf24',
@@ -366,10 +443,25 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
   },
 ];
 
+const WORLD_TOUR_STOPS = WORLD_LANDMARK_DESTINATIONS.filter((d) => d.isWorldWonder);
+
 export function HUD({ hud, onSelectMode }: Props) {
   const [muted, setMuted] = useState(soundEngine.isMuted());
   const [, setUiTick] = useState(0);
   const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('empire');
+  const [mobileTeleportOpen, setMobileTeleportOpen] = useState(false);
+  const [touchUi, setTouchUi] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.innerWidth < 900 ||
+      'ontouchstart' in window ||
+      (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
+    );
+  });
+
+  useEffect(() => {
+    simState.touchControlsEnabled = touchUi;
+  }, [touchUi]);
 
   useEffect(() => {
     const onSyncUi = () => setUiTick((t) => t + 1);
@@ -387,7 +479,7 @@ export function HUD({ hud, onSelectMode }: Props) {
 
   const s = simState as any;
   const isStartMenuOpen = Boolean(s.startMenuOpen);
-  const activeGameMode: MetropolisGameMode = (s.gameMode as MetropolisGameMode) || 'FREE_ROAM';
+  const activeGameMode: GamePlayMode = (s.gameMode as GamePlayMode) || 'FREE_ROAM';
 
   const handleToggleMute = () => {
     soundEngine.toggleMute();
@@ -399,6 +491,7 @@ export function HUD({ hud, onSelectMode }: Props) {
     s.startMenuOpen = next;
     if (next) {
       simState.customizerOpen = false;
+      setMobileTeleportOpen(false);
     }
     window.dispatchEvent(new CustomEvent('toggle-start-menu'));
     setUiTick((t) => t + 1);
@@ -407,9 +500,20 @@ export function HUD({ hud, onSelectMode }: Props) {
   const handleToggleCustomizer = () => {
     const prev = Boolean(simState.customizerOpen);
     s.startMenuOpen = false;
+    setMobileTeleportOpen(false);
     window.dispatchEvent(new CustomEvent('toggle-customizer'));
     if (Boolean(simState.customizerOpen) === prev) {
       simState.customizerOpen = !prev;
+    }
+    setUiTick((t) => t + 1);
+  };
+
+  const handleSelectGameMode = (mode: GamePlayMode) => {
+    s.gameMode = mode;
+    if (mode === 'GRAND_PRIX' && simState.mode !== 'CAR') {
+      onSelectMode('CAR');
+    } else if (mode === 'BATTLE_ROYALE' && simState.mode !== 'FOOT') {
+      onSelectMode('FOOT');
     }
     setUiTick((t) => t + 1);
   };
@@ -467,9 +571,20 @@ export function HUD({ hud, onSelectMode }: Props) {
     setUiTick((t) => t + 1);
   };
 
+  const markTourVisited = (id: string) => {
+    if (!WORLD_TOUR_STOPS.some((d) => d.id === id)) return;
+    if (!Array.isArray(simState.tourVisitedIds)) {
+      simState.tourVisitedIds = [];
+    }
+    if (!simState.tourVisitedIds.includes(id)) {
+      simState.tourVisitedIds = [...simState.tourVisitedIds, id];
+    }
+  };
+
   const warpToLocation = (x: number, z: number, forceMode?: VehicleMode, destId?: string) => {
     simState.parachuting = false;
     simState.gliding = false;
+    setMobileTeleportOpen(false);
 
     if (forceMode) {
       onSelectMode(forceMode);
@@ -481,6 +596,9 @@ export function HUD({ hud, onSelectMode }: Props) {
 
     if (matched) {
       setSelectedLandmarkId(matched.id);
+      if (activeGameMode === 'WORLD_TOUR') {
+        markTourVisited(matched.id);
+      }
     }
 
     if (matched?.id === 'harbor' || (x > 195 && Math.abs(z + 95) < 25)) {
@@ -582,38 +700,67 @@ export function HUD({ hud, onSelectMode }: Props) {
     }
 
     if (matched) {
-      simState.stuntText = matched.fullTitle;
+      simState.stuntText = `${matched.cityBadge} · ${matched.fullTitle}`;
       simState.stuntTimer = 2.2;
     }
     setUiTick((t) => t + 1);
   };
 
-  const handleDeployToMetropolis = () => {
+  const resetGrandPrixRace = () => {
+    onSelectMode('CAR');
+    simState.activeCheckpoint = 0;
+    simState.lapTime = 0;
+    simState.driftScore = 0;
+    const startY = Math.max(getTerrainHeight(0, 12), 0) + 0.1;
+    simState.carPos.set(0, startY, 12);
+    simState.carYaw = Math.PI;
+    simState.carSpeed = 0;
+    simState.carVel.set(0, 0, 0);
+    simState.stuntText = 'Grand Prix — Gate 1 Ahead';
+    simState.stuntTimer = 2.6;
+    setUiTick((t) => t + 1);
+  };
+
+  const handleNextTourLandmark = () => {
+    const currentIdx = WORLD_TOUR_STOPS.findIndex((d) => d.id === selectedLandmarkId);
+    const nextIdx = (currentIdx + 1) % WORLD_TOUR_STOPS.length;
+    const nextStop = WORLD_TOUR_STOPS[nextIdx] ?? WORLD_TOUR_STOPS[0];
+    markTourVisited(nextStop.id);
+    warpToLocation(nextStop.x, nextStop.z, undefined, nextStop.id);
+  };
+
+  const handleStartGame = () => {
     s.startMenuOpen = false;
     simState.customizerOpen = false;
+    setMobileTeleportOpen(false);
 
     const chosenDest =
       WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === selectedLandmarkId) ||
       WORLD_LANDMARK_DESTINATIONS[0];
 
     if (activeGameMode === 'BATTLE_ROYALE') {
+      simState.brActive = true;
+      simState.playerHp = 100;
+      simState.playerShield = 100;
       window.dispatchEvent(new CustomEvent('br-drop'));
-      simState.playerPos.set(chosenDest.spawnFootX, 118, chosenDest.spawnFootZ);
+      simState.playerPos.set(chosenDest.spawnFootX, 120, chosenDest.spawnFootZ);
       simState.playerYaw = Math.atan2(
         chosenDest.x - chosenDest.spawnFootX,
         chosenDest.z - chosenDest.spawnFootZ
       );
-      simState.stuntText = `Sky-Drop: ${chosenDest.menuLabel}`;
+      simState.stuntText = `Sky-Drop · ${chosenDest.menuLabel}`;
       simState.stuntTimer = 3.0;
     } else if (activeGameMode === 'GRAND_PRIX') {
-      onSelectMode('CAR');
-      simState.activeCheckpoint = 0;
-      simState.lapTime = 0;
-      const startY = Math.max(getTerrainHeight(0, 12), 0) + 0.1;
-      simState.carPos.set(0, startY, 12);
-      simState.carYaw = Math.PI;
-      simState.stuntText = 'Grand Prix Started';
-      simState.stuntTimer = 3.0;
+      simState.lapCount = 0;
+      resetGrandPrixRace();
+    } else if (activeGameMode === 'WORLD_TOUR') {
+      const startStop =
+        WORLD_TOUR_STOPS.find((d) => d.id === selectedLandmarkId) || WORLD_TOUR_STOPS[0];
+      simState.tourVisitedIds = [startStop.id];
+      setSelectedLandmarkId(startStop.id);
+      warpToLocation(startStop.x, startStop.z, undefined, startStop.id);
+    } else {
+      warpToLocation(chosenDest.x, chosenDest.z, chosenDest.forceMode, chosenDest.id);
     }
 
     window.dispatchEvent(new CustomEvent('toggle-start-menu'));
@@ -643,6 +790,13 @@ export function HUD({ hud, onSelectMode }: Props) {
   const activeCpIndex =
     (hud.activeCheckpoint ?? simState.activeCheckpoint) % Math.max(1, totalCheckpoints);
   const activeCp = simState.checkpoints[activeCpIndex] ?? simState.checkpoints[0];
+  const cpDistMeters = Math.round(
+    hud.checkpointDist ??
+      Math.hypot(activePos.x - activeCp.position[0], activePos.z - activeCp.position[2])
+  );
+  const lapTime = hud.lapTime ?? simState.lapTime ?? 0;
+  const bestLapTime = hud.bestLapTime ?? simState.bestLapTime ?? null;
+  const lapCount = hud.lapCount ?? simState.lapCount ?? 0;
   const stuntCallout = hud.stuntText ?? simState.stuntText;
   const driftScore = Math.round(hud.driftScore ?? simState.driftScore);
 
@@ -689,6 +843,10 @@ export function HUD({ hud, onSelectMode }: Props) {
   const activeSpec = WEAPON_SPECS[activeWeaponIdx] ?? WEAPON_SPECS[0];
   const currentAmmo = hud.ammo ?? simState.ammo ?? activeSpec.clipSize;
   const maxAmmo = hud.maxAmmo ?? simState.maxAmmo ?? activeSpec.clipSize;
+  const aliveBotsCount = simState.botTargets.filter((b) => b.alive).length + 1;
+  const aliveCount = hud.aliveCount ?? aliveBotsCount;
+  const eliminations = hud.eliminations ?? simState.eliminations ?? 0;
+  const stormRadius = Math.round(hud.stormRadius ?? simState.stormRadius ?? 235);
 
   const isCustomizerOpen = Boolean(simState.customizerOpen);
   const custom = simState.customization;
@@ -696,10 +854,17 @@ export function HUD({ hud, onSelectMode }: Props) {
   const activeBoatIdx = typeof s.activeBoatIdx === 'number' ? s.activeBoatIdx : 0;
   const activePlaneIdx = typeof s.activePlaneIdx === 'number' ? s.activePlaneIdx : 0;
 
+  const activeTourStop =
+    WORLD_TOUR_STOPS.find((d) => d.id === selectedLandmarkId) || WORLD_TOUR_STOPS[0];
+  const tourVisitedCount = Math.max(
+    1,
+    Math.min(WORLD_TOUR_STOPS.length, (simState.tourVisitedIds || []).length || 1)
+  );
+
   const notificationBanner =
-    killFeedText ||
+    (activeGameMode === 'BATTLE_ROYALE' ? killFeedText : null) ||
     stuntCallout ||
-    (driftScore > 0 ? `Drift +${driftScore}` : null) ||
+    (activeGameMode === 'GRAND_PRIX' && driftScore > 0 ? `Drift +${driftScore}` : null) ||
     (hud.nearbyVehicle ? `Press E to enter ${hud.nearbyVehicle.toLowerCase()}` : null) ||
     hud.nearLandmark ||
     null;
@@ -711,129 +876,75 @@ export function HUD({ hud, onSelectMode }: Props) {
       ? 'LEATHER'
       : 'SATIN';
 
-  return (
-    <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans">
-      {/* =====================================================================
-          1. CENTER CROSSHAIR (FOOT / CAR)
-         ===================================================================== */}
-      {!isStartMenuOpen && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
-        <div className="pointer-events-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          <div
-            className={`relative h-5 w-5 transition-transform duration-150 ${
-              killFeedText ? 'scale-125' : 'scale-100'
-            }`}
-          >
-            <span className="absolute left-1/2 top-0 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/75" />
-            <span className="absolute bottom-0 left-1/2 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/75" />
-            <span className="absolute left-0 top-1/2 h-[1.5px] w-1.5 -translate-y-1/2 rounded-full bg-white/75" />
-            <span className="absolute right-0 top-1/2 h-[1.5px] w-1.5 -translate-y-1/2 rounded-full bg-white/75" />
-            <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-          FLOATING NOTIFICATION PILL
-         ===================================================================== */}
-      {notificationBanner && !isStartMenuOpen && (
-        <div className="pointer-events-none fixed left-1/2 top-16 -translate-x-1/2 z-30">
-          <div className="flex items-center gap-2 rounded-full border border-white/15 bg-neutral-950/80 px-4 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-md">
-            {killFeedText && <Crosshair className="h-3.5 w-3.5 text-rose-400" />}
-            <span>{notificationBanner}</span>
-          </div>
-        </div>
-      )}
-
-      {/* =====================================================================
-          2. TOP-LEFT BAR (top-3 left-3)
-         ===================================================================== */}
-      <div className="pointer-events-auto fixed left-3 top-3 z-30 flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-950/75 px-2.5 py-1.5 shadow-lg backdrop-blur-md">
-        <button
-          onClick={() => handleToggleStartMenu()}
-          className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-            isStartMenuOpen
-              ? 'bg-white text-neutral-950'
-              : 'bg-white/10 text-white hover:bg-white/20'
-          }`}
-        >
-          Menu (M)
-        </button>
-
-        <button
-          onClick={handleToggleCustomizer}
-          className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-            isCustomizerOpen
-              ? 'bg-white text-neutral-950'
-              : 'text-neutral-200 hover:bg-white/10 hover:text-white'
-          }`}
-        >
-          Wardrobe (C)
-        </button>
-
-        <button
-          onClick={() => window.dispatchEvent(new CustomEvent('br-drop'))}
-          className="rounded-full px-3 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-        >
-          Sky-Drop (P)
-        </button>
-
-        <button
-          onClick={handleToggleMute}
-          title={muted ? 'Unmute Audio' : 'Mute Audio'}
-          className="rounded-full p-1.5 text-neutral-300 transition hover:bg-white/10 hover:text-white"
-        >
-          {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-        </button>
-      </div>
-
-      {/* =====================================================================
-          3. TOP-RIGHT FAST-TRAVEL PILLS (top-3 right-3)
-         ===================================================================== */}
-      <div className="pointer-events-auto fixed right-3 top-3 z-30 hidden max-w-[680px] flex-wrap items-center justify-end gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 px-2.5 py-1.5 shadow-lg backdrop-blur-md lg:flex">
-        {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
-          const isCurrent = selectedLandmarkId === lm.id;
-          return (
-            <button
-              key={lm.id}
-              onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
-              title={lm.fullTitle}
-              className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
-                isCurrent
-                  ? 'bg-white text-neutral-950'
-                  : 'text-neutral-300 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              {lm.shortLabel}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* =====================================================================
-          4. MINIMAL START & MODE MENU (isStartMenuOpen)
-         ===================================================================== */}
-      {isStartMenuOpen && (
-        <div className="pointer-events-auto fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 font-sans">
-          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-neutral-950/85 p-6 text-white shadow-2xl backdrop-blur-md">
-            {/* Header */}
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight text-white">World Horizon</h1>
-                <p className="text-xs text-neutral-400">Open-World City</p>
-              </div>
-              <button
-                onClick={() => handleToggleStartMenu(false)}
-                title="Close"
-                className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm text-neutral-300 transition hover:bg-white/15 hover:text-white"
-              >
-                ✕
-              </button>
+  // =========================================================================
+  // FULL-SCREEN CLEAN START SCREEN (Renders ALONE over live 3D city skyline)
+  // =========================================================================
+  if (isStartMenuOpen) {
+    return (
+      <div className="pointer-events-auto fixed inset-0 z-50 flex select-none bg-gradient-to-r from-neutral-950/92 via-neutral-950/65 to-transparent font-sans text-white">
+        <div className="flex h-full w-full max-w-md flex-col justify-between overflow-y-auto px-6 py-6 sm:max-w-lg sm:px-8 sm:py-8">
+          <div className="space-y-6">
+            {/* Brand Title */}
+            <div>
+              <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                World Horizon
+              </h1>
+              <p className="mt-1 text-sm text-neutral-400">Open-World City Sandbox</p>
             </div>
 
-            {/* Section 1 — Mode (4 clean pill buttons in a 4-column grid) */}
-            <div className="mb-5">
-              <div className="mb-2 text-xs font-medium text-neutral-400">Mode</div>
-              <div className="grid grid-cols-4 gap-2">
+            {/* Section 1 — Game Mode (4 Clearly Defined Game Modes) */}
+            <div>
+              <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                Game Mode
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {GAME_MODE_OPTIONS.map((gm) => {
+                  const selected = activeGameMode === gm.id;
+                  return (
+                    <button
+                      key={gm.id}
+                      onClick={() => handleSelectGameMode(gm.id)}
+                      className={`group flex flex-col items-start rounded-xl border p-3 text-left transition ${
+                        selected
+                          ? 'border-white bg-white/15 text-white shadow-sm'
+                          : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:border-white/25 hover:bg-white/[0.08] hover:text-white'
+                      }`}
+                    >
+                      <div className="flex w-full items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-white">{gm.title}</span>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                            selected
+                              ? 'bg-white text-neutral-950'
+                              : 'bg-white/10 text-neutral-300'
+                          }`}
+                        >
+                          {gm.badge}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-snug text-neutral-400 group-hover:text-neutral-300">
+                        {gm.description}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Section 2 — Traversal & Vehicle / Character */}
+            <div>
+              <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                Traversal &amp;{' '}
+                {hud.mode === 'CAR'
+                  ? 'Vehicle'
+                  : hud.mode === 'BOAT'
+                  ? 'Vessel'
+                  : hud.mode === 'PLANE'
+                  ? 'Aircraft'
+                  : 'Character'}
+              </div>
+
+              <div className="mb-2.5 grid grid-cols-4 gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] p-1">
                 {(
                   [
                     { id: 'FOOT', label: 'Walk', Icon: Footprints },
@@ -847,34 +958,21 @@ export function HUD({ hud, onSelectMode }: Props) {
                     <button
                       key={id}
                       onClick={() => onSelectMode(id)}
-                      className={`flex items-center justify-center gap-2 rounded-xl border py-2.5 text-sm font-medium transition ${
+                      className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium transition ${
                         active
-                          ? 'border-white bg-white text-neutral-950 shadow-sm'
-                          : 'border-white/10 bg-white/5 text-neutral-200 hover:bg-white/10 hover:text-white'
+                          ? 'bg-white text-neutral-950 shadow-sm'
+                          : 'text-neutral-300 hover:bg-white/10 hover:text-white'
                       }`}
                     >
-                      <Icon className="h-4 w-4" />
+                      <Icon className="h-3.5 w-3.5" />
                       <span>{label}</span>
                     </button>
                   );
                 })}
               </div>
-            </div>
-
-            {/* Section 2 — Select Vehicle / Character (contextual to active mode only) */}
-            <div className="mb-5">
-              <div className="mb-2 text-xs font-medium text-neutral-400">
-                {hud.mode === 'CAR'
-                  ? 'Select Vehicle'
-                  : hud.mode === 'BOAT'
-                  ? 'Select Vessel'
-                  : hud.mode === 'PLANE'
-                  ? 'Select Aircraft'
-                  : 'Select Character'}
-              </div>
 
               {hud.mode === 'CAR' && (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                   {CAR_FLEET_MENU.map((car) => {
                     const isSelected = activeCarIdx === car.idx;
                     return (
@@ -884,7 +982,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                         className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
                           isSelected
                             ? 'border-white bg-white/15 text-white'
-                            : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                            : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
                         }`}
                       >
                         {car.label}
@@ -895,7 +993,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               )}
 
               {hud.mode === 'BOAT' && (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                   {BOAT_FLEET_MENU.map((boat) => {
                     const isSelected = activeBoatIdx === boat.idx;
                     return (
@@ -905,7 +1003,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                         className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
                           isSelected
                             ? 'border-white bg-white/15 text-white'
-                            : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                            : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
                         }`}
                       >
                         {boat.label}
@@ -916,7 +1014,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               )}
 
               {hud.mode === 'PLANE' && (
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
                   {PLANE_FLEET_MENU.map((plane) => {
                     const isSelected = activePlaneIdx === plane.idx;
                     return (
@@ -926,7 +1024,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                         className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
                           isSelected
                             ? 'border-white bg-white/15 text-white'
-                            : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                            : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
                         }`}
                       >
                         {plane.label}
@@ -938,7 +1036,7 @@ export function HUD({ hud, onSelectMode }: Props) {
 
               {hud.mode === 'FOOT' && (
                 <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {MENU_CHARACTER_PRESETS.map((item) => {
                       const basePreset =
                         CHARACTER_PRESETS[item.presetIdx] ?? CHARACTER_PRESETS[0];
@@ -953,7 +1051,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                           className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
                             isSelected
                               ? 'border-white bg-white/15 text-white'
-                              : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                              : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
                           }`}
                         >
                           {item.label}
@@ -961,35 +1059,25 @@ export function HUD({ hud, onSelectMode }: Props) {
                       );
                     })}
                   </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    <button
-                      onClick={() => {
-                        onSelectMode('FOOT');
-                        handleToggleCustomizer();
-                      }}
-                      className="rounded-xl border border-white/10 bg-white/5 py-2 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-                    >
-                      Customize Outfit
-                    </button>
-                    <button
-                      onClick={() => {
-                        s.startMenuOpen = false;
-                        window.dispatchEvent(new CustomEvent('br-drop'));
-                        window.dispatchEvent(new CustomEvent('toggle-start-menu'));
-                      }}
-                      className="rounded-xl border border-white/10 bg-white/5 py-2 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-                    >
-                      Parachute Drop
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => {
+                      onSelectMode('FOOT');
+                      handleToggleCustomizer();
+                    }}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] py-2 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
+                  >
+                    <Shirt className="h-3.5 w-3.5" />
+                    <span>Customize Outfit</span>
+                  </button>
                 </div>
               )}
             </div>
 
             {/* Section 3 — Starting Location */}
-            <div className="mb-6">
-              <div className="mb-2 text-xs font-medium text-neutral-400">Starting Location</div>
+            <div>
+              <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
+                Starting Location
+              </div>
               <div className="flex flex-wrap gap-1.5">
                 {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
                   const isSelected = selectedLandmarkId === lm.id;
@@ -1000,7 +1088,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                       className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                         isSelected
                           ? 'border-white bg-white text-neutral-950'
-                          : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                          : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
                       }`}
                     >
                       {lm.menuLabel}
@@ -1009,23 +1097,283 @@ export function HUD({ hud, onSelectMode }: Props) {
                 })}
               </div>
             </div>
+          </div>
 
-            {/* Bottom Action Bar */}
+          {/* Bottom CTA */}
+          <div className="mt-6 pt-4">
             <button
-              onClick={handleDeployToMetropolis}
-              className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-neutral-950 shadow-md transition hover:bg-neutral-200 active:scale-[0.99]"
+              onClick={handleStartGame}
+              className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-neutral-950 shadow-lg transition hover:bg-neutral-200 active:scale-[0.99]"
             >
-              Play
+              Start Game
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // =========================================================================
+  // IN-GAME HUD (Mode-Specific & Mobile-Friendly)
+  // =========================================================================
+  return (
+    <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans">
+      {/* 1. CENTER CROSSHAIR (Battle Royale on foot / driving) */}
+      {activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
+        <div className="pointer-events-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          <div
+            className={`relative h-5 w-5 transition-transform duration-150 ${
+              killFeedText ? 'scale-125' : 'scale-100'
+            }`}
+          >
+            <span className="absolute left-1/2 top-0 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/80" />
+            <span className="absolute bottom-0 left-1/2 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/80" />
+            <span className="absolute left-0 top-1/2 h-[1.5px] w-1.5 -translate-y-1/2 rounded-full bg-white/80" />
+            <span className="absolute right-0 top-1/2 h-[1.5px] w-1.5 -translate-y-1/2 rounded-full bg-white/80" />
+            <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
+          </div>
+        </div>
+      )}
+
+      {/* 2. TOP-LEFT BAR */}
+      <div className="pointer-events-auto fixed left-3 top-3 z-30 flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/75 px-2 py-1.5 shadow-lg backdrop-blur-md">
+        <button
+          onClick={() => handleToggleStartMenu(true)}
+          className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+        >
+          <span className="hidden sm:inline">Menu (M)</span>
+          <span className="sm:hidden">Menu</span>
+        </button>
+
+        <button
+          onClick={handleToggleCustomizer}
+          className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+            isCustomizerOpen
+              ? 'bg-white text-neutral-950'
+              : 'text-neutral-200 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <span className="hidden sm:inline">Wardrobe (C)</span>
+          <span className="sm:hidden">Outfit</span>
+        </button>
+
+        <button
+          onClick={() => setTouchUi((v) => !v)}
+          title={touchUi ? 'Hide Touch Controls' : 'Show Touch Controls'}
+          className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition ${
+            touchUi
+              ? 'bg-white text-neutral-950'
+              : 'text-neutral-200 hover:bg-white/10 hover:text-white'
+          }`}
+        >
+          <Gamepad2 className="h-3.5 w-3.5" />
+          <span>Touch</span>
+        </button>
+
+        <button
+          onClick={handleToggleMute}
+          title={muted ? 'Unmute Audio' : 'Mute Audio'}
+          className="rounded-full p-1.5 text-neutral-300 transition hover:bg-white/10 hover:text-white"
+        >
+          {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+        </button>
+      </div>
+
+      {/* 3. TOP-RIGHT FAST-TRAVEL (Desktop Pills + Compact Mobile Teleport Dropdown) */}
+      <div className="pointer-events-auto fixed right-3 top-3 z-30">
+        {/* Desktop pills (lg+) */}
+        <div className="hidden max-w-[540px] flex-wrap items-center justify-end gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 px-2.5 py-1.5 shadow-lg backdrop-blur-md xl:flex">
+          {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
+            const isCurrent = selectedLandmarkId === lm.id;
+            return (
+              <button
+                key={lm.id}
+                onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
+                title={`${lm.cityBadge} — ${lm.fullTitle}`}
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
+                  isCurrent
+                    ? 'bg-white text-neutral-950'
+                    : 'text-neutral-300 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                {lm.shortLabel}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Compact Teleport Dropdown (< xl, including phones & tablets) */}
+        <div className="relative xl:hidden">
+          <button
+            onClick={() => setMobileTeleportOpen((o) => !o)}
+            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-950/75 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-md transition hover:bg-neutral-900"
+          >
+            <MapPin className="h-3.5 w-3.5 text-sky-400" />
+            <span>Teleport</span>
+          </button>
+
+          {mobileTeleportOpen && (
+            <div className="absolute right-0 mt-2 max-h-72 w-56 overflow-y-auto rounded-2xl border border-white/10 bg-neutral-950/92 p-2 shadow-2xl backdrop-blur-md">
+              <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
+                Fast Travel
+              </div>
+              <div className="flex flex-col gap-0.5">
+                {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
+                  const isCurrent = selectedLandmarkId === lm.id;
+                  return (
+                    <button
+                      key={lm.id}
+                      onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
+                      className={`flex items-center justify-between rounded-xl px-2.5 py-1.5 text-left text-xs font-medium transition ${
+                        isCurrent
+                          ? 'bg-white text-neutral-950'
+                          : 'text-neutral-200 hover:bg-white/10'
+                      }`}
+                    >
+                      <span>{lm.menuLabel}</span>
+                      <span
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: lm.color }}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 4. MODE-SPECIFIC TOP-CENTER HUD STRIPS */}
+      {activeGameMode === 'BATTLE_ROYALE' && (
+        <div className="pointer-events-auto fixed left-1/2 top-14 z-30 -translate-x-1/2 sm:top-16">
+          <div className="flex items-center gap-3 rounded-full border border-white/15 bg-neutral-950/80 px-4 py-1.5 text-xs text-white shadow-xl backdrop-blur-md">
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              <span className="text-neutral-400">Alive</span>
+              <span className="font-semibold tabular-nums">{aliveCount}</span>
+            </div>
+            <span className="h-3.5 w-px bg-white/15" />
+            <div className="flex items-center gap-1.5">
+              <Skull className="h-3.5 w-3.5 text-rose-400" />
+              <span className="text-neutral-400">Elims</span>
+              <span className="font-semibold tabular-nums">{eliminations}</span>
+            </div>
+            <span className="h-3.5 w-px bg-white/15" />
+            <div className="flex items-center gap-1.5">
+              <Radio className="h-3.5 w-3.5 text-violet-400" />
+              <span className="hidden text-neutral-400 sm:inline">Storm</span>
+              <span className="font-semibold tabular-nums">{stormRadius}m</span>
+            </div>
+            <span className="h-3.5 w-px bg-white/15" />
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent('br-drop'))}
+              className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-neutral-950 transition hover:bg-neutral-200"
+            >
+              Drop Again (P)
             </button>
           </div>
         </div>
       )}
 
-      {/* =====================================================================
-          5. CHARACTER WARDROBE DRAWER (isCustomizerOpen)
-         ===================================================================== */}
-      {isCustomizerOpen && !isStartMenuOpen && (
-        <div className="pointer-events-auto fixed left-3 top-16 bottom-24 z-30 flex w-76 flex-col overflow-hidden rounded-2xl border border-white/10 bg-neutral-950/85 font-sans text-white shadow-2xl backdrop-blur-md">
+      {activeGameMode === 'GRAND_PRIX' && (
+        <div className="pointer-events-auto fixed left-1/2 top-14 z-30 w-[92vw] max-w-xl -translate-x-1/2 sm:top-16 sm:w-auto">
+          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl border border-white/15 bg-neutral-950/80 px-4 py-2 text-xs text-white shadow-xl backdrop-blur-md">
+            <div className="flex items-center gap-1.5">
+              <Flag className="h-3.5 w-3.5 text-amber-400" />
+              <span className="text-neutral-400">Lap</span>
+              <span className="font-semibold tabular-nums">{lapCount + 1}</span>
+            </div>
+            <span className="h-3.5 w-px bg-white/15" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-neutral-400">Gate</span>
+              <span className="font-semibold tabular-nums">
+                {activeCpIndex + 1} / {totalCheckpoints}
+              </span>
+            </div>
+            <span className="hidden h-3.5 w-px bg-white/15 sm:inline" />
+            <div className="flex items-center gap-1.5">
+              <Navigation className="h-3.5 w-3.5 text-sky-400" />
+              <span className="max-w-[140px] truncate font-medium text-neutral-200">
+                {activeCp.name}
+              </span>
+              <span className="font-semibold tabular-nums text-sky-300">{cpDistMeters}m</span>
+            </div>
+            <span className="h-3.5 w-px bg-white/15" />
+            <div className="flex items-center gap-2 tabular-nums">
+              <span>
+                <span className="text-neutral-400">Time </span>
+                <span className="font-semibold">{formatLapTime(lapTime)}</span>
+              </span>
+              {bestLapTime !== null && (
+                <span>
+                  <span className="text-neutral-400">Best </span>
+                  <span className="font-semibold text-emerald-400">
+                    {formatLapTime(bestLapTime)}
+                  </span>
+                </span>
+              )}
+              {driftScore > 0 && (
+                <span className="font-semibold text-amber-300">Drift {driftScore}</span>
+              )}
+            </div>
+            <button
+              onClick={resetGrandPrixRace}
+              className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-medium text-white transition hover:bg-white/20"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span>Restart Race</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeGameMode === 'WORLD_TOUR' && (
+        <div className="pointer-events-auto fixed left-1/2 top-14 z-30 w-[92vw] max-w-md -translate-x-1/2 sm:top-16">
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/15 bg-neutral-950/82 px-4 py-2.5 text-white shadow-xl backdrop-blur-md">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <Globe className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-sky-300">
+                  {activeTourStop.cityBadge}
+                </span>
+                <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-neutral-200">
+                  {tourVisitedCount} / {WORLD_TOUR_STOPS.length}
+                </span>
+              </div>
+              <div className="mt-0.5 truncate text-sm font-semibold text-white">
+                {activeTourStop.fullTitle}
+              </div>
+              <p className="mt-0.5 line-clamp-1 text-[11px] text-neutral-400">
+                {activeTourStop.note}
+              </p>
+            </div>
+            <button
+              onClick={handleNextTourLandmark}
+              className="flex shrink-0 items-center gap-1 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-neutral-950 transition hover:bg-neutral-200"
+            >
+              <span>Next Landmark</span>
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* FLOATING NOTIFICATION PILL */}
+      {notificationBanner && (
+        <div className="pointer-events-none fixed left-1/2 top-28 z-20 -translate-x-1/2 sm:top-32">
+          <div className="flex items-center gap-2 rounded-full border border-white/15 bg-neutral-950/80 px-4 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-md">
+            {activeGameMode === 'BATTLE_ROYALE' && killFeedText && (
+              <Crosshair className="h-3.5 w-3.5 text-rose-400" />
+            )}
+            <span>{notificationBanner}</span>
+          </div>
+        </div>
+      )}
+
+      {/* 5. CHARACTER WARDROBE DRAWER */}
+      {isCustomizerOpen && (
+        <div className="pointer-events-auto fixed bottom-24 left-3 top-16 z-40 flex w-72 flex-col overflow-hidden rounded-2xl border border-white/10 bg-neutral-950/90 font-sans text-white shadow-2xl backdrop-blur-md sm:w-76">
           <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
             <div className="flex items-center gap-2">
               <Shirt className="h-4 w-4 text-neutral-300" />
@@ -1320,11 +1668,13 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       )}
 
-      {/* =====================================================================
-          6. BOTTOM-LEFT (bottom-3 left-3):
-             128x128 Minimap + Compact Health/Shield + 4 Mode Buttons + Vehicle/Outfit Cycle
-         ===================================================================== */}
-      <div className="pointer-events-auto fixed bottom-3 left-3 z-30 flex items-end gap-2.5">
+      {/* 6. BOTTOM-LEFT: Minimap + Mode-Aware Status + Traversal Switcher
+             Hidden on small screens when touch controls are active so thumbstick has full space */}
+      <div
+        className={`pointer-events-auto fixed bottom-3 left-3 z-30 items-end gap-2.5 ${
+          touchUi ? 'hidden sm:flex' : 'flex'
+        }`}
+      >
         {/* Clean circular 128x128 Minimap */}
         <div
           style={{ width: `${RADAR_SIZE}px`, height: `${RADAR_SIZE}px` }}
@@ -1361,7 +1711,6 @@ export function HUD({ hud, onSelectMode }: Props) {
               strokeWidth="1"
             />
 
-            {/* Venetian Canal Waterway */}
             <line
               x1={canalStartX}
               y1={canalStartZ}
@@ -1371,8 +1720,6 @@ export function HUD({ hud, onSelectMode }: Props) {
               strokeWidth="4.5"
               strokeLinecap="round"
             />
-
-            {/* Airport Runway Strip */}
             <line
               x1={runwayStartX}
               y1={runwayStartZ}
@@ -1382,8 +1729,6 @@ export function HUD({ hud, onSelectMode }: Props) {
               strokeWidth="4"
               strokeLinecap="round"
             />
-
-            {/* Main Avenues */}
             <line
               x1={aveTopX}
               y1={aveTopZ}
@@ -1403,25 +1748,25 @@ export function HUD({ hud, onSelectMode }: Props) {
               strokeLinecap="round"
             />
 
-            {/* Active Checkpoint Dot */}
-            <circle cx={cpRx} cy={cpRz} r={3} fill="#38bdf8" />
+            {activeGameMode === 'GRAND_PRIX' && (
+              <circle cx={cpRx} cy={cpRz} r={3.5} fill="#fbbf24" />
+            )}
 
-            {/* Enemy Bot Dots */}
-            {simState.botTargets.map((bot) => {
-              if (!bot.alive) return null;
-              const [bx, bz] = worldToRadar(bot.x, bot.z);
-              return (
-                <circle
-                  key={`radar-bot-${bot.id}`}
-                  cx={bx}
-                  cy={bz}
-                  r={2.2}
-                  fill="#ef4444"
-                />
-              );
-            })}
+            {activeGameMode === 'BATTLE_ROYALE' &&
+              simState.botTargets.map((bot) => {
+                if (!bot.alive) return null;
+                const [bx, bz] = worldToRadar(bot.x, bot.z);
+                return (
+                  <circle
+                    key={`radar-bot-${bot.id}`}
+                    cx={bx}
+                    cy={bz}
+                    r={2.2}
+                    fill="#ef4444"
+                  />
+                );
+              })}
 
-            {/* Player View Cone & Heading Arrow */}
             <polygon
               points={`${playerRx},${playerRz} ${coneLeftX},${coneLeftZ} ${coneRightX},${coneRightZ}`}
               fill="url(#radarConeGrad)"
@@ -1446,7 +1791,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               <button
                 key={lm.id}
                 onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
-                title={lm.fullTitle}
+                title={`${lm.cityBadge} — ${lm.fullTitle}`}
                 style={{ left: `${mx}px`, top: `${mz}px`, backgroundColor: lm.color }}
                 className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-neutral-950 transition-transform hover:scale-150"
               />
@@ -1454,42 +1799,44 @@ export function HUD({ hud, onSelectMode }: Props) {
           })}
         </div>
 
-        {/* Compact Health/Shield + Mode Buttons + Next Vehicle/Outfit */}
+        {/* Mode Switcher + Battle Royale Health/Shield */}
         <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-neutral-950/75 p-2.5 shadow-xl backdrop-blur-md">
-          {/* Health & Shield Bars */}
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
-                <span className="flex items-center gap-1">
-                  <Heart className="h-3 w-3 text-emerald-400" /> Health
-                </span>
-                <span>{playerHp}</span>
+          {/* Health & Shield Bars — Battle Royale only */}
+          {activeGameMode === 'BATTLE_ROYALE' && (
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
+                  <span className="flex items-center gap-1">
+                    <Heart className="h-3 w-3 text-emerald-400" /> Health
+                  </span>
+                  <span className="tabular-nums">{playerHp}</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    style={{ width: `${playerHp}%` }}
+                    className="h-full rounded-full bg-emerald-400 transition-all duration-150"
+                  />
+                </div>
               </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                <div
-                  style={{ width: `${playerHp}%` }}
-                  className="h-full rounded-full bg-emerald-400 transition-all duration-150"
-                />
+
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
+                  <span className="flex items-center gap-1">
+                    <Shield className="h-3 w-3 text-sky-400" /> Shield
+                  </span>
+                  <span className="tabular-nums">{playerShield}</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                  <div
+                    style={{ width: `${playerShield}%` }}
+                    className="h-full rounded-full bg-sky-400 transition-all duration-150"
+                  />
+                </div>
               </div>
             </div>
+          )}
 
-            <div>
-              <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
-                <span className="flex items-center gap-1">
-                  <Shield className="h-3 w-3 text-sky-400" /> Shield
-                </span>
-                <span>{playerShield}</span>
-              </div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                <div
-                  style={{ width: `${playerShield}%` }}
-                  className="h-full rounded-full bg-sky-400 transition-all duration-150"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* 4 Clean Mode Buttons (clicking opens the Mode Menu) */}
+          {/* 4 Traversal Mode Buttons */}
           <div className="flex items-center gap-1">
             {(
               [
@@ -1503,10 +1850,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               return (
                 <button
                   key={id}
-                  onClick={() => {
-                    onSelectMode(id);
-                    handleToggleStartMenu(true);
-                  }}
+                  onClick={() => onSelectMode(id)}
                   className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition ${
                     active
                       ? 'bg-white text-neutral-950'
@@ -1528,7 +1872,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                 className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
               >
                 <span>{CAR_FLEET_MENU[activeCarIdx]?.label ?? 'Supercar'}</span>
-                <span className="text-[11px] text-neutral-400">[V] Next Vehicle</span>
+                <span className="text-[11px] text-neutral-400">[V] Next</span>
               </button>
             )}
 
@@ -1538,7 +1882,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                 className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
               >
                 <span>{BOAT_FLEET_MENU[activeBoatIdx]?.label ?? 'Boat'}</span>
-                <span className="text-[11px] text-neutral-400">[B] Next Vehicle</span>
+                <span className="text-[11px] text-neutral-400">[B] Next</span>
               </button>
             )}
 
@@ -1548,7 +1892,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                 className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
               >
                 <span>{PLANE_FLEET_MENU[activePlaneIdx]?.label ?? 'Aircraft'}</span>
-                <span className="text-[11px] text-neutral-400">[B] Next Vehicle</span>
+                <span className="text-[11px] text-neutral-400">[B] Next</span>
               </button>
             )}
 
@@ -1565,16 +1909,19 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       </div>
 
-      {/* =====================================================================
-          7. BOTTOM-RIGHT (bottom-3 right-3):
-             Digital Speedometer + Compact Weapon Bar (when on foot or driving)
-         ===================================================================== */}
-      <div className="pointer-events-auto fixed bottom-3 right-3 z-30 flex flex-col items-end gap-1.5">
+      {/* 7. BOTTOM-RIGHT: Speedometer + Battle Royale Weapon Bar */}
+      <div
+        className={`pointer-events-auto fixed z-30 flex flex-col items-end gap-1.5 ${
+          touchUi ? 'right-3 top-14 sm:bottom-3 sm:top-auto' : 'bottom-3 right-3'
+        }`}
+      >
         {/* Clean Digital Speedometer */}
-        <div className="flex items-baseline gap-3 rounded-2xl border border-white/10 bg-neutral-950/75 px-4 py-2 shadow-xl backdrop-blur-md">
+        <div className="flex items-baseline gap-3 rounded-2xl border border-white/10 bg-neutral-950/75 px-3.5 py-1.5 shadow-xl backdrop-blur-md sm:px-4 sm:py-2">
           <div className="flex items-baseline gap-1">
-            <span className="text-xl font-semibold tabular-nums text-white">{hud.speedKmh}</span>
-            <span className="text-xs text-neutral-400">km/h</span>
+            <span className="text-lg font-semibold tabular-nums text-white sm:text-xl">
+              {hud.speedKmh}
+            </span>
+            <span className="text-[11px] text-neutral-400 sm:text-xs">km/h</span>
           </div>
           {hud.mode === 'PLANE' && (
             <>
@@ -1589,9 +1936,9 @@ export function HUD({ hud, onSelectMode }: Props) {
           )}
         </div>
 
-        {/* Compact Weapon Bar when on foot or driving */}
-        {(hud.mode === 'FOOT' || hud.mode === 'CAR') && (
-          <div className="flex items-center gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 p-1.5 shadow-xl backdrop-blur-md">
+        {/* 5-Slot Weapon Loadout + Fire — Battle Royale only */}
+        {activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
+          <div className="hidden items-center gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 p-1.5 shadow-xl backdrop-blur-md sm:flex">
             {WEAPON_SPECS.map((spec, idx) => {
               const isSelected = activeWeaponIdx === idx;
               return (
@@ -1620,6 +1967,13 @@ export function HUD({ hud, onSelectMode }: Props) {
           </div>
         )}
       </div>
+
+      {/* 8. MOBILE TOUCH CONTROLS OVERLAY */}
+      <MobileControls
+        mode={hud.mode}
+        gameMode={activeGameMode}
+        visible={touchUi && !isStartMenuOpen && !isCustomizerOpen}
+      />
     </div>
   );
 }
