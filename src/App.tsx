@@ -156,28 +156,58 @@ export function App() {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
-      simState.keys.add(e.code);
-      if (e.code === 'KeyM' || e.code === 'Escape' || e.code === 'Tab') {
-        if (e.code === 'Tab') e.preventDefault();
+      const code = e.code;
+      const lowerKey = e.key?.toLowerCase?.() ?? '';
+      if (
+        code === 'Space' ||
+        code === 'ArrowUp' ||
+        code === 'ArrowDown' ||
+        code === 'ArrowLeft' ||
+        code === 'ArrowRight' ||
+        code === 'Tab'
+      ) {
+        e.preventDefault();
+      }
+      if (
+        document.activeElement instanceof HTMLButtonElement &&
+        (code === 'Space' ||
+          code === 'KeyW' ||
+          code === 'KeyA' ||
+          code === 'KeyS' ||
+          code === 'KeyD' ||
+          code.startsWith('Arrow'))
+      ) {
+        document.activeElement.blur();
+      }
+
+      simState.keys.add(code);
+      if (lowerKey === 'w') simState.keys.add('KeyW');
+      if (lowerKey === 's') simState.keys.add('KeyS');
+      if (lowerKey === 'a') simState.keys.add('KeyA');
+      if (lowerKey === 'd') simState.keys.add('KeyD');
+      if (lowerKey === 'f') simState.keys.add('KeyF');
+
+      if (code === 'KeyM' || code === 'Escape' || code === 'Tab') {
         const nextOpen = !Boolean(s.startMenuOpen);
         s.startMenuOpen = nextOpen;
         if (nextOpen) {
           simState.customizerOpen = false;
+          simState.keys.clear();
         }
         window.dispatchEvent(new CustomEvent('toggle-start-menu'));
         return;
       }
-      if ((e.code === 'Enter' || e.code === 'NumpadEnter') && Boolean(s.startMenuOpen)) {
+      if ((code === 'Enter' || code === 'NumpadEnter') && Boolean(s.startMenuOpen)) {
         s.startMenuOpen = false;
         window.dispatchEvent(new CustomEvent('toggle-start-menu'));
         return;
       }
-      if (e.code === 'Digit1') switchMode('FOOT');
-      if (e.code === 'Digit2') switchMode('CAR');
-      if (e.code === 'Digit3') switchMode('BOAT');
-      if (e.code === 'Digit4') switchMode('PLANE');
-      if (e.code === 'KeyR') triggerRouletteSpin();
-      if (e.code === 'KeyE') {
+      if (code === 'Digit1') switchMode('FOOT');
+      if (code === 'Digit2') switchMode('CAR');
+      if (code === 'Digit3') switchMode('BOAT');
+      if (code === 'Digit4') switchMode('PLANE');
+      if (code === 'KeyR') triggerRouletteSpin();
+      if (code === 'KeyE') {
         if (simState.mode !== 'FOOT') {
           switchMode('FOOT');
         } else {
@@ -189,17 +219,28 @@ export function App() {
     };
     const onKeyUp = (e: KeyboardEvent) => {
       simState.keys.delete(e.code);
+      const lowerKey = e.key?.toLowerCase?.() ?? '';
+      if (lowerKey === 'w') simState.keys.delete('KeyW');
+      if (lowerKey === 's') simState.keys.delete('KeyS');
+      if (lowerKey === 'a') simState.keys.delete('KeyA');
+      if (lowerKey === 'd') simState.keys.delete('KeyD');
+      if (lowerKey === 'f') simState.keys.delete('KeyF');
+    };
+    const onWindowBlur = () => {
+      simState.keys.clear();
     };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onWindowBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onWindowBlur);
     };
   }, [switchMode]);
 
   return (
-    <div className="relative h-[100dvh] w-screen overflow-hidden bg-slate-950">
+    <div className="fixed inset-0 h-[100dvh] w-[100dvw] overflow-hidden bg-slate-950">
       <Canvas
         dpr={[0.85, 1.15]}
         camera={{ fov: 60, near: 0.5, far: 2200, position: [0, 12, 38] }}

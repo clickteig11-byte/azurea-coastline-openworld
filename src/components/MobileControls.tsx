@@ -125,7 +125,11 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
       e.stopPropagation();
       if (joyPointerIdRef.current !== null) return;
       joyPointerIdRef.current = e.pointerId;
-      e.currentTarget.setPointerCapture(e.pointerId);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore if pointer capture is unsupported
+      }
       setJoyActive(true);
       updateJoystickFromClient(e.clientX, e.clientY);
     },
@@ -147,8 +151,12 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
       if (joyPointerIdRef.current !== e.pointerId) return;
       e.preventDefault();
       e.stopPropagation();
-      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-        e.currentTarget.releasePointerCapture(e.pointerId);
+      try {
+        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        // Ignore
       }
       releaseJoystick();
     },
@@ -165,7 +173,11 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
       onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        e.currentTarget.setPointerCapture(e.pointerId);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // Ignore
+        }
         simState.keys.add(keyCode);
         setPressed(true);
         onPressExtra?.();
@@ -173,8 +185,12 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
       onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-          e.currentTarget.releasePointerCapture(e.pointerId);
+        try {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        } catch {
+          // Ignore
         }
         simState.keys.delete(keyCode);
         setPressed(false);
@@ -182,8 +198,12 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
       onPointerCancel: (e: React.PointerEvent<HTMLButtonElement>) => {
         e.preventDefault();
         e.stopPropagation();
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-          e.currentTarget.releasePointerCapture(e.pointerId);
+        try {
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+        } catch {
+          // Ignore
         }
         simState.keys.delete(keyCode);
         setPressed(false);
@@ -261,7 +281,7 @@ export function MobileControls({ mode, gameMode, visible }: MobileControlsProps)
         onPointerCancel={handleJoyPointerEnd}
         onLostPointerCapture={releaseJoystick}
         style={{ width: JOYSTICK_SIZE, height: JOYSTICK_SIZE }}
-        className={`fixed bottom-6 left-5 z-40 flex items-center justify-center rounded-full border backdrop-blur-md touch-none select-none transition-colors duration-150 ${
+        className={`pointer-events-auto fixed bottom-6 left-5 z-40 flex items-center justify-center rounded-full border backdrop-blur-md touch-none select-none transition-colors duration-150 ${
           joyActive
             ? 'border-white/40 bg-neutral-950/65 shadow-[0_0_24px_rgba(255,255,255,0.14)]'
             : 'border-white/20 bg-neutral-950/55 shadow-[0_8px_28px_rgba(0,0,0,0.45)]'

@@ -24,6 +24,8 @@ import {
   Radio,
   Globe,
   Navigation,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import {
   CHARACTER_PRESETS,
@@ -450,6 +452,44 @@ export function HUD({ hud, onSelectMode }: Props) {
   const [, setUiTick] = useState(0);
   const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('empire');
   const [mobileTeleportOpen, setMobileTeleportOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    const onResize = () => {
+      if (window.innerWidth < 900) {
+        setTouchUi(true);
+      }
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+      window.removeEventListener('resize', onResize);
+    };
+  }, []);
+
+  const handleToggleFullscreen = () => {
+    try {
+      const docEl = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void> | void;
+      };
+      const doc = document as Document & {
+        webkitExitFullscreen?: () => Promise<void> | void;
+      };
+      if (!document.fullscreenElement) {
+        if (docEl.requestFullscreen) void docEl.requestFullscreen();
+        else if (docEl.webkitRequestFullscreen) void docEl.webkitRequestFullscreen();
+      } else {
+        if (doc.exitFullscreen) void doc.exitFullscreen();
+        else if (doc.webkitExitFullscreen) void doc.webkitExitFullscreen();
+      }
+    } catch {
+      // Ignore if fullscreen API is blocked
+    }
+  };
   const [touchUi, setTouchUi] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return (
@@ -730,6 +770,10 @@ export function HUD({ hud, onSelectMode }: Props) {
   };
 
   const handleStartGame = () => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    simState.keys.clear();
     s.startMenuOpen = false;
     simState.customizerOpen = false;
     setMobileTeleportOpen(false);
@@ -1168,6 +1212,14 @@ export function HUD({ hud, onSelectMode }: Props) {
         >
           <Gamepad2 className="h-3.5 w-3.5" />
           <span>Touch</span>
+        </button>
+
+        <button
+          onClick={handleToggleFullscreen}
+          title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+          className="rounded-full p-1.5 text-neutral-300 transition hover:bg-white/10 hover:text-white"
+        >
+          {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
 
         <button
