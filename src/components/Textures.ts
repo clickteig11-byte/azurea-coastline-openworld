@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { COAST_SUN } from '../game/worldMath';
 
 function makeSeededRand(seedInit: number) {
   let seed = seedInit;
@@ -20,6 +21,7 @@ export function createProceduralEnvMap(gl: THREE.WebGLRenderer): THREE.Texture {
   const skyGeo = new THREE.SphereGeometry(50, 32, 16);
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
+    uniforms: { uSunDir: { value: COAST_SUN } },
     vertexShader: /* glsl */ `
       varying vec3 vDir;
       void main() {
@@ -29,15 +31,16 @@ export function createProceduralEnvMap(gl: THREE.WebGLRenderer): THREE.Texture {
     `,
     fragmentShader: /* glsl */ `
       varying vec3 vDir;
+      uniform vec3 uSunDir;
       void main() {
         float y = vDir.y;
-        vec3 zenith = vec3(0.10, 0.45, 0.85);
-        vec3 horizon = vec3(0.75, 0.89, 0.98);
-        vec3 ground = vec3(0.24, 0.34, 0.40);
+        vec3 zenith = vec3(0.045, 0.18, 0.32);
+        vec3 horizon = vec3(0.63, 0.73, 0.76);
+        vec3 ground = vec3(0.083, 0.125, 0.14);
         vec3 col = y >= 0.0
           ? mix(horizon, zenith, pow(y, 0.55))
           : mix(horizon, ground, pow(-y, 0.45));
-        vec3 sunDir = normalize(vec3(0.55, 0.48, -0.68));
+        vec3 sunDir = normalize(uSunDir);
         float sun = pow(max(dot(normalize(vDir), sunDir), 0.0), 48.0);
         col += vec3(1.0, 0.94, 0.78) * sun * 2.2;
         gl_FragColor = vec4(col, 1.0);

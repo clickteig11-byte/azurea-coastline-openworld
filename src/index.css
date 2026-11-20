@@ -1,8 +1,6 @@
 @import "tailwindcss";
 * {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -25,4 +23,166 @@ canvas {
   width: 100% !important;
   height: 100% !important;
   touch-action: none;
+}
+
+.touch-game-controls {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  touch-action: none;
+}
+.touch-orbit-area {
+  position: absolute;
+  z-index: 28;
+  inset: max(3.6rem, env(safe-area-inset-top)) 0 0 46%;
+  pointer-events: auto;
+  touch-action: none;
+}
+.touch-stick,
+.touch-actions {
+  position: absolute;
+  z-index: 40;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  user-select: none;
+  touch-action: none;
+}
+.touch-stick {
+  pointer-events: auto;
+  left: max(0.9rem, env(safe-area-inset-left));
+  width: min(var(--stick-size), 34vw);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d6f6ff53;
+  border-radius: 50%;
+  background: #0a1724af;
+  box-shadow: 0 9px 24px #030d2066, inset 0 0 16px #15344190;
+}
+.touch-stick[data-active] {
+  background: #112c39b8;
+  border-color: #8ddeec92;
+}
+.touch-stick-ring {
+  position: absolute;
+  inset: 11%;
+  border-radius: inherit;
+  border: 1px dashed #a8d5e266;
+  pointer-events: none;
+}
+.touch-stick-knob {
+  width: 38%;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d2eff4a0;
+  border-radius: 50%;
+  background: #527d8bd4;
+  color: #eefaff;
+  box-shadow: 0 4px 12px #030d206b;
+  pointer-events: none;
+  will-change: transform;
+}
+.touch-actions {
+  --action-size: 49px;
+  right: max(0.8rem, env(safe-area-inset-right));
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+.touch-primary,
+.touch-utilities {
+  display: flex;
+  gap: 6px;
+}
+.touch-primary {
+  display: grid;
+  grid-template-columns: repeat(3, var(--action-size));
+  justify-content: end;
+}
+.touch-action-button {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 2px;
+  width: var(--action-size);
+  height: var(--action-size);
+  padding: 0;
+  border: 1px solid #d9edf451;
+  border-radius: 17px;
+  color: #e7f4fb;
+  background: #0b1c2cdc;
+  box-shadow: 0 5px 14px #030d2059;
+  touch-action: none;
+  line-height: 1;
+}
+.touch-action-button span {
+  font-size: 9px;
+  font-weight: 700;
+}
+.touch-utilities .touch-action-button {
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+}
+.touch-action-button[data-held="true"],
+.touch-action-button:active {
+  transform: scale(0.94);
+  border-color: currentColor;
+  background: #2c495d;
+}
+.touch-throttle { color: #8aebff; background: #113a4ce8; }
+.touch-boost { color: #ffe096; }
+.touch-fire { color: #ffc0aa; }
+.touch-repair { color: #a4f1c0; }
+
+@media (orientation: landscape) and (max-height: 540px) {
+  .touch-stick { width: min(var(--stick-size), 32dvh); }
+  .touch-primary { display: flex; }
+  .touch-actions { --action-size: 52px; }
+  .touch-orbit-area { left: 48%; }
+}
+
+.world-start-screen {
+  background: linear-gradient(90deg, #050e19f5 0%, #07121fe0 24%, #09162380 48%, #09162300 79%),
+    linear-gradient(0deg, #030b1885, transparent 26%);
+}
+.world-start-live {
+  position: absolute;
+  right: max(1.15rem, env(safe-area-inset-right));
+  bottom: max(1.2rem, env(safe-area-inset-bottom));
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: 1px solid #d2edff30;
+  border-radius: 100px;
+  padding: 0.48rem 0.78rem;
+  background: #0b1927b8;
+  color: #dceef6;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.world-start-live span {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: #76dfb1;
+  box-shadow: 0 0 10px #76dfb1b0;
+}
+@media (max-width: 640px) {
+  .world-start-screen {
+    background: linear-gradient(90deg, #071321e8, #07132180), linear-gradient(0deg, #050e18d9, transparent);
+  }
+  .world-start-live { display: none; }
+}
+
+.world-start-panel { touch-action: pan-y; }
+.world-start-cta {
+  position: sticky;
+  bottom: -1px;
+  padding-bottom: max(0.45rem, env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, #08131ff5 49%, #08131f00);
 }

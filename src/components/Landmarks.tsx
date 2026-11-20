@@ -1,4 +1,4 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { sphereVertexShader, sphereFragmentShader, beamVertexShader, beamFragmentShader } from './Shaders';
@@ -16,7 +16,8 @@ import {
   createColosseumArcadePBR,
   createGranitePodiumPBR,
 } from './Textures';
-import { getTerrainHeight } from '../game/worldMath';
+import { getTerrainHeight, LANDMARKS } from '../game/worldMath';
+import { registerWorldSection, type WorldMaterial } from '../game/worldDamage';
 import { simState } from '../game/store';
 
 type TextureOrPBR =
@@ -58,59 +59,6 @@ export function VegasLandmarks() {
   const cobblePBR = useMemo(() => unwrapPBR(createSidewalkCobblePBR()), []);
   const colosseumArcadePBR = useMemo(() => unwrapPBR(createColosseumArcadePBR()), []);
   const granitePodiumPBR = useMemo(() => unwrapPBR(createGranitePodiumPBR()), []);
-
-  // 2. GOLDEN GATE SUSPENSION BRIDGE — Twin Catenary Main Cables & Vertical Suspender Ropes
-  const goldenGateGeometry = useMemo(() => {
-    const cableSides = [-23, 23];
-    const cables = cableSides.map((xPos) => {
-      // North side-span (-48..-22), main center span (-22..+22), south side-span (+22..+48)
-      const northPts: THREE.Vector3[] = [];
-      for (let i = 0; i <= 8; i++) {
-        const u = i / 8;
-        const z = -48 + u * 26;
-        const y = 4 + Math.pow(u, 1.55) * 64;
-        northPts.push(new THREE.Vector3(xPos, y, z));
-      }
-      const centerPts: THREE.Vector3[] = [];
-      for (let i = 0; i <= 16; i++) {
-        const u = (i / 16) * 2 - 1; // -1 to +1
-        const z = u * 22;
-        const y = 18.5 + u * u * 49.5; // 18.5m mid-span up to 68m tower saddles
-        centerPts.push(new THREE.Vector3(xPos, y, z));
-      }
-      const southPts: THREE.Vector3[] = [];
-      for (let i = 0; i <= 8; i++) {
-        const u = i / 8;
-        const z = 22 + u * 26;
-        const y = 4 + Math.pow(1 - u, 1.55) * 64;
-        southPts.push(new THREE.Vector3(xPos, y, z));
-      }
-
-      return {
-        northGeo: new THREE.TubeGeometry(new THREE.CatmullRomCurve3(northPts), 16, 0.52, 8, false),
-        centerGeo: new THREE.TubeGeometry(new THREE.CatmullRomCurve3(centerPts), 28, 0.55, 8, false),
-        southGeo: new THREE.TubeGeometry(new THREE.CatmullRomCurve3(southPts), 16, 0.52, 8, false),
-      };
-    });
-
-    // Vertical suspender ropes every 8m
-    const suspenders: { z: number; h: number; yMid: number }[] = [];
-    for (let z = -44; z <= 44; z += 8) {
-      if (Math.abs(Math.abs(z) - 22) < 2.5) continue;
-      let cableY = 18.5;
-      if (Math.abs(z) < 22) {
-        const u = z / 22;
-        cableY = 18.5 + u * u * 49.5;
-      } else {
-        const u = (48 - Math.abs(z)) / 26;
-        cableY = 4 + Math.pow(Math.max(0, u), 1.55) * 64;
-      }
-      const h = Math.max(2, cableY - 1.5);
-      suspenders.push({ z, h, yMid: 1.5 + h / 2 });
-    }
-
-    return { cables, suspenders };
-  }, []);
 
   // 4. PARIS EIFFEL TOWER — 4 Multi-Chord Lattice Legs, Horizontal Girders & Diagonal X-Bracing Trusses
   const { eiffelPiers, eiffelTrussStruts } = useMemo(() => {
@@ -438,7 +386,6 @@ export function VegasLandmarks() {
 
   // Terrain heights for all 12 Global Landmarks + East Science Sphere
   const empireY = getTerrainHeight(-52, -28);
-  const goldenGateY = getTerrainHeight(0, -205);
   const bigBenY = getTerrainHeight(-52, -88);
   const eiffelY = getTerrainHeight(95, 35);
   const burjY = getTerrainHeight(54, -148);
@@ -450,8 +397,63 @@ export function VegasLandmarks() {
   const gizaY = getTerrainHeight(-118, -28);
   const sphereY = getTerrainHeight(98, -35);
 
+  const landmarkRoot = useRef<THREE.Group>(null);
+  useLayoutEffect(() => {
+    const root = landmarkRoot.current!;
+    root.updateWorldMatrix(true, true);
+    const cleanup: (() => void)[] = [];
+    for (const structure of root.children) {
+      const [x, , z] = structure.position.toArray();
+      const landmark = LANDMARKS.find((entry) => Math.hypot(entry.position[0] - x, entry.position[2] - z) < 18);
+      const owner = landmark?.name ?? 'Azurea Science Museum';
+      structure.traverse((object) => {
+        const mesh = object as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+        if (!mesh.isMesh || Array.isArray(mesh.material) || !mesh.material.isMeshStandardMaterial ||
+            (mesh.material.transparent && mesh.material.opacity < 0.22)) return;
+        mesh.geometry.computeBoundingBox();
+        const bounds = mesh.geometry.boundingBox;
+        if (!bounds || bounds.isEmpty()) return;
+        const center = bounds.getCenter(new THREE.Vector3()).applyMatrix4(mesh.matrixWorld);
+        const rotation = mesh.getWorldQuaternion(new THREE.Quaternion());
+        const size = bounds.getSize(new THREE.Vector3()).multiply(mesh.getWorldScale(new THREE.Vector3()));
+        const material: WorldMaterial = mesh.material.metalness > 0.53 ? 'metal' :
+          mesh.material.roughness < 0.35 ? 'glass' : 'masonry';
+        const volume = size.x * size.y * size.z;
+        const hp = Math.round(THREE.MathUtils.clamp(43 + Math.cbrt(volume) * 19, 48, 320));
+        const simple = /^(Box|Cylinder|Sphere|Cone|Dodecahedron)Geometry$/.test(mesh.geometry.type);
+        const lowPlaza = size.y < 0.65 && center.y <= getTerrainHeight(center.x, center.z) + 0.85;
+        const original = mesh.material;
+        const initialColor = original.color.clone();
+        const soot = new THREE.Color('#3b302b');
+        let ownMaterial: THREE.MeshStandardMaterial | null = null;
+        const unregister = registerWorldSection({
+          owner, label: owner, material, center, rotation, halfSize: size.multiplyScalar(0.5).max(new THREE.Vector3(0.03, 0.03, 0.03)),
+          hp, maxHp: hp, mesh, solid: simple && !lowPlaza,
+          onDamage: (integrity, destroyed) => {
+            if (destroyed) {
+              mesh.visible = false;
+              return;
+            }
+            if (!ownMaterial) {
+              ownMaterial = original.clone();
+              mesh.material = ownMaterial;
+            }
+            ownMaterial.color.copy(initialColor).lerp(soot, (1 - integrity) * 0.85);
+          },
+        });
+        cleanup.push(() => {
+          unregister();
+          mesh.visible = true;
+          mesh.material = original;
+          ownMaterial?.dispose();
+        });
+      });
+    }
+    return () => cleanup.forEach((remove) => remove());
+  }, []);
+
   return (
-    <group>
+    <group ref={landmarkRoot}>
       {/* =================================================================================
           1. NEW YORK — EMPIRE STATE BUILDING (Art Deco Limestone & Skyscraper Curtain Wall)
              Position: [-52, empireY, -28] — West Midtown Block (clear of avenues)
@@ -568,145 +570,6 @@ export function VegasLandmarks() {
           <sphereGeometry args={[0.42, 10, 10]} />
           <meshStandardMaterial color="#ef4444" emissive="#ef4444" emissiveIntensity={3.2} />
         </mesh>
-      </group>
-
-      {/* =================================================================================
-          2. SAN FRANCISCO — GOLDEN GATE SUSPENSION BRIDGE
-             Position: [0, goldenGateY, -205] — Spans North Bay Highway (z = -165..-255)
-             Twin H-Towers straddle x = -23 and x = +23 so 44m roadway is 100% unobstructed!
-         ================================================================================= */}
-      <group position={[0, goldenGateY, -205]}>
-        {/* North & South Monumental Granite/Concrete Cable Anchorages outside roadway at x = ±23, z = ±48 */}
-        {[-48, 48].map((az) =>
-          [-23, 23].map((ax) => (
-            <mesh key={`anch-${ax}-${az}`} position={[ax, 2.6, az]} castShadow receiveShadow>
-              <boxGeometry args={[4.8, 5.4, 8.8]} />
-              <meshStandardMaterial
-                map={granitePodiumPBR.map}
-                roughnessMap={granitePodiumPBR.roughnessMap}
-                roughness={0.66}
-                metalness={0.14}
-              />
-            </mesh>
-          ))
-        )}
-
-        {/* Twin Monumental International Orange (#c2410c) Art Deco H-Towers (z = -22 and z = +22) */}
-        {[-22, 22].map((tz) => (
-          <group key={`tower-${tz}`} position={[0, 0, tz]}>
-            {/* Ribbed Granite/Concrete Pier Fenders at the base of each leg (x = ±23) */}
-            {[-23, 23].map((lx) => (
-              <React.Fragment key={`leg-${lx}`}>
-                <mesh position={[lx, 2.0, 0]} castShadow receiveShadow>
-                  <boxGeometry args={[5.6, 4.0, 7.4]} />
-                  <meshStandardMaterial
-                    map={granitePodiumPBR.map}
-                    roughnessMap={granitePodiumPBR.roughnessMap}
-                    roughness={0.64}
-                  />
-                </mesh>
-                {/* Main Stepped Art Deco Vertical Steel Shafts (height = 68m) */}
-                <mesh position={[lx, 36, 0]} castShadow receiveShadow>
-                  <boxGeometry args={[3.2, 64, 4.4]} />
-                  <meshStandardMaterial
-                    map={steelTrussPBR.map}
-                    roughnessMap={steelTrussPBR.roughnessMap}
-                    color="#c2410c"
-                    metalness={0.68}
-                    roughness={0.34}
-                  />
-                </mesh>
-                <mesh position={[lx, 18, 0]} castShadow>
-                  <boxGeometry args={[4.1, 28, 5.2]} />
-                  <meshStandardMaterial
-                    map={steelTrussPBR.map}
-                    roughnessMap={steelTrussPBR.roughnessMap}
-                    color="#ea580c"
-                    metalness={0.64}
-                    roughness={0.36}
-                  />
-                </mesh>
-                {/* Cast-Steel Cable Saddle at Tower Peak (y = 68.5m) */}
-                <mesh position={[lx, 68.5, 0]}>
-                  <boxGeometry args={[3.6, 1.6, 4.8]} />
-                  <meshStandardMaterial color="#9a3412" metalness={0.82} roughness={0.25} />
-                </mesh>
-              </React.Fragment>
-            ))}
-
-            {/* 4 Horizontal Art Deco Portal Cross-Struts HIGH ABOVE ROADWAY (y = 22, 36, 50, 64) */}
-            {[22, 36, 50, 64].map((cy) => (
-              <group key={`strut-${cy}`} position={[0, cy, 0]}>
-                <mesh castShadow>
-                  <boxGeometry args={[46, 2.8, 3.2]} />
-                  <meshStandardMaterial
-                    map={steelTrussPBR.map}
-                    roughnessMap={steelTrussPBR.roughnessMap}
-                    color="#c2410c"
-                    metalness={0.7}
-                    roughness={0.32}
-                  />
-                </mesh>
-                {/* Art Deco stepped portal arch gussets on each cross-strut */}
-                {[-19, 19].map((gx) => (
-                  <mesh key={gx} position={[gx, -2.1, 0]}>
-                    <boxGeometry args={[4.5, 1.8, 2.6]} />
-                    <meshStandardMaterial color="#9a3412" metalness={0.72} roughness={0.34} />
-                  </mesh>
-                ))}
-              </group>
-            ))}
-          </group>
-        ))}
-
-        {/* Twin Sweeping Catenary Main Suspension Cables along x = -23 and x = +23 */}
-        {goldenGateGeometry.cables.map((cable, idx) => (
-          <React.Fragment key={`cable-${idx}`}>
-            <mesh geometry={cable.northGeo} castShadow>
-              <meshStandardMaterial color="#c2410c" metalness={0.78} roughness={0.26} />
-            </mesh>
-            <mesh geometry={cable.centerGeo} castShadow>
-              <meshStandardMaterial color="#c2410c" metalness={0.78} roughness={0.26} />
-            </mesh>
-            <mesh geometry={cable.southGeo} castShadow>
-              <meshStandardMaterial color="#c2410c" metalness={0.78} roughness={0.26} />
-            </mesh>
-          </React.Fragment>
-        ))}
-
-        {/* Vertical Steel Suspender Ropes every 8m along x = ±23 */}
-        {goldenGateGeometry.suspenders.map((s, idx) =>
-          [-23, 23].map((sx) => (
-            <mesh key={`susp-${idx}-${sx}`} position={[sx, s.yMid, s.z]}>
-              <cylinderGeometry args={[0.09, 0.09, s.h, 6]} />
-              <meshStandardMaterial color="#94a3b8" metalness={0.85} roughness={0.22} />
-            </mesh>
-          ))
-        )}
-
-        {/* Side Pedestrian Walkways & International Orange Steel Guardrails at x = ±21.8 */}
-        {[-21.8, 21.8].map((wx) => (
-          <group key={`walkway-${wx}`} position={[wx, 0, 0]}>
-            <mesh position={[0, 0.35, 0]} receiveShadow>
-              <boxGeometry args={[2.2, 0.7, 96]} />
-              <meshStandardMaterial
-                map={granitePodiumPBR.map}
-                roughnessMap={granitePodiumPBR.roughnessMap}
-                roughness={0.65}
-              />
-            </mesh>
-            <mesh position={[wx > 0 ? 0.85 : -0.85, 1.45, 0]} castShadow>
-              <boxGeometry args={[0.35, 1.5, 96]} />
-              <meshStandardMaterial
-                map={steelTrussPBR.map}
-                roughnessMap={steelTrussPBR.roughnessMap}
-                color="#c2410c"
-                metalness={0.68}
-                roughness={0.34}
-              />
-            </mesh>
-          </group>
-        ))}
       </group>
 
       {/* =================================================================================

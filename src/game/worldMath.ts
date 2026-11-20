@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+export const COAST_SUN = new THREE.Vector3(-0.61, 0.54, -0.58).normalize();
+
 export type VehicleMode = 'FOOT' | 'CAR' | 'BOAT' | 'PLANE';
 export type RouletteOutcome = 'IDLE' | 'RED' | 'BLACK' | 'GREEN_00';
 
@@ -23,7 +25,7 @@ export const LANDMARKS: LandmarkDef[] = [
     id: 'goldengate',
     name: 'GOLDEN GATE BRIDGE',
     subtitle: 'San Francisco North Bay Span',
-    position: [0, 0, -205],
+    position: [0, 0, -286],
     color: '#f97316',
   },
   {
@@ -118,7 +120,7 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
  * - Airport runway flat pad on West-South (x > -210 && x < -45, z > 135 && z < 175)
  * - Gentle coastal beaches beyond r > 195m sloping into deep ocean beyond r > 265m
  */
-export function getTerrainHeight(x: number, z: number): number {
+function getMainIslandHeight(x: number, z: number): number {
   const dist = Math.hypot(x, z);
 
   // Venetian Canal carve-out (east waterway connecting to ocean, clear of Grand Central Ave)
@@ -176,6 +178,63 @@ export function getTerrainHeight(x: number, z: number): number {
     outerFactor;
 
   return base + gentleDunes;
+}
+
+export const NORTH_BAY_BRIDGE = {
+  approach: -205,
+  landing: -402,
+  gate: -397,
+  halfWidth: 16,
+  piers: [-244, -266, -315, -348, -374],
+};
+
+export const CONSTRUCTION_ISLAND = { z: -469, radiusX: 105, radiusZ: 116 };
+
+export function islandTwoRadius(x: number, z: number): number {
+  const nx = x / CONSTRUCTION_ISLAND.radiusX;
+  const nz = (z - CONSTRUCTION_ISLAND.z) / CONSTRUCTION_ISLAND.radiusZ;
+  const angle = Math.atan2(nx, nz);
+  const coast = 1 + Math.sin(angle * 3) * 0.067 + Math.sin(angle * 5 + 0.6) * 0.035;
+  return Math.hypot(nx, nz) / coast;
+}
+
+export function getIslandTwoHeight(x: number, z: number): number {
+  const radius = islandTwoRadius(x, z);
+  const coast = smoothstep(0.62, 1.02, radius);
+  const shelf = smoothstep(0.88, 1.24, radius);
+  const detail = (Math.sin(x * 0.08 + z * 0.038) * 0.6 + Math.cos(z * 0.085) * 0.35) *
+    smoothstep(0.45, 0.7, radius) * (1 - coast);
+  const spoilPiles = 2.2 * Math.exp(-(((x - 53) / 15) ** 2 + ((z + 524) / 11) ** 2)) +
+    2.65 * Math.exp(-(((x + 49) / 15) ** 2 + ((z + 546) / 13) ** 2));
+  return 4.6 * (1 - coast) - 6.5 * shelf + detail + spoilPiles;
+}
+
+export function getTerrainHeight(x: number, z: number): number {
+  const main = getMainIslandHeight(x, z);
+  return z < -325 ? Math.max(main, getIslandTwoHeight(x, z)) : main;
+}
+
+export function getBridgeHeight(z: number): number {
+  const distance = NORTH_BAY_BRIDGE.approach - z;
+  if (distance <= 0) return 3.25;
+  if (z > -352) return 3.25 + 6.15 * smoothstep(0, 64, distance);
+  const grade = getIslandTwoHeight(0, z) + 0.06;
+  return THREE.MathUtils.lerp(9.4, grade, smoothstep(352, -NORTH_BAY_BRIDGE.landing, -z));
+}
+
+export function getTravelHeight(x: number, z: number, feetY = Infinity): number {
+  const terrain = getTerrainHeight(x, z);
+  if (z > NORTH_BAY_BRIDGE.approach || z < NORTH_BAY_BRIDGE.landing || Math.abs(x) > NORTH_BAY_BRIDGE.halfWidth + 2) {
+    return terrain;
+  }
+  const deck = getBridgeHeight(z);
+  return feetY >= deck - 1.4 ? Math.max(terrain, deck) : terrain;
+}
+
+export function isConstructionClosed(x: number, z: number): boolean {
+  if (z >= -350) return false;
+  if (Math.abs(x) < NORTH_BAY_BRIDGE.halfWidth + 2 && z >= NORTH_BAY_BRIDGE.gate) return false;
+  return islandTwoRadius(x, z) < 1.025;
 }
 
 export function isWaterAt(x: number, z: number, tideOffset = 0): boolean {

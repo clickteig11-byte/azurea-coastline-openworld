@@ -3,8 +3,10 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
+import { animateHumanoid, createHumanoidRig, type HumanoidRig } from '../game/humanoid';
 import { getTerrainHeight, getWaveHeight } from '../game/worldMath';
-import { simState } from '../game/store';
+import { simState, COASTAL_CHARACTERS } from '../game/store';
+import { pedestrianContact } from '../game/vehicleContact';
 import { createShadowTexture } from './Textures';
 
 // ============================================================================
@@ -113,64 +115,7 @@ function getHumanPalette(seedIndex: number, isCombatBot = false): HumanOutfitPal
 }
 
 // ============================================================================
-// Smooth Humanoid Skeletal StrideRig Interface & Helper
-// ============================================================================
-interface HumanoidStrideRig {
-  leftUpLeg: THREE.Object3D | null;
-  rightUpLeg: THREE.Object3D | null;
-  leftLeg: THREE.Object3D | null;
-  rightLeg: THREE.Object3D | null;
-  leftArm: THREE.Object3D | null;
-  rightArm: THREE.Object3D | null;
-  spine: THREE.Object3D | null;
-}
-
-function captureRestQuat(bone: THREE.Object3D | null, preRotX = 0): THREE.Object3D | null {
-  if (!bone) return null;
-  if (preRotX !== 0) {
-    _quatScratch.setFromAxisAngle(_X_AXIS, preRotX);
-    bone.quaternion.multiply(_quatScratch);
-  }
-  bone.userData.restQuat = bone.quaternion.clone();
-  return bone;
-}
-
-function applyBoneAxisSwing(
-  bone: THREE.Object3D | null,
-  axis: THREE.Vector3,
-  angleRad: number
-) {
-  if (!bone || !bone.userData.restQuat) return;
-  _quatScratch.setFromAxisAngle(axis, angleRad);
-  bone.quaternion.copy(bone.userData.restQuat as THREE.Quaternion).multiply(_quatScratch);
-}
-
-function updateHumanoidStride(rig: HumanoidStrideRig, phase: number, strideScale = 1.0) {
-  const s = Math.sin(phase);
-  const c = Math.cos(phase);
-  const legSwing = 0.48 * strideScale;
-  const kneeBend = 0.55 * strideScale;
-  const armSwing = 0.34 * strideScale;
-
-  // Swing LeftUpLeg and RightUpLeg in opposite phase around local X
-  applyBoneAxisSwing(rig.leftUpLeg, _X_AXIS, s * legSwing);
-  applyBoneAxisSwing(rig.rightUpLeg, _X_AXIS, -s * legSwing);
-
-  // Bend LeftLeg and RightLeg knees naturally around local X during back-to-forward recovery
-  applyBoneAxisSwing(rig.leftLeg, _X_AXIS, -Math.max(0, s) * kneeBend);
-  applyBoneAxisSwing(rig.rightLeg, _X_AXIS, -Math.max(0, -s) * kneeBend);
-
-  // Counter-swing LeftArm and RightArm
-  applyBoneAxisSwing(rig.leftArm, _X_AXIS, -s * armSwing);
-  applyBoneAxisSwing(rig.rightArm, _X_AXIS, s * armSwing);
-
-  // Subtle torso counter-sway
-  applyBoneAxisSwing(rig.spine, _Y_AXIS, c * 0.06 * strideScale);
-}
-
-// ============================================================================
-// 16 High-Res Smooth-Shaded PBR Human Citizens (70% ReadyPlayerMe, 30% Michelle)
-// ============================================================================
+// Animated pedestrian population
 const PED_COUNT = 16;
 
 const pedShadowGeo = new THREE.PlaneGeometry(0.9, 0.9);
@@ -196,11 +141,17 @@ interface PedestrianAgent {
   dodgeX: number;
   dodgeZ: number;
   dodgeAlert: number;
+  resilience?: number;
+  impact?: { elapsed: number; duration: number; vx: number; vz: number; side: number; strength: number };
 }
 
-function selectHumanModelUrl(index: number): string {
-  // ~70% /models/readyplayer_me.glb (11 of 16) and ~30% /models/michelle.glb (5 of 16)
-  return index % 3 === 2 ? '/models/michelle.glb' : '/models/readyplayer_me.glb';
+const civilianLooks = ['commuter', 'tourist', 'hotel_guest', 'high_roller', 'server', 'pool_guest', 'security'];
+const combatLooks = ['rifleman', 'commander', 'medic', 'police'];
+
+function selectHumanModelUrl(index: number) {
+  if (index === 8) return COASTAL_CHARACTERS.COAST_NAVIGATOR.url;
+  if (index === 12) return COASTAL_CHARACTERS.RESCUE_PILOT.url;
+  return '/models/human_' + civilianLooks[index % civilianLooks.length] + '.glb';
 }
 
 function createPedestrians(): PedestrianAgent[] {
@@ -910,7 +861,7 @@ export function LivingWorldNPCs() {
   // 16 Smooth-Shaded PBR Human Citizen Refs & Skeletal Stride Rigs
   const citizenGroupRefs = useRef<Array<THREE.Group | null>>([]);
   const citizenModelMountRefs = useRef<Array<THREE.Group | null>>([]);
-  const citizenStrideRigs = useRef<Array<HumanoidStrideRig | null>>(
+  const citizenStrideRigs = useRef<Array<HumanoidRig | null>>(
     Array.from({ length: PED_COUNT }, () => null)
   );
 
@@ -924,7 +875,7 @@ export function LivingWorldNPCs() {
   const botShieldBarRefs = useRef<Array<THREE.Mesh | null>>([]);
   const botHitFlashRefs = useRef<Array<THREE.Mesh | null>>([]);
   const botMuzzleFlashRefs = useRef<Array<THREE.Group | null>>([]);
-  const botStrideRigs = useRef<Array<HumanoidStrideRig | null>>(
+  const botStrideRigs = useRef<Array<HumanoidRig | null>>(
     simState.botTargets.map(() => null)
   );
 
@@ -1100,111 +1051,40 @@ export function LivingWorldNPCs() {
      * preserving all original PBR normal/roughness/albedo textures while tinting each sub-mesh with
      * a unique outfit & skin palette and capturing rest-pose quaternions for smooth stride animation.
      */
-    const prepareSmoothPbrHumanClone = (
-      gltf: GLTF,
-      isMichelle: boolean,
-      palette: HumanOutfitPalette
-    ): { clone: THREE.Object3D; strideRig: HumanoidStrideRig } => {
+    const prepareHuman = (gltf: Awaited<ReturnType<typeof loadCachedGLTF>>, palette: HumanOutfitPalette, height: number) => {
       const clone = SkeletonUtils.clone(gltf.scene);
-
-      let leftUpLeg: THREE.Object3D | null = null;
-      let rightUpLeg: THREE.Object3D | null = null;
-      let leftLeg: THREE.Object3D | null = null;
-      let rightLeg: THREE.Object3D | null = null;
-      let leftArm: THREE.Object3D | null = null;
-      let rightArm: THREE.Object3D | null = null;
-      let spine: THREE.Object3D | null = null;
-
       clone.traverse((child) => {
-        const name = child.name || '';
-
-        // Discover skeletal stride bones on both ReadyPlayerMe and Mixamo Michelle rigs
-        if (name === 'LeftUpLeg' || name.endsWith('LeftUpLeg')) leftUpLeg = child;
-        else if (name === 'RightUpLeg' || name.endsWith('RightUpLeg')) rightUpLeg = child;
-        else if (name === 'LeftLeg' || name.endsWith('LeftLeg')) leftLeg = child;
-        else if (name === 'RightLeg' || name.endsWith('RightLeg')) rightLeg = child;
-        else if (name === 'LeftArm' || name.endsWith('LeftArm')) leftArm = child;
-        else if (name === 'RightArm' || name.endsWith('RightArm')) rightArm = child;
-        else if (name === 'Spine' || name.endsWith(':Spine') || name === 'mixamorigSpine') {
-          spine = child;
+        const mesh = child as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.frustumCulled = true;
+        const original = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        if (!(original as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
+        const mat = (original as THREE.MeshStandardMaterial).clone();
+        if (/top|coat/.test(mesh.name)) {
+          mat.color.lerp(new THREE.Color(palette.topColor), 0.24);
+          mat.roughness = Math.max(0.52, palette.topRoughness);
+        } else if (/bottom/.test(mesh.name)) {
+          mat.color.lerp(new THREE.Color(palette.bottomColor), 0.18);
+          mat.roughness = 0.72;
+        } else if (/feet/.test(mesh.name)) {
+          mat.color.lerp(new THREE.Color(palette.footwearColor), 0.2);
+          mat.roughness = 0.56;
         }
-
-        if ((child as THREE.Mesh).isMesh) {
-          const mesh = child as THREE.Mesh;
-          mesh.castShadow = false;
-          mesh.receiveShadow = false;
-          mesh.frustumCulled = false;
-
-          // Clone original MeshStandardMaterial so all 19 PBR normal/roughness/albedo maps remain intact
-          const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-          if (origMat && (origMat as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
-            const mat = (origMat as THREE.MeshStandardMaterial).clone();
-            const matName = mat.name || '';
-
-            if (name === 'Wolf3D_Outfit_Top' || matName === 'Wolf3D_Outfit_Top') {
-              mat.color.set(palette.topColor);
-              mat.roughness = palette.topRoughness;
-              mat.metalness = palette.topMetalness;
-            } else if (name === 'Wolf3D_Outfit_Bottom' || matName === 'Wolf3D_Outfit_Bottom') {
-              mat.color.set(palette.bottomColor);
-              mat.roughness = 0.52;
-              mat.metalness = 0.08;
-            } else if (
-              name === 'Wolf3D_Outfit_Footwear' ||
-              matName === 'Wolf3D_Outfit_Footwear'
-            ) {
-              mat.color.set(palette.footwearColor);
-              mat.roughness = 0.36;
-              mat.metalness = 0.15;
-            } else if (
-              name === 'Wolf3D_Head' ||
-              name === 'Wolf3D_Body' ||
-              matName === 'Wolf3D_Skin' ||
-              matName === 'Wolf3D_Body'
-            ) {
-              mat.color.set(palette.skinTint);
-            } else if (
-              name === 'Wolf3D_Headwear' ||
-              name === 'Mesh' ||
-              matName === 'Wolf3D_Headwear'
-            ) {
-              if (!isMichelle) {
-                mesh.visible = palette.headwearOn;
-                mat.color.set(palette.headwearColor);
-                mat.roughness = 0.42;
-              }
-            } else if (name === 'Wolf3D_Beard' || matName === 'Wolf3D_Beard') {
-              mesh.visible = palette.beardOn;
-              mat.color.set(palette.beardColor);
-            } else if (isMichelle) {
-              // Preserve Michelle's 4 PBR textures with subtle warm/cool couturier tinting
-              mat.color.set('#ffffff').lerp(new THREE.Color(palette.topColor), 0.14);
-              mat.roughness = 0.48;
-            }
-
-            mesh.material = mat;
-          }
-        }
+        mesh.material = mat;
       });
-
-      // Capture rest-pose quaternions (relax Michelle's T-pose arms down to her sides first)
-      const armRelaxRad = isMichelle ? 1.08 : 0;
-      const strideRig: HumanoidStrideRig = {
-        leftUpLeg: captureRestQuat(leftUpLeg),
-        rightUpLeg: captureRestQuat(rightUpLeg),
-        leftLeg: captureRestQuat(leftLeg),
-        rightLeg: captureRestQuat(rightLeg),
-        leftArm: captureRestQuat(leftArm, armRelaxRad),
-        rightArm: captureRestQuat(rightArm, armRelaxRad),
-        spine: captureRestQuat(spine),
-      };
-
-      return { clone, strideRig };
+      clone.updateWorldMatrix(true, true);
+      const bounds = new THREE.Box3().setFromObject(clone);
+      const scale = height / Math.max(0.2, bounds.max.y - bounds.min.y);
+      clone.scale.multiplyScalar(scale);
+      clone.position.y -= bounds.min.y * scale;
+      const wrapper = new THREE.Group();
+      wrapper.add(clone);
+      const rig = createHumanoidRig(wrapper, clone, gltf.animations);
+      return { wrapper, rig };
     };
 
     // 1. Populate 16 Smooth-Shaded High-Res PBR Citizens (~70% ReadyPlayerMe, ~30% Michelle)
     pedestrians.forEach((ped, idx) => {
-      const isMichelle = ped.modelUrl.includes('michelle');
       loadCachedGLTF(ped.modelUrl)
         .then((gltf) => {
           if (disposed) return;
@@ -1214,9 +1094,9 @@ export function LivingWorldNPCs() {
             mount.remove(mount.children[0]);
           }
           const palette = getHumanPalette(ped.paletteIndex, false);
-          const { clone, strideRig } = prepareSmoothPbrHumanClone(gltf, isMichelle, palette);
-          mount.add(clone);
-          citizenStrideRigs.current[idx] = strideRig;
+          const { wrapper, rig } = prepareHuman(gltf, palette, 1.61 + (idx * 37 % 23) * 0.01);
+          mount.add(wrapper);
+          citizenStrideRigs.current[idx] = rig;
         })
         .catch(() => {});
     });
@@ -1242,9 +1122,7 @@ export function LivingWorldNPCs() {
         bot.y = getTerrainHeight(bot.x, bot.z);
       }
 
-      // ~75% ReadyPlayerMe (6 bots) and ~25% Michelle (2 bots)
-      const botHumanUrl = idx % 4 === 2 ? '/models/michelle.glb' : '/models/readyplayer_me.glb';
-      const isMichelle = botHumanUrl.includes('michelle');
+      const botHumanUrl = '/models/human_' + combatLooks[idx % combatLooks.length] + '.glb';
 
       loadCachedGLTF(botHumanUrl)
         .then((gltf) => {
@@ -1255,9 +1133,9 @@ export function LivingWorldNPCs() {
             mount.remove(mount.children[0]);
           }
           const palette = getHumanPalette(16 + idx, true);
-          const { clone, strideRig } = prepareSmoothPbrHumanClone(gltf, isMichelle, palette);
-          mount.add(clone);
-          botStrideRigs.current[idx] = strideRig;
+          const { wrapper, rig } = prepareHuman(gltf, palette, 1.7 + (idx * 11 % 18) * 0.01);
+          mount.add(wrapper);
+          botStrideRigs.current[idx] = rig;
 
           // Load & mount the bot's 3D GLB Weapon (gun_ar, gun_shotgun, gun_sniper, gun_minigun, gun_rpg)
           loadCachedGLTF(bot.gunUrl)
@@ -1390,11 +1268,66 @@ export function LivingWorldNPCs() {
     const threatZ = simState.mode === 'CAR' ? simState.carPos.z : simState.playerPos.z;
     const camPos = state.camera.position;
 
+    const sweep = simState.carSweep;
+    const canStrike = simState.mode === 'CAR' && !simState.startMenuOpen;
+    const applyBump = (severity: number) => {
+      simState.carSpeed *= 0.95 - 0.16 * severity;
+      simState.cameraShake = Math.max(simState.cameraShake, 0.12 + severity * 0.23);
+    };
+
     // ------------------------------------------------------------------------
     // 1. Update 16 Smooth-Shaded PBR Human Citizens (Skeletal Stride + Sidewalks/Crosswalks/Dodge)
     // ------------------------------------------------------------------------
     for (let i = 0; i < PED_COUNT; i++) {
       const p = pedestrians[i];
+      const crossingClosed = (simState.startMenuOpen || simState.gameMode === 'GRAND_PRIX') && p.kind === 'CROSSWALK';
+      if (citizenGroupRefs.current[i]) citizenGroupRefs.current[i]!.visible = !crossingClosed;
+      if (crossingClosed) continue;
+      const model = citizenModelMountRefs.current[i];
+      const group = citizenGroupRefs.current[i];
+      const contact = canStrike && !p.impact &&
+        pedestrianContact(sweep, p.x, getTerrainHeight(p.x, p.z), p.z);
+      if (contact) {
+        const remaining = Math.max(0, (p.resilience ?? 100) - contact.damage);
+        p.resilience = remaining;
+        p.impact = {
+          elapsed: 0, duration: remaining === 0 ? 6.5 : 2 + contact.severity * 2,
+          vx: contact.travelX, vz: contact.travelZ, side: contact.side, strength: contact.severity,
+        };
+        p.yaw = Math.atan2(contact.travelX, contact.travelZ);
+        applyBump(contact.severity);
+      }
+      if (p.impact) {
+        const fall = p.impact;
+        fall.elapsed = Math.min(fall.duration, fall.elapsed + dt);
+        p.x += fall.vx * dt;
+        p.z += fall.vz * dt;
+        const drag = Math.exp(-dt * 3.4);
+        fall.vx *= drag;
+        fall.vz *= drag;
+        const knockedDown = THREE.MathUtils.smoothstep(fall.elapsed, 0.03, 0.38);
+        const recovery = 1 - THREE.MathUtils.smoothstep(fall.elapsed, fall.duration - 0.82, fall.duration);
+        if (group) {
+          group.position.set(p.x, getTerrainHeight(p.x, p.z), p.z);
+          group.rotation.y = p.yaw;
+        }
+        if (model) {
+          model.position.y = knockedDown * recovery * 0.19;
+          model.rotation.set(-knockedDown * recovery * (0.65 + 0.76 * fall.strength), 0, knockedDown * recovery * 0.85 * fall.side);
+        }
+        const rig = citizenStrideRigs.current[i];
+        if (rig) animateHumanoid(rig, { dt, time: elapsed, phase: p.phase, speed: 0,
+          airborne: fall.elapsed < 0.27 ? 'jump' : undefined, fallSpeed: -4, landing: knockedDown * recovery * 0.65 });
+        if (fall.elapsed >= fall.duration && Math.hypot(threatX - p.x, threatZ - p.z) > 3.5) {
+          p.resilience = 100;
+          p.impact = undefined;
+          if (model) {
+            model.position.y = 0;
+            model.rotation.set(0, 0, 0);
+          }
+        }
+        continue;
+      }
       const speedBoost = 1 + p.dodgeAlert * 0.85;
       p.phase += dt * p.speed * speedBoost * 4.4;
 
@@ -1468,7 +1401,8 @@ export function LivingWorldNPCs() {
       const citizenGroup = citizenGroupRefs.current[i];
       if (citizenGroup) {
         citizenGroup.position.set(p.x, groundY, p.z);
-        citizenGroup.rotation.set(0, p.yaw, 0);
+        const yaw = citizenGroup.rotation.y;
+        citizenGroup.rotation.y += Math.atan2(Math.sin(p.yaw - yaw), Math.cos(p.yaw - yaw)) * (1 - Math.exp(-10 * dt));
       }
 
       // Smooth humanoid skeletal stride animation when within 85m of camera
@@ -1476,7 +1410,10 @@ export function LivingWorldNPCs() {
       const dxCamCit = camPos.x - p.x;
       const dzCamCit = camPos.z - p.z;
       if (rig && dxCamCit * dxCamCit + dzCamCit * dzCamCit < 85 * 85) {
-        updateHumanoidStride(rig, p.phase, 1.0 + p.dodgeAlert * 0.35);
+        animateHumanoid(rig, {
+          dt, time: elapsed + i * 0.57, phase: p.phase, speed: p.speed * speedBoost,
+          lookYaw: p.dodgeAlert * 0.45, lateral: p.dodgeAlert * 0.35,
+        });
       }
     }
 
@@ -1486,6 +1423,10 @@ export function LivingWorldNPCs() {
     for (let i = 0; i < simState.botTargets.length; i++) {
       const bot = simState.botTargets[i];
       const botGroup = botGroupRefs.current[i];
+      if (!simState.brActive || simState.gameMode !== 'BATTLE_ROYALE') {
+        if (botGroup) botGroup.visible = false;
+        continue;
+      }
       const parachuteGroup = botParachuteRefs.current[i];
       const hudBillboard = botHudBillboardRefs.current[i];
       const hpBar = botHpBarRefs.current[i];
@@ -1514,6 +1455,28 @@ export function LivingWorldNPCs() {
 
       if (botGroup) botGroup.visible = true;
 
+      if (canStrike && !bot.parachuting && bot.hitFlash < 0.03) {
+        const contact = pedestrianContact(sweep, bot.x, bot.y, bot.z);
+        if (contact) {
+          const absorbed = Math.min(bot.shield, contact.damage);
+          bot.shield -= absorbed;
+          bot.hp = Math.max(0, bot.hp - (contact.damage - absorbed));
+          bot.hitFlash = 0.48;
+          bot.x += contact.travelX * 0.19;
+          bot.z += contact.travelZ * 0.19;
+          applyBump(contact.severity);
+          if (bot.hp <= 0) {
+            bot.alive = false;
+            bot.respawnTimer = 9;
+            simState.eliminations++;
+            simState.aliveCount = Math.max(1, simState.aliveCount - 1);
+            simState.killFeedText = 'VEHICLE ELIMINATION · ' + bot.name;
+            simState.killFeedTimer = 3;
+            if (botGroup) botGroup.visible = false;
+            continue;
+          }
+        }
+      }
       const groundY = getTerrainHeight(bot.x, bot.z);
 
       if (bot.parachuting) {
@@ -1569,7 +1532,8 @@ export function LivingWorldNPCs() {
 
       if (botGroup) {
         botGroup.position.set(bot.x, bot.y, bot.z);
-        botGroup.rotation.set(0, bot.yaw, 0);
+        const yaw = botGroup.rotation.y;
+        botGroup.rotation.y += Math.atan2(Math.sin(bot.yaw - yaw), Math.cos(bot.yaw - yaw)) * (1 - Math.exp(-12 * dt));
       }
 
       if (parachuteGroup) {
@@ -1610,14 +1574,24 @@ export function LivingWorldNPCs() {
       const dzCamBot = camPos.z - bot.z;
       if (botRig && dxCamBot * dxCamBot + dzCamBot * dzCamBot < 85 * 85) {
         const botPhase = elapsed * (bot.parachuting ? 2.5 : 5.8) + i * 1.3;
-        updateHumanoidStride(botRig, botPhase, bot.parachuting ? 0.35 : 0.95);
+        const threatDistance = Math.hypot(threatX - bot.x, threatZ - bot.z);
+        animateHumanoid(botRig, {
+          dt, time: elapsed, phase: botPhase, speed: bot.parachuting ? 0 : threatDistance < 42 ? 1.7 : 2.35,
+          aim: bot.parachuting ? 0 : threatDistance < 42 ? 1 : 0.2,
+          airborne: bot.parachuting ? 'parachute' : undefined,
+          recoil: bot.muzzleFlash > 0 ? bot.muzzleFlash / 0.12 : 0,
+        });
       }
     }
 
     // ------------------------------------------------------------------------
     // 3. Update 12 Real 3D GLB Traffic Vehicles (Proximity Braking + Wheel Rotation + Minimap Sync)
     // ------------------------------------------------------------------------
+    const circuitReserved = simState.startMenuOpen || simState.gameMode === 'GRAND_PRIX';
+    simState.trafficPositions.length = 0;
     for (let i = 0; i < vehicles.length; i++) {
+      if (carRefs.current[i]) carRefs.current[i]!.visible = !circuitReserved;
+      if (circuitReserved) continue;
       const v = vehicles[i];
       const circuitLen = v.circuit.totalLength;
 

@@ -11,7 +11,6 @@ import {
   terrainFragmentShader,
 } from './Shaders';
 import {
-  createSkyscraperPBR,
   createLimestonePBR,
   createNormalMapFromCanvas,
   createBarkPBR,
@@ -19,17 +18,17 @@ import {
   createSidewalkCobblePBR,
   createCrosswalkIntersectionPBR,
   createModernConcreteSteelPBR,
-  createArtDecoLimestonePBR,
-  createBrickResidentialPBR,
-  createRoofGravelHVACPBR,
 } from './Textures';
 import { VegasLandmarks } from './Landmarks';
-import { getTerrainHeight, LANDMARKS } from '../game/worldMath';
+import { COAST_SUN, getTerrainHeight, LANDMARKS, NORTH_BAY_BRIDGE } from '../game/worldMath';
+import { cityPlots } from './City';
+import { DamageableProp } from './WorldSections';
+import { registerWorldSection } from '../game/worldDamage';
 import { simState } from '../game/store';
 
 export { VegasLandmarks };
 
-const SUN_DIR = new THREE.Vector3(0.55, 0.48, -0.68).normalize();
+const SUN_DIR = COAST_SUN;
 
 function getSidewalkCobblePBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
   return { map: createSidewalkCobblePBR() };
@@ -43,17 +42,8 @@ function getModernConcreteSteelPBR(): { map: THREE.CanvasTexture; roughnessMap?:
   return createModernConcreteSteelPBR();
 }
 
-function getArtDecoLimestonePBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
-  return createArtDecoLimestonePBR();
-}
 
-function getBrickResidentialPBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
-  return createBrickResidentialPBR();
-}
 
-function getRoofGravelHVACPBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
-  return { map: createRoofGravelHVACPBR() };
-}
 
 function createStreetSignTexture(label: string): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
@@ -79,182 +69,43 @@ function createStreetSignTexture(label: string): THREE.CanvasTexture {
   return tex;
 }
 
-export interface CityBuildingSpec {
-  x: number;
-  z: number;
-  y: number;
-  w: number;
-  d: number;
-  h: number;
-  halfW: number;
-  halfD: number;
-  style: 0 | 1 | 2 | 3; // 0 = Glass Financial, 1 = Art Deco Limestone, 2 = Urban Brick Mid-Rise, 3 = Cylindrical Modern Glass High-Rise
-}
-
-/**
- * Deterministically generates 48 Metropolis buildings across urban blocks while strictly respecting:
- * - Road Clearance: |x| >= 30 (Grand Central Ave), |z + 120| >= 18 (North Cross Blvd),
- *   |z| >= 20 (Midtown Cross Ave), |z - 80| >= 18 (South Cross Blvd)
- * - Landmark Clearance: >= 28m from all 12 Global Landmarks + Science Sphere [98, -35] + Central Park Fountain [-52, 42]
- * - Waterway & Runway Clearance: clear of Venetian Canal and Airport Runway
- */
-const GENERATED_CITY_BUILDINGS: CityBuildingSpec[] = (() => {
-  const results: CityBuildingSpec[] = [];
-  const protectedPoints: [number, number][] = [
-    ...LANDMARKS.map((lm) => [lm.position[0], lm.position[2]] as [number, number]),
-    [98, -35], // Science Sphere
-    [-52, 42], // Central Park West Fountain Plaza
-  ];
-
-  // Urban block candidate coordinates neatly aligned between avenues
-  const zRows = [-172, -150, -96, -72, -46, 26, 52, 104, 126, 148];
-  const xCols = [-142, -116, -90, -64, -38, 38, 64, 90, 116, 142];
-
-  const candidates: [number, number][] = [];
-  for (const z of zRows) {
-    for (const x of xCols) {
-      candidates.push([x, z]);
-    }
-  }
-  // Additional outer block fill candidates to guarantee 48 buildings
-  const extraZ = [-162, -138, -84, -58, -34, 38, 60, 114, 138];
-  const extraX = [-130, -102, -76, -42, 42, 76, 102, 130];
-  for (const z of extraZ) {
-    for (const x of extraX) {
-      candidates.push([x, z]);
-    }
-  }
-
-  let idx = 0;
-  for (const [cx, cz] of candidates) {
-    if (results.length >= 48) break;
-
-    const jitterX = ((idx * 7) % 5) - 2;
-    const jitterZ = ((idx * 11) % 5) - 2;
-    const x = cx + jitterX;
-    const z = cz + jitterZ;
-    idx++;
-
-    // Strict road clearance
-    if (Math.abs(x) < 34) continue;
-    if (Math.abs(z + 120) < 20) continue;
-    if (Math.abs(z) < 22) continue;
-    if (Math.abs(z - 80) < 20) continue;
-
-    // Exclude Venetian Canal & Airport Runway
-    if (x > 62 && Math.abs(z + 95) < 30) continue;
-    if (x < -38 && z > 122 && z < 185) continue;
-
-    // Terrain elevation check (must sit on dry urban island ground)
-    const y = getTerrainHeight(x, z);
-    if (y < 1.6) continue;
-
-    // Strict 38.5m plaza & sightline clearance from all 12 Global Landmarks + Science Sphere + Central Park Fountain
-    let nearLandmark = false;
-    for (const [lx, lz] of protectedPoints) {
-      if (Math.hypot(x - lx, z - lz) < 38.5) {
-        nearLandmark = true;
-        break;
-      }
-    }
-    if (nearLandmark) continue;
-
-    // Minimum building-to-building spacing
-    let overlapsBuilding = false;
-    for (const b of results) {
-      if (Math.hypot(x - b.x, z - b.z) < 18.5) {
-        overlapsBuilding = true;
-        break;
-      }
-    }
-    if (overlapsBuilding) continue;
-
-    const bIdx = results.length;
-    const style = (bIdx % 4) as 0 | 1 | 2 | 3;
-    const w =
-      style === 0
-        ? 12.5 + (bIdx % 3) * 2.0
-        : style === 1
-          ? 11.5 + (bIdx % 3) * 1.8
-          : style === 2
-            ? 13.0 + (bIdx % 2) * 2.2
-            : 13.5 + (bIdx % 3) * 1.6;
-    const d =
-      style === 3
-        ? w
-        : style === 0
-          ? 12.5 + ((bIdx + 1) % 3) * 2.0
-          : style === 1
-            ? 11.5 + ((bIdx + 1) % 3) * 1.8
-            : 12.0 + ((bIdx + 1) % 2) * 2.0;
-    const h =
-      style === 0
-        ? 30 + ((bIdx * 13) % 34) // Glass Curtain-Wall Financial Skyscrapers (30m..64m)
-        : style === 1
-          ? 22 + ((bIdx * 11) % 24) // Art Deco Limestone & Travertine Civic Towers (22m..46m)
-          : style === 2
-            ? 14 + ((bIdx * 7) % 14) // Urban Red-Brick & Brownstone Mid-Rise Blocks (14m..28m)
-            : 32 + ((bIdx * 15) % 32); // Cylindrical Modern Glass High-Rises (32m..64m)
-
-    results.push({
-      x,
-      z,
-      y,
-      w,
-      d,
-      h,
-      halfW: w * 0.5,
-      halfD: d * 0.5,
-      style,
-    });
-  }
-
-  return results;
-})();
-
-export const CITY_BUILDING_AABBS: { x: number; z: number; halfW: number; halfD: number }[] =
-  GENERATED_CITY_BUILDINGS.map(({ x, z, halfW, halfD }) => ({
-    x,
-    z,
-    halfW,
-    halfD,
-  }));
-
 export const REPAIR_BAY_COORDS: [number, number][] = [
   [14, 48],
   [-14, -68],
   [68, 0],
   [-68, 80],
+  [-178, 166],
 ];
 
 export function SkyDome() {
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
-      uZenith: { value: new THREE.Color('#0284c7') },
-      uHorizon: { value: new THREE.Color('#bae6fd') },
+      uZenith: { value: new THREE.Color('#2679a6') },
+      uHorizon: { value: new THREE.Color('#c7d5d7') },
       uSunColor: { value: new THREE.Color('#fef08a') },
       uSunDir: { value: SUN_DIR.clone() },
     }),
     []
   );
 
-  useFrame((state) => {
+  const palette = useMemo(() => ({
+    neutral: [new THREE.Color('#2679a6'), new THREE.Color('#c7d5d7')],
+    blue: [new THREE.Color('#24698f'), new THREE.Color('#aed1e1')],
+    amber: [new THREE.Color('#9a3412'), new THREE.Color('#fdba74')],
+  }), []);
+  useFrame((state, dt) => {
     uniforms.uTime.value = state.clock.elapsedTime;
-    if (simState.roulette === 'BLACK') {
-      uniforms.uZenith.value.lerp(new THREE.Color('#0369a1'), 0.04);
-      uniforms.uHorizon.value.lerp(new THREE.Color('#7dd3fc'), 0.04);
-    } else if (simState.roulette === 'RED') {
-      uniforms.uZenith.value.lerp(new THREE.Color('#9a3412'), 0.04);
-      uniforms.uHorizon.value.lerp(new THREE.Color('#fdba74'), 0.04);
-    } else {
-      uniforms.uZenith.value.lerp(new THREE.Color('#0284c7'), 0.04);
-      uniforms.uHorizon.value.lerp(new THREE.Color('#bae6fd'), 0.04);
-    }
+    const [zenith, horizon] = simState.roulette === 'RED' ? palette.amber :
+      simState.roulette === 'BLACK' ? palette.blue : palette.neutral;
+    const mix = 1 - Math.exp(-2 * dt);
+    uniforms.uZenith.value.lerp(zenith, mix);
+    uniforms.uHorizon.value.lerp(horizon, mix);
+
   });
 
   return (
-    <mesh scale={[-1, 1, 1]}>
+    <mesh frustumCulled={false} renderOrder={-10}>
       <sphereGeometry args={[2200, 32, 20]} />
       <shaderMaterial
         vertexShader={skyVertexShader}
@@ -272,14 +123,25 @@ export function StylizedOcean() {
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
-      uShallow: { value: new THREE.Color('#06b6d4') },
-      uDeep: { value: new THREE.Color('#0369a1') },
-      uFoam: { value: new THREE.Color('#f8fafc') },
+      uShallow: { value: new THREE.Vector3(0.09, 0.58, 0.56) },
+      uDeep: { value: new THREE.Vector3(0.055, 0.24, 0.34) },
+      uFoam: { value: new THREE.Vector3(0.79, 0.88, 0.85) },
       uSunDir: { value: SUN_DIR.clone() },
       uCameraPos: { value: new THREE.Vector3() },
     }),
     []
   );
+
+  const geometry = useMemo(() => {
+    const mesh = new THREE.PlaneGeometry(2, 2, 220, 220);
+    mesh.rotateX(-Math.PI / 2);
+    const vertices = mesh.attributes.position;
+    // Concentrate vertices around the playable coastline and stretch the outer ocean to the horizon.
+    const spread = (v: number) => Math.sign(v) * (Math.abs(v) * 610 + Math.abs(v) ** 10 * 1760);
+    for (let i = 0; i < vertices.count; i++) vertices.setXYZ(i, spread(vertices.getX(i)), 0, spread(vertices.getZ(i)) - 140);
+    mesh.computeBoundingSphere();
+    return mesh;
+  }, []);
 
   useFrame((state) => {
     uniforms.uTime.value = state.clock.elapsedTime;
@@ -290,13 +152,13 @@ export function StylizedOcean() {
   });
 
   return (
-    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]}>
-      <planeGeometry args={[4600, 4600, 72, 72]} />
+    <mesh ref={meshRef} geometry={geometry}>
       <shaderMaterial
         vertexShader={waterVertexShader}
         fragmentShader={waterFragmentShader}
         uniforms={uniforms}
         transparent
+        depthWrite={false}
       />
     </mesh>
   );
@@ -304,17 +166,18 @@ export function StylizedOcean() {
 
 export function IslandTerrain() {
   const uniforms = useMemo(
-    () => ({
+    () => THREE.UniformsUtils.merge([THREE.UniformsLib.lights, {
       uSunDir: { value: SUN_DIR.clone() },
       uCameraPos: { value: new THREE.Vector3() },
       uTime: { value: 0 },
-    }),
+    }]),
     []
   );
 
   const geometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(660, 660, 192, 192);
+    const geo = new THREE.PlaneGeometry(674, 970, 196, 280);
     geo.rotateX(-Math.PI / 2);
+    geo.translate(0, 0, -153);
     const pos = geo.attributes.position;
 
     for (let i = 0; i < pos.count; i++) {
@@ -338,6 +201,7 @@ export function IslandTerrain() {
         vertexShader={terrainVertexShader}
         fragmentShader={terrainFragmentShader}
         uniforms={uniforms}
+        lights
       />
     </mesh>
   );
@@ -845,6 +709,7 @@ export function VegasStripDetails() {
       mistRef.current.scale.set(m, 1, m);
     }
     if (checkpointGateRef.current) {
+      checkpointGateRef.current.visible = simState.gameMode === 'GRAND_PRIX' && !simState.startMenuOpen;
       const cp = simState.checkpoints[simState.activeCheckpoint] ?? simState.checkpoints[0];
       if (cp) {
         const gy = getTerrainHeight(cp.position[0], cp.position[2]);
@@ -860,15 +725,19 @@ export function VegasStripDetails() {
       const s = 0.96 + 0.08 * Math.sin(t * 5.0);
       gatePulseRef.current.scale.set(s, 1, s);
     }
+    const showCombat = simState.brActive && simState.gameMode === 'BATTLE_ROYALE';
     const sr = simState.stormRadius ?? 235;
     if (stormWallRef.current) {
+      stormWallRef.current.visible = showCombat;
       stormWallRef.current.scale.set(sr, 1, sr);
       stormWallRef.current.rotation.y = t * 0.06;
     }
     if (stormRingRef.current) {
+      stormRingRef.current.visible = showCombat;
       stormRingRef.current.scale.set(sr, sr, 1);
     }
     if (lootCratesGroupRef.current) {
+      lootCratesGroupRef.current.visible = showCombat;
       lootCratesGroupRef.current.children.forEach((crateGroup, idx) => {
         const node = simState.lootCrates[idx];
         if (!node) return;
@@ -1008,11 +877,11 @@ export function VegasStripDetails() {
 
       {/* 1. Grand Central Avenue (x = 0, width 32m, length 390m from z = -205 to z = +185) */}
       <mesh
-        position={[0, groundY + 0.05, -10]}
+        position={[0, groundY + 0.05, (185 + NORTH_BAY_BRIDGE.approach) / 2]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
       >
-        <planeGeometry args={[32, 390]} />
+        <planeGeometry args={[NORTH_BAY_BRIDGE.halfWidth * 2, 185 - NORTH_BAY_BRIDGE.approach]} />
         <meshStandardMaterial map={mainAsphaltTex} roughness={0.82} metalness={0.08} />
       </mesh>
 
@@ -1184,15 +1053,13 @@ export function VegasStripDetails() {
                     <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.24} />
                   </mesh>
                   {/* Illuminated Metropolitan Blue Street-Name Sign Plate */}
-                  <mesh position={[armDir * 5.2, 7.55, 0]}>
-                    <boxGeometry args={[3.8, 0.72, 0.14]} />
-                    <meshStandardMaterial
-                      map={inter.tex}
-                      emissive="#1e3a8a"
-                      emissiveIntensity={0.45}
-                      roughness={0.25}
-                    />
-                  </mesh>
+                  <DamageableProp id={'street-sign-' + inter.z + '-' + side} label="Street sign" material="metal" durability={60}
+                    position={[armDir * 5.2, 7.55, 0]} center={[0, 0, 0]} size={[3.8, 0.72, 0.16]}>
+                    <mesh>
+                      <boxGeometry args={[3.8, 0.72, 0.14]} />
+                      <meshStandardMaterial map={inter.tex} emissive="#1e3a8a" emissiveIntensity={0.45} roughness={0.25} />
+                    </mesh>
+                  </DamageableProp>
                   {/* Twin 3-Aspect Red/Amber/Green LED Traffic Signal Heads */}
                   {[4.2, 10.6].map((offset, hIdx) => (
                     <group key={`sig-${hIdx}`} position={[armDir * offset, 6.72, 0]}>
@@ -1226,18 +1093,17 @@ export function VegasStripDetails() {
 
       {/* Real 3D GLB Botanical Palm Trees at Outer Coastal Resort Approaches */}
       {stripPalmClones.map((item) => (
-        <primitive
-          key={item.key}
-          object={item.obj}
-          position={item.pos}
-          rotation={[0, item.rotY, 0]}
-          scale={item.scale}
-        />
+        <DamageableProp key={item.key} id={item.key} label="Palm tree" material="wood"
+          position={item.pos} center={[0, 3.4, 0]} size={[0.72, 6.8, 0.72]}>
+          <primitive object={item.obj} rotation={[0, item.rotY, 0]} scale={item.scale} />
+        </DamageableProp>
       ))}
 
       {/* Sculpted Urban Deciduous Street Trees in Stone Sidewalk Planters along Grand Central Ave & Midtown Cross Ave */}
       {urbanStreetTrees.map((tree, idx) => (
-        <group key={tree.key} position={tree.pos} rotation={[0, tree.rotY, 0]} scale={tree.scale}>
+        <DamageableProp key={tree.key} id={tree.key} label="Street tree" material="wood"
+          position={tree.pos} center={[0, 2, 0]} size={[0.66, 4, 0.66]}>
+          <group rotation={[0, tree.rotY, 0]} scale={tree.scale}>
           {/* Carved Limestone Sidewalk Tree Planter Box & Soil Bed */}
           <mesh position={[0, 0.22, 0]} castShadow receiveShadow>
             <boxGeometry args={[2.1, 0.44, 2.1]} />
@@ -1270,7 +1136,8 @@ export function VegasStripDetails() {
             <dodecahedronGeometry args={[1.48, 2]} />
             <meshStandardMaterial color="#14532d" roughness={0.82} />
           </mesh>
-        </group>
+          </group>
+        </DamageableProp>
       ))}
 
       {/* 6 Sleek Glass & Dark-Steel City Bus Shelters / Metro Kiosks along Grand Central Avenue (x = ±20.5, z = -85, -25, +35) */}
@@ -1279,11 +1146,10 @@ export function VegasStripDetails() {
           const by = getTerrainHeight(bx, bz);
           const faceSign = bx < 0 ? 1 : -1;
           return (
-            <group
-              key={`bus-shelter-${bx}-${bz}`}
-              position={[bx, by + 0.14, bz]}
-              rotation={[0, bx < 0 ? 0 : Math.PI, 0]}
-            >
+            <DamageableProp key={`bus-shelter-${bx}-${bz}`} id={`bus-shelter-${bx}-${bz}`}
+              label="Bus shelter" material="glass" durability={115}
+              position={[bx, by + 0.14, bz]} center={[0, 1.72, 0]} size={[2.15, 3.43, 5.55]}>
+              <group rotation={[0, bx < 0 ? 0 : Math.PI, 0]}>
               {/* Dark-Steel Architectural Shelter Frame Columns */}
               {[-2.4, 2.4].map((dz) => (
                 <mesh key={`post-${dz}`} position={[-0.85, 1.65, dz]} castShadow>
@@ -1327,25 +1193,29 @@ export function VegasStripDetails() {
                 <boxGeometry args={[1.12, 1.95, 0.26]} />
                 <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={1.25} roughness={0.18} />
               </mesh>
-            </group>
+              </group>
+            </DamageableProp>
           );
         })
       )}
 
       {/* Real 3D GLB Cobra-Head Street Lamps along Grand Central Avenue Sidewalks */}
       {streetLampClones.map((lamp) => (
-        <group key={lamp.key} position={lamp.pos} rotation={[0, lamp.rotY, 0]}>
+        <DamageableProp key={lamp.key} id={lamp.key} label="Streetlight" material="metal"
+          position={lamp.pos} center={[0, 3.9, 0]} size={[0.47, 7.8, 0.47]}>
+          <group rotation={[0, lamp.rotY, 0]}>
           <primitive object={lamp.obj} scale={1.08} />
           <mesh position={[0, 8.35, 1.35]}>
             <boxGeometry args={[0.38, 0.1, 0.55]} />
             <meshStandardMaterial color="#fef9c3" emissive="#fef08a" emissiveIntensity={1.8} />
           </mesh>
-        </group>
+          </group>
+        </DamageableProp>
       ))}
 
-      {/* Active 3D Grand Prix Checkpoint Gate (Pilasters widened to x = ±17.2 on sidewalks so roadway is 100% clear) */}
+      {/* Active 3D Grand Prix Checkpoint Gate (Single racing lane) */}
       <group ref={checkpointGateRef} position={[0, getTerrainHeight(0, 52), 52]}>
-        {[-17.2, 17.2].map((px) => (
+        {[-5.8, 5.8].map((px) => (
           <group key={px} position={[px, 0, 0]}>
             <mesh position={[0, 0.45, 0]} castShadow>
               <cylinderGeometry args={[0.85, 1.05, 0.9, 12]} />
@@ -1402,10 +1272,11 @@ export function VegasStripDetails() {
         </mesh>
       </group>
 
-      {/* 4 Roadside Pit-Stop / Vehicle Repair Bays at REPAIR_BAY_COORDS */}
+      {/* Roadside and airport service bays */}
       <group ref={repairBaysRef}>
         {REPAIR_BAY_COORDS.map(([rx, rz], bIdx) => {
           const ry = getTerrainHeight(rx, rz);
+          const isAirfield = rx < -150 && rz > 135;
           // Align E-W cross-street bays (|rx| > 30) along X axis, N-S avenue bays along Z axis
           const rotY = Math.abs(rx) > 30 ? Math.PI / 2 : 0;
           return (
@@ -1436,65 +1307,78 @@ export function VegasStripDetails() {
                 />
               </mesh>
 
-              {/* Two Slim Dark-Steel Side Pylons & Street Bollards (x = ±4.2, outside lane) */}
-              {[-4.2, 4.2].map((px) => (
-                <group key={`pylon-${px}`} position={[px, 0, 0]}>
-                  {/* Concrete & Steel Plinth */}
-                  <mesh position={[0, 0.28, 0]} castShadow receiveShadow>
-                    <boxGeometry args={[0.72, 0.56, 0.92]} />
-                    <meshStandardMaterial color="#1e293b" metalness={0.72} roughness={0.32} />
-                  </mesh>
-                  {/* Slim Dark-Steel Upright Pylon */}
-                  <mesh position={[0, 2.25, 0]} castShadow>
-                    <boxGeometry args={[0.34, 4.3, 0.42]} />
-                    <meshStandardMaterial color="#0f172a" metalness={0.84} roughness={0.22} />
-                  </mesh>
-                  {/* Vertical Emerald Accent Strip */}
-                  <mesh position={[px > 0 ? -0.19 : 0.19, 2.25, 0]}>
-                    <boxGeometry args={[0.06, 3.6, 0.16]} />
-                    <meshStandardMaterial
-                      color="#34d399"
-                      emissive="#10b981"
-                      emissiveIntensity={2.0}
-                    />
-                  </mesh>
-                  {/* Protective Roadside Steel Bollards flanking each pylon */}
-                  {[-1.5, 1.5].map((bz) => (
-                    <group key={`bollard-${bz}`} position={[0, 0, bz]}>
-                      <mesh position={[0, 0.48, 0]} castShadow>
-                        <cylinderGeometry args={[0.11, 0.13, 0.96, 10]} />
-                        <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.28} />
+              {isAirfield ? (
+                <>
+                  {[-5.3, 5.3].flatMap((x) => [-5.3, 5.3].map((z) => (
+                    <mesh key={x + '/' + z} position={[x, 0.11, z]}>
+                      <cylinderGeometry args={[0.18, 0.31, 0.23, 10]} />
+                      <meshStandardMaterial color="#bbf7d0" emissive="#34d399" emissiveIntensity={1.7} />
+                    </mesh>
+                  )))}
+                </>
+              ) : (
+                <>
+                  {/* Two Slim Dark-Steel Side Pylons & Street Bollards (x = ±4.2, outside lane) */}
+                  {[-4.2, 4.2].map((px) => (
+                    <group key={`pylon-${px}`} position={[px, 0, 0]}>
+                      {/* Concrete & Steel Plinth */}
+                      <mesh position={[0, 0.28, 0]} castShadow receiveShadow>
+                        <boxGeometry args={[0.72, 0.56, 0.92]} />
+                        <meshStandardMaterial color="#1e293b" metalness={0.72} roughness={0.32} />
                       </mesh>
-                      <mesh position={[0, 0.78, 0]}>
-                        <cylinderGeometry args={[0.125, 0.125, 0.14, 10]} />
+                      {/* Slim Dark-Steel Upright Pylon */}
+                      <mesh position={[0, 2.25, 0]} castShadow>
+                        <boxGeometry args={[0.34, 4.3, 0.42]} />
+                        <meshStandardMaterial color="#0f172a" metalness={0.84} roughness={0.22} />
+                      </mesh>
+                      {/* Vertical Emerald Accent Strip */}
+                      <mesh position={[px > 0 ? -0.19 : 0.19, 2.25, 0]}>
+                        <boxGeometry args={[0.06, 3.6, 0.16]} />
                         <meshStandardMaterial
                           color="#34d399"
                           emissive="#10b981"
-                          emissiveIntensity={1.6}
+                          emissiveIntensity={2.0}
                         />
                       </mesh>
+                      {/* Protective Roadside Steel Bollards flanking each pylon */}
+                      {[-1.5, 1.5].map((bz) => (
+                        <group key={`bollard-${bz}`} position={[0, 0, bz]}>
+                          <mesh position={[0, 0.48, 0]} castShadow>
+                            <cylinderGeometry args={[0.11, 0.13, 0.96, 10]} />
+                            <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.28} />
+                          </mesh>
+                          <mesh position={[0, 0.78, 0]}>
+                            <cylinderGeometry args={[0.125, 0.125, 0.14, 10]} />
+                            <meshStandardMaterial
+                              color="#34d399"
+                              emissive="#10b981"
+                              emissiveIntensity={1.6}
+                            />
+                          </mesh>
+                        </group>
+                      ))}
                     </group>
                   ))}
-                </group>
-              ))}
 
-              {/* Overhead Dark-Steel Gantry Crossbar & Illuminated Emerald Service Light Bar (y = 4.2m) */}
-              <mesh position={[0, 4.42, 0]} castShadow>
-                <boxGeometry args={[8.9, 0.32, 0.48]} />
-                <meshStandardMaterial color="#0f172a" metalness={0.85} roughness={0.2} />
-              </mesh>
-              <mesh position={[0, 4.2, 0]}>
-                <boxGeometry args={[8.1, 0.16, 0.36]} />
-                <meshStandardMaterial
-                  color="#34d399"
-                  emissive="#34d399"
-                  emissiveIntensity={2.4}
-                  roughness={0.18}
-                />
-              </mesh>
+                  {/* Overhead Dark-Steel Gantry Crossbar & Illuminated Emerald Service Light Bar (y = 4.2m) */}
+                  <mesh position={[0, 4.42, 0]} castShadow>
+                    <boxGeometry args={[8.9, 0.32, 0.48]} />
+                    <meshStandardMaterial color="#0f172a" metalness={0.85} roughness={0.2} />
+                  </mesh>
+                  <mesh position={[0, 4.2, 0]}>
+                    <boxGeometry args={[8.1, 0.16, 0.36]} />
+                    <meshStandardMaterial
+                      color="#34d399"
+                      emissive="#34d399"
+                      emissiveIntensity={2.4}
+                      roughness={0.18}
+                    />
+                  </mesh>
 
+                </>
+              )}
               {/* Rotating Floating Emerald Cross / Repair Beacon */}
-              <group name="repair-beacon" position={[0, 5.45, 0]}>
+              <group name="repair-beacon" position={isAirfield ? [0, 2.25, -6.6] : [0, 5.45, 0]}>
                 <mesh>
                   <boxGeometry args={[1.35, 0.34, 0.34]} />
                   <meshStandardMaterial
@@ -1684,30 +1568,7 @@ export function InstancedFoliage() {
     useRef<THREE.InstancedMesh>(null),
   ];
 
-  // 4 Distinct Textured Architectural Style InstancedMesh Groups (Main Shafts + Setbacks + Cylindrical High-Rises)
-  const glassTowerRef = useRef<THREE.InstancedMesh>(null);
-  const glassSetbackRef = useRef<THREE.InstancedMesh>(null);
-  const decoTowerRef = useRef<THREE.InstancedMesh>(null);
-  const decoSetbackRef = useRef<THREE.InstancedMesh>(null);
-  const brickTowerRef = useRef<THREE.InstancedMesh>(null);
-  const brickSetbackRef = useRef<THREE.InstancedMesh>(null);
-  const cylinderTowerRef = useRef<THREE.InstancedMesh>(null);
-  const cylinderCrownRef = useRef<THREE.InstancedMesh>(null);
-
-  // 3D Architectural Relief Details: Podium Bases, Vertical Pilaster Columns, Cornice Ledges & Rooftop Crowns
-  const podiumRef = useRef<THREE.InstancedMesh>(null);
-  const pilasterRef = useRef<THREE.InstancedMesh>(null);
-  const ledgeRef = useRef<THREE.InstancedMesh>(null);
-  const crownRef = useRef<THREE.InstancedMesh>(null);
-  const spireRef = useRef<THREE.InstancedMesh>(null);
-  const helipadRef = useRef<THREE.InstancedMesh>(null);
   const boulderRef = useRef<THREE.InstancedMesh>(null);
-
-  const { map: glassTex, roughnessMap: glassRough } = useMemo(() => createSkyscraperPBR(), []);
-  const { map: decoTex, roughnessMap: decoRough } = useMemo(() => getArtDecoLimestonePBR(), []);
-  const { map: brickTex, roughnessMap: brickRough } = useMemo(() => getBrickResidentialPBR(), []);
-  const { map: steelConcreteTex, roughnessMap: steelConcreteRough } = useMemo(() => getModernConcreteSteelPBR(), []);
-  const { map: roofGravelTex, roughnessMap: roofGravelRough } = useMemo(() => getRoofGravelHVACPBR(), []);
   const { map: barkMap, normalMap: barkNormal } = useMemo(() => createBarkPBR(), []);
 
   // Organic fractured coastal boulder geometry
@@ -1744,33 +1605,7 @@ export function InstancedFoliage() {
     return geo;
   }, []);
 
-  const {
-    palmTransforms,
-    glassShaftMats,
-    glassShaftColors,
-    glassSetbackMats,
-    decoShaftMats,
-    decoShaftColors,
-    decoSetbackMats,
-    brickShaftMats,
-    brickShaftColors,
-    brickSetbackMats,
-    cylinderShaftMats,
-    cylinderShaftColors,
-    cylinderCrownMats,
-    podiumTransforms,
-    podiumColors,
-    pilasterTransforms,
-    pilasterColors,
-    ledgeTransforms,
-    ledgeColors,
-    crownTransforms,
-    crownColors,
-    spireTransforms,
-    helipadTransforms,
-    boulderTransforms,
-    boulderColors,
-  } = useMemo(() => {
+  const { palmTransforms, boulderTransforms, boulderColors } = useMemo(() => {
     const palms: THREE.Matrix4[] = [];
     const dummy = new THREE.Object3D();
 
@@ -1783,7 +1618,7 @@ export function InstancedFoliage() {
       const onCrossRoad = Math.abs(z + 120) < 18 || Math.abs(z) < 20 || Math.abs(z - 80) < 18;
       // Strictly filter out any palm within 38m of ANY landmark in LANDMARKS or inside city buildings
       const nearLandmark = LANDMARKS.some((lm) => Math.hypot(x - lm.position[0], z - lm.position[2]) < 38);
-      const nearBuilding = GENERATED_CITY_BUILDINGS.some((b) => Math.hypot(x - b.x, z - b.z) < 15.5);
+      const nearBuilding = cityPlots.some((b) => Math.hypot(x - b.x, z - b.z) < 14);
       if (
         y > 0.7 &&
         y < 8.5 &&
@@ -1834,261 +1669,12 @@ export function InstancedFoliage() {
       }
     }
 
-    const gShafts: THREE.Matrix4[] = [];
-    const gColors: THREE.Color[] = [];
-    const gSetbacks: THREE.Matrix4[] = [];
-
-    const dShafts: THREE.Matrix4[] = [];
-    const dColors: THREE.Color[] = [];
-    const dSetbacks: THREE.Matrix4[] = [];
-
-    const brShafts: THREE.Matrix4[] = [];
-    const brColors: THREE.Color[] = [];
-    const brSetbacks: THREE.Matrix4[] = [];
-
-    const cylShafts: THREE.Matrix4[] = [];
-    const cylColors: THREE.Color[] = [];
-    const cylCrowns: THREE.Matrix4[] = [];
-
-    const podMats: THREE.Matrix4[] = [];
-    const podColors: THREE.Color[] = [];
-    const pilMats: THREE.Matrix4[] = [];
-    const pilColors: THREE.Color[] = [];
-    const ledMats: THREE.Matrix4[] = [];
-    const ledColors: THREE.Color[] = [];
-
-    const cMats: THREE.Matrix4[] = [];
-    const cTints: THREE.Color[] = [];
-    const spMats: THREE.Matrix4[] = [];
-    const hpMats: THREE.Matrix4[] = [];
-
-    const glassPalette = [
-      new THREE.Color('#94a3b8'), // sapphire-slate glass
-      new THREE.Color('#cbd5e1'), // silver architectural glass
-      new THREE.Color('#7dd3fc'), // sky-reflective curtain wall
-      new THREE.Color('#e2e8f0'), // titanium mirror glass
-    ];
-    const decoPalette = [
-      new THREE.Color('#f5f0e6'), // warm cream limestone
-      new THREE.Color('#e7dfd3'), // classic carved travertine
-      new THREE.Color('#d6cfc2'), // sandstone civic buff
-    ];
-    const brickPalette = [
-      new THREE.Color('#e2b8a8'), // warm terracotta tint
-      new THREE.Color('#d4a392'), // classic red-brick brownstone
-      new THREE.Color('#c89d8c'), // russet urban masonry
-    ];
-    const podiumPalette = [
-      new THREE.Color('#1e293b'), // dark architectural slate granite
-      new THREE.Color('#334155'), // charcoal steel-bronze
-      new THREE.Color('#27272a'), // dark bronze-basalt
-    ];
-    const pilasterPalette = [
-      new THREE.Color('#334155'), // dark steel mullion fin
-      new THREE.Color('#e2dfd7'), // carved limestone pier
-      new THREE.Color('#475569'), // architectural pewter column
-      new THREE.Color('#cbd5e1'), // brushed aluminum fin
-    ];
-    const ledgePalette = [
-      new THREE.Color('#cbd5e1'), // crisp stone cornice
-      new THREE.Color('#e7dfd3'), // warm travertine belt course
-      new THREE.Color('#94a3b8'), // architectural steel spandrel
-    ];
-    const crownPalette = [
-      new THREE.Color('#cbd5e1'),
-      new THREE.Color('#94a3b8'),
-      new THREE.Color('#d6d3cd'),
-    ];
-
-    GENERATED_CITY_BUILDINGS.forEach((b, i) => {
-      const { x, y, z, w, d, h, style } = b;
-
-      // 1. 3D Ground-Floor Stone & Dark-Bronze Podium Base (width = w + 1.2, depth = d + 1.2, height = 4.2m at y + 2.1m)
-      dummy.position.set(x, y + 2.1, z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(w + 1.2, 4.2, d + 1.2);
-      dummy.updateMatrix();
-      podMats.push(dummy.matrix.clone());
-      podColors.push(podiumPalette[i % podiumPalette.length]);
-
-      // Crisp Stone Cornice Ledge crowning the Ground-Floor Podium Base (at y + 4.32m)
-      dummy.position.set(x, y + 4.32, z);
-      dummy.scale.set(w + 1.65, 0.36, d + 1.65);
-      dummy.updateMatrix();
-      ledMats.push(dummy.matrix.clone());
-      ledColors.push(ledgePalette[i % ledgePalette.length]);
-
-      // Main tower shaft
-      dummy.position.set(x, y + h / 2, z);
-      dummy.rotation.set(0, 0, 0);
-      dummy.scale.set(w, h, d);
-      dummy.updateMatrix();
-      const shaftMat = dummy.matrix.clone();
-
-      // Stepped setback tier
-      const sbH = Math.max(3.5, h * 0.17);
-      dummy.position.set(x, y + h + sbH / 2, z);
-      dummy.scale.set(w * 0.76, sbH, d * 0.76);
-      dummy.updateMatrix();
-      const setbackMat = dummy.matrix.clone();
-
-      if (style === 3) {
-        // Style 4 (every 4th building, i % 4 === 3): 24-sided Cylindrical Glass High-Rise + Overhanging Circular Balcony Rings
-        cylShafts.push(shaftMat);
-        cylColors.push(glassPalette[i % glassPalette.length]);
-
-        // Upper cylindrical setback tier
-        cylCrowns.push(setbackMat);
-
-        // Overhanging circular concrete/steel balcony floor rings along the cylindrical tower
-        const ringStep = 6.2;
-        for (let ry = 10.0; ry <= h - 1.5; ry += ringStep) {
-          dummy.position.set(x, y + ry, z);
-          dummy.scale.set(w * 1.06, 0.38, d * 1.06);
-          dummy.updateMatrix();
-          cylCrowns.push(dummy.matrix.clone());
-        }
-        // Top cylindrical roof crown ring
-        dummy.position.set(x, y + h + 0.2, z);
-        dummy.scale.set(w * 1.08, 0.48, d * 1.08);
-        dummy.updateMatrix();
-        cylCrowns.push(dummy.matrix.clone());
-
-        // 4 Exterior Vertical Structural Mullion Fins on Cylindrical High-Rise
-        const finColor = pilasterPalette[3];
-        for (const [fx, fz] of [
-          [w * 0.51, 0],
-          [-w * 0.51, 0],
-          [0, d * 0.51],
-          [0, -d * 0.51],
-        ]) {
-          dummy.position.set(x + fx, y + h * 0.52, z + fz);
-          dummy.scale.set(0.45, h * 0.96, 0.45);
-          dummy.updateMatrix();
-          pilMats.push(dummy.matrix.clone());
-          pilColors.push(finColor);
-        }
-      } else {
-        if (style === 0) {
-          gShafts.push(shaftMat);
-          gColors.push(glassPalette[i % glassPalette.length]);
-          gSetbacks.push(setbackMat);
-        } else if (style === 1) {
-          dShafts.push(shaftMat);
-          dColors.push(decoPalette[i % decoPalette.length]);
-          dSetbacks.push(setbackMat);
-        } else {
-          brShafts.push(shaftMat);
-          brColors.push(brickPalette[i % brickPalette.length]);
-          brSetbacks.push(setbackMat);
-        }
-
-        // 3D Exterior Vertical Structural Corner Piers & Mid-Facade Pilaster Columns
-        const pCol = pilasterPalette[style];
-        for (const sx of [-1, 1]) {
-          for (const sz of [-1, 1]) {
-            dummy.position.set(x + sx * (w * 0.5 + 0.06), y + h * 0.5, z + sz * (d * 0.5 + 0.06));
-            dummy.scale.set(0.68, h, 0.68);
-            dummy.updateMatrix();
-            pilMats.push(dummy.matrix.clone());
-            pilColors.push(pCol);
-          }
-        }
-        // Mid-facade vertical structural mullions on North/South and East/West faces
-        for (const sx of [-1, 1]) {
-          dummy.position.set(x + sx * (w * 0.5 + 0.08), y + h * 0.5, z);
-          dummy.scale.set(0.42, h, 0.52);
-          dummy.updateMatrix();
-          pilMats.push(dummy.matrix.clone());
-          pilColors.push(pCol);
-        }
-        for (const sz of [-1, 1]) {
-          dummy.position.set(x, y + h * 0.5, z + sz * (d * 0.5 + 0.08));
-          dummy.scale.set(0.52, h, 0.42);
-          dummy.updateMatrix();
-          pilMats.push(dummy.matrix.clone());
-          pilColors.push(pCol);
-        }
-
-        // 3D Horizontal Floor/Cornice Belt Ledges & Roof Parapets
-        const lCol = ledgePalette[style % ledgePalette.length];
-        for (const frac of [0.38, 0.72]) {
-          dummy.position.set(x, y + h * frac, z);
-          dummy.scale.set(w + 0.52, 0.34, d + 0.52);
-          dummy.updateMatrix();
-          ledMats.push(dummy.matrix.clone());
-          ledColors.push(lCol);
-        }
-        // Main shaft roof cornice parapet
-        dummy.position.set(x, y + h + 0.18, z);
-        dummy.scale.set(w + 0.68, 0.42, d + 0.68);
-        dummy.updateMatrix();
-        ledMats.push(dummy.matrix.clone());
-        ledColors.push(lCol);
-
-        // Setback tier roof cornice parapet
-        dummy.position.set(x, y + h + sbH + 0.16, z);
-        dummy.scale.set(w * 0.76 + 0.52, 0.36, d * 0.76 + 0.52);
-        dummy.updateMatrix();
-        ledMats.push(dummy.matrix.clone());
-        ledColors.push(lCol);
-      }
-
-      // Rooftop Gravel & Mechanical Penthouse Enclosure Crown Slab
-      const crH = 2.4 + (i % 3) * 0.7;
-      dummy.position.set(x, y + h + sbH + crH / 2, z);
-      dummy.scale.set(w * 0.52, crH, d * 0.52);
-      dummy.updateMatrix();
-      cMats.push(dummy.matrix.clone());
-      cTints.push(crownPalette[i % crownPalette.length]);
-
-      // Rooftop communication antenna/spire (for skyscrapers/civic/cylindrical towers) or rooftop helipad
-      const roofY = y + h + sbH + crH;
-      if (style === 0 || style === 3 || (style === 1 && i % 2 === 0)) {
-        const spH = 7.5 + (i % 4) * 2.2;
-        dummy.position.set(x, roofY + spH / 2, z);
-        dummy.scale.set(1, spH, 1);
-        dummy.updateMatrix();
-        spMats.push(dummy.matrix.clone());
-      } else {
-        dummy.position.set(x, roofY + 0.25, z);
-        dummy.scale.set(Math.min(w, d) * 0.34, 0.5, Math.min(w, d) * 0.34);
-        dummy.updateMatrix();
-        hpMats.push(dummy.matrix.clone());
-      }
-    });
-
-    return {
-      palmTransforms: palms,
-      glassShaftMats: gShafts,
-      glassShaftColors: gColors,
-      glassSetbackMats: gSetbacks,
-      decoShaftMats: dShafts,
-      decoShaftColors: dColors,
-      decoSetbackMats: dSetbacks,
-      brickShaftMats: brShafts,
-      brickShaftColors: brColors,
-      brickSetbackMats: brSetbacks,
-      cylinderShaftMats: cylShafts,
-      cylinderShaftColors: cylColors,
-      cylinderCrownMats: cylCrowns,
-      podiumTransforms: podMats,
-      podiumColors: podColors,
-      pilasterTransforms: pilMats,
-      pilasterColors: pilColors,
-      ledgeTransforms: ledMats,
-      ledgeColors: ledColors,
-      crownTransforms: cMats,
-      crownColors: cTints,
-      spireTransforms: spMats,
-      helipadTransforms: hpMats,
-      boulderTransforms: boulders,
-      boulderColors: bColors,
-    };
+    return { palmTransforms: palms, boulderTransforms: boulders, boulderColors: bColors };
   }, []);
 
   React.useLayoutEffect(() => {
     const dummy = new THREE.Object3D();
+    const unregister: (() => void)[] = [];
     if (trunkRef.current) {
       const pos = new THREE.Vector3();
       const quat = new THREE.Quaternion();
@@ -2096,6 +1682,7 @@ export function InstancedFoliage() {
       palmTransforms.forEach((mat, i) => {
         trunkRef.current!.setMatrixAt(i, mat);
         mat.decompose(pos, quat, scl);
+        const crowns: THREE.Matrix4[] = [];
         frondRefs.forEach((fRef, fIdx) => {
           if (!fRef.current) return;
           const yaw = (fIdx / 6) * Math.PI * 2 + (i % 3) * 0.5;
@@ -2104,7 +1691,28 @@ export function InstancedFoliage() {
           dummy.scale.set(scl.x, scl.y, scl.z);
           dummy.updateMatrix();
           fRef.current.setMatrixAt(i, dummy.matrix);
+          crowns[fIdx] = dummy.matrix.clone();
         });
+        const pivot = new THREE.Vector3(pos.x, pos.y - 3.5 * scl.y, pos.z);
+        const treePos = pos.clone();
+        unregister.push(registerWorldSection({
+          owner: 'Coastal palm ' + i, label: 'Palm tree', material: 'wood', center: treePos,
+          halfSize: new THREE.Vector3(0.49 * scl.x, 3.5 * scl.y, 0.49 * scl.z), hp: 95, maxHp: 95,
+          onDamage: (integrity, destroyed) => {
+            const tilt = new THREE.Matrix4().makeRotationZ(destroyed ? 1.35 : 0.22 * (1 - integrity));
+            tilt.setPosition(pivot.clone().sub(pivot.clone().applyMatrix4(tilt)));
+            const trunk = trunkRef.current;
+            if (trunk) {
+              trunk.setMatrixAt(i, tilt.clone().multiply(mat));
+              trunk.instanceMatrix.needsUpdate = true;
+            }
+            frondRefs.forEach(({ current }, index) => {
+              if (!current || !crowns[index]) return;
+              current.setMatrixAt(i, tilt.clone().multiply(crowns[index]));
+              current.instanceMatrix.needsUpdate = true;
+            });
+          },
+        }));
       });
       trunkRef.current.instanceMatrix.needsUpdate = true;
       frondRefs.forEach((fRef) => {
@@ -2112,141 +1720,33 @@ export function InstancedFoliage() {
       });
     }
 
-    // Populate Style 1: Glass Curtain-Wall Financial Skyscrapers
-    if (glassTowerRef.current && glassSetbackRef.current) {
-      glassShaftMats.forEach((mat, i) => {
-        glassTowerRef.current!.setMatrixAt(i, mat);
-        glassTowerRef.current!.setColorAt(i, glassShaftColors[i]);
-        glassSetbackRef.current!.setMatrixAt(i, glassSetbackMats[i]);
-      });
-      glassTowerRef.current.instanceMatrix.needsUpdate = true;
-      if (glassTowerRef.current.instanceColor) glassTowerRef.current.instanceColor.needsUpdate = true;
-      glassSetbackRef.current.instanceMatrix.needsUpdate = true;
-    }
-
-    // Populate Style 2: Art Deco Limestone & Travertine Civic Towers
-    if (decoTowerRef.current && decoSetbackRef.current) {
-      decoShaftMats.forEach((mat, i) => {
-        decoTowerRef.current!.setMatrixAt(i, mat);
-        decoTowerRef.current!.setColorAt(i, decoShaftColors[i]);
-        decoSetbackRef.current!.setMatrixAt(i, decoSetbackMats[i]);
-      });
-      decoTowerRef.current.instanceMatrix.needsUpdate = true;
-      if (decoTowerRef.current.instanceColor) decoTowerRef.current.instanceColor.needsUpdate = true;
-      decoSetbackRef.current.instanceMatrix.needsUpdate = true;
-    }
-
-    // Populate Style 3: Urban Red-Brick & Brownstone Mid-Rise Blocks
-    if (brickTowerRef.current && brickSetbackRef.current) {
-      brickShaftMats.forEach((mat, i) => {
-        brickTowerRef.current!.setMatrixAt(i, mat);
-        brickTowerRef.current!.setColorAt(i, brickShaftColors[i]);
-        brickSetbackRef.current!.setMatrixAt(i, brickSetbackMats[i]);
-      });
-      brickTowerRef.current.instanceMatrix.needsUpdate = true;
-      if (brickTowerRef.current.instanceColor) brickTowerRef.current.instanceColor.needsUpdate = true;
-      brickSetbackRef.current.instanceMatrix.needsUpdate = true;
-    }
-
-    // Populate Style 4: 24-Sided Cylindrical Glass High-Rises & Overhanging Balcony Floor Rings
-    if (cylinderTowerRef.current) {
-      cylinderShaftMats.forEach((mat, i) => {
-        cylinderTowerRef.current!.setMatrixAt(i, mat);
-        cylinderTowerRef.current!.setColorAt(i, cylinderShaftColors[i]);
-      });
-      cylinderTowerRef.current.instanceMatrix.needsUpdate = true;
-      if (cylinderTowerRef.current.instanceColor) cylinderTowerRef.current.instanceColor.needsUpdate = true;
-    }
-    if (cylinderCrownRef.current) {
-      cylinderCrownMats.forEach((mat, i) => {
-        cylinderCrownRef.current!.setMatrixAt(i, mat);
-      });
-      cylinderCrownRef.current.instanceMatrix.needsUpdate = true;
-    }
-
-    // Populate 3D Ground-Floor Stone & Dark-Bronze Podium Bases
-    if (podiumRef.current) {
-      podiumTransforms.forEach((mat, i) => {
-        podiumRef.current!.setMatrixAt(i, mat);
-        podiumRef.current!.setColorAt(i, podiumColors[i]);
-      });
-      podiumRef.current.instanceMatrix.needsUpdate = true;
-      if (podiumRef.current.instanceColor) podiumRef.current.instanceColor.needsUpdate = true;
-    }
-
-    // Populate 3D Exterior Vertical Structural Pilaster Columns / Mullion Fins
-    if (pilasterRef.current) {
-      pilasterTransforms.forEach((mat, i) => {
-        pilasterRef.current!.setMatrixAt(i, mat);
-        pilasterRef.current!.setColorAt(i, pilasterColors[i]);
-      });
-      pilasterRef.current.instanceMatrix.needsUpdate = true;
-      if (pilasterRef.current.instanceColor) pilasterRef.current.instanceColor.needsUpdate = true;
-    }
-
-    // Populate 3D Horizontal Cornice & Spandrel Ledges
-    if (ledgeRef.current) {
-      ledgeTransforms.forEach((mat, i) => {
-        ledgeRef.current!.setMatrixAt(i, mat);
-        ledgeRef.current!.setColorAt(i, ledgeColors[i]);
-      });
-      ledgeRef.current.instanceMatrix.needsUpdate = true;
-      if (ledgeRef.current.instanceColor) ledgeRef.current.instanceColor.needsUpdate = true;
-    }
-
-    // Populate Mechanical Penthouse Crowns
-    if (crownRef.current) {
-      crownTransforms.forEach((mat, i) => {
-        crownRef.current!.setMatrixAt(i, mat);
-        crownRef.current!.setColorAt(i, crownColors[i]);
-      });
-      crownRef.current.instanceMatrix.needsUpdate = true;
-      if (crownRef.current.instanceColor) crownRef.current.instanceColor.needsUpdate = true;
-    }
-
-    if (spireRef.current) {
-      spireTransforms.forEach((mat, i) => spireRef.current!.setMatrixAt(i, mat));
-      spireRef.current.instanceMatrix.needsUpdate = true;
-    }
-    if (helipadRef.current) {
-      helipadTransforms.forEach((mat, i) => helipadRef.current!.setMatrixAt(i, mat));
-      helipadRef.current.instanceMatrix.needsUpdate = true;
-    }
     if (boulderRef.current) {
       boulderTransforms.forEach((mat, i) => {
         boulderRef.current!.setMatrixAt(i, mat);
         boulderRef.current!.setColorAt(i, boulderColors[i]);
+        mat.decompose(dummy.position, dummy.quaternion, dummy.scale);
+        unregister.push(registerWorldSection({
+          owner: 'Coastal rock ' + i, label: 'Coastal rock', material: 'masonry',
+          center: dummy.position.clone(), rotation: dummy.quaternion.clone(), halfSize: dummy.scale.clone().multiplyScalar(0.83),
+          hp: 125, maxHp: 125,
+          onDamage: (integrity, destroyed) => {
+            const rocks = boulderRef.current;
+            if (!rocks) return;
+            if (destroyed) {
+              rocks.setMatrixAt(i, mat.clone().scale(new THREE.Vector3(0, 0, 0)));
+              rocks.instanceMatrix.needsUpdate = true;
+            } else {
+              rocks.setColorAt(i, boulderColors[i].clone().multiplyScalar(0.45 + integrity * 0.55));
+              if (rocks.instanceColor) rocks.instanceColor.needsUpdate = true;
+            }
+          },
+        }));
       });
       boulderRef.current.instanceMatrix.needsUpdate = true;
       if (boulderRef.current.instanceColor) boulderRef.current.instanceColor.needsUpdate = true;
     }
-  }, [
-    palmTransforms,
-    glassShaftMats,
-    glassShaftColors,
-    glassSetbackMats,
-    decoShaftMats,
-    decoShaftColors,
-    decoSetbackMats,
-    brickShaftMats,
-    brickShaftColors,
-    brickSetbackMats,
-    cylinderShaftMats,
-    cylinderShaftColors,
-    cylinderCrownMats,
-    podiumTransforms,
-    podiumColors,
-    pilasterTransforms,
-    pilasterColors,
-    ledgeTransforms,
-    ledgeColors,
-    crownTransforms,
-    crownColors,
-    spireTransforms,
-    helipadTransforms,
-    boulderTransforms,
-    boulderColors,
-  ]);
+    return () => unregister.forEach((remove) => remove());
+  }, [palmTransforms, boulderTransforms, boulderColors]);
 
   return (
     <group>
@@ -2270,110 +1770,6 @@ export function InstancedFoliage() {
         <meshStandardMaterial roughness={0.88} metalness={0.04} />
       </instancedMesh>
 
-      {/* Style 1: Glass Curtain-Wall Financial Skyscrapers */}
-      <instancedMesh ref={glassTowerRef} args={[undefined, undefined, glassShaftMats.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshPhysicalMaterial map={glassTex} roughnessMap={glassRough} metalness={0.48} roughness={0.2} clearcoat={0.85} />
-      </instancedMesh>
-      <instancedMesh ref={glassSetbackRef} args={[undefined, undefined, glassSetbackMats.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshPhysicalMaterial map={glassTex} roughnessMap={glassRough} color="#e2e8f0" metalness={0.5} roughness={0.22} clearcoat={0.8} />
-      </instancedMesh>
-
-      {/* Style 2: Art Deco Limestone & Travertine Civic Towers */}
-      <instancedMesh ref={decoTowerRef} args={[undefined, undefined, decoShaftMats.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial map={decoTex} roughnessMap={decoRough} metalness={0.18} roughness={0.58} />
-      </instancedMesh>
-      <instancedMesh ref={decoSetbackRef} args={[undefined, undefined, decoSetbackMats.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial map={decoTex} roughnessMap={decoRough} color="#e7dfd3" metalness={0.2} roughness={0.55} />
-      </instancedMesh>
-
-      {/* Style 3: Urban Red-Brick & Brownstone Mid-Rise City Blocks */}
-      <instancedMesh ref={brickTowerRef} args={[undefined, undefined, brickShaftMats.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial map={brickTex} roughnessMap={brickRough} metalness={0.12} roughness={0.72} />
-      </instancedMesh>
-      <instancedMesh ref={brickSetbackRef} args={[undefined, undefined, brickSetbackMats.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial map={brickTex} roughnessMap={brickRough} color="#d6cfc2" metalness={0.14} roughness={0.68} />
-      </instancedMesh>
-
-      {/* Style 4: 24-Sided Cylindrical Glass High-Rises & Overhanging Balcony Floor Rings */}
-      <instancedMesh ref={cylinderTowerRef} args={[undefined, undefined, cylinderShaftMats.length]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.52, 0.52, 1, 24]} />
-        <meshPhysicalMaterial map={glassTex} roughnessMap={glassRough} metalness={0.52} roughness={0.18} clearcoat={0.9} />
-      </instancedMesh>
-      <instancedMesh ref={cylinderCrownRef} args={[undefined, undefined, cylinderCrownMats.length]} castShadow receiveShadow>
-        <cylinderGeometry args={[0.52, 0.52, 1, 24]} />
-        <meshStandardMaterial
-          map={steelConcreteTex}
-          roughnessMap={steelConcreteRough}
-          color="#cbd5e1"
-          metalness={0.62}
-          roughness={0.28}
-        />
-      </instancedMesh>
-
-      {/* 3D Ground-Floor Stone & Dark-Bronze Podium Base */}
-      <instancedMesh ref={podiumRef} args={[undefined, undefined, podiumTransforms.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial
-          map={steelConcreteTex}
-          roughnessMap={steelConcreteRough}
-          metalness={0.58}
-          roughness={0.34}
-        />
-      </instancedMesh>
-
-      {/* 3D Exterior Vertical Structural Pilaster Columns / Mullion Fins */}
-      <instancedMesh ref={pilasterRef} args={[undefined, undefined, pilasterTransforms.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial
-          map={decoTex}
-          roughnessMap={decoRough}
-          metalness={0.42}
-          roughness={0.4}
-        />
-      </instancedMesh>
-
-      {/* 3D Horizontal Cornice & Floor Belt Ledges */}
-      <instancedMesh ref={ledgeRef} args={[undefined, undefined, ledgeTransforms.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial
-          map={decoTex}
-          roughnessMap={decoRough}
-          metalness={0.35}
-          roughness={0.45}
-        />
-      </instancedMesh>
-
-      {/* Textured Roof Gravel & HVAC Penthouse Crown Slabs */}
-      <instancedMesh ref={crownRef} args={[undefined, undefined, crownTransforms.length]} castShadow receiveShadow>
-        <boxGeometry args={[1, 1, 1]} />
-        <meshStandardMaterial
-          map={roofGravelTex}
-          roughnessMap={roofGravelRough}
-          metalness={0.38}
-          roughness={0.64}
-        />
-      </instancedMesh>
-
-      <instancedMesh ref={spireRef} args={[undefined, undefined, spireTransforms.length]}>
-        <cylinderGeometry args={[0.08, 0.48, 1, 8]} />
-        <meshStandardMaterial color="#f8fafc" metalness={0.85} roughness={0.18} />
-      </instancedMesh>
-      <instancedMesh ref={helipadRef} args={[undefined, undefined, helipadTransforms.length]}>
-        <cylinderGeometry args={[1, 1, 1, 16]} />
-        <meshStandardMaterial
-          map={roofGravelTex}
-          roughnessMap={roofGravelRough}
-          color="#475569"
-          metalness={0.45}
-          roughness={0.55}
-        />
-      </instancedMesh>
     </group>
   );
 }

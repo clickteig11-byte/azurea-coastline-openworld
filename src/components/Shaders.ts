@@ -36,8 +36,8 @@ export const skyFragmentShader = /* glsl */ `
     // Natural photographic daytime sky palette (#1d6fa5 cerulean zenith -> #cfe4f5 pale-azure horizon)
     // Preserves warm roulette tint when uZenith shifts red/amber
     float isDaySky = smoothstep(0.15, 0.45, uZenith.b - uZenith.r);
-    vec3 photoZenith = mix(uZenith, vec3(0.114, 0.435, 0.647), isDaySky * 0.82);
-    vec3 photoHorizon = mix(uHorizon, vec3(0.812, 0.894, 0.961), isDaySky * 0.82);
+    vec3 photoZenith = mix(uZenith, vec3(0.13, 0.34, 0.51), isDaySky * 0.82);
+    vec3 photoHorizon = mix(uHorizon, vec3(0.71, 0.80, 0.82), isDaySky * 0.84);
     vec3 midSky = mix(photoHorizon, photoZenith, 0.46) + vec3(0.015, 0.03, 0.045) * isDaySky;
 
     vec3 col = mix(photoHorizon, midSky, smoothstep(0.0, 0.28, h));
@@ -47,7 +47,7 @@ export const skyFragmentShader = /* glsl */ `
     vec3 sunN = normalize(uSunDir);
     float sunDot = max(dot(dir, sunN), 0.0);
     float horizonGlow = pow(1.0 - h, 4.5);
-    col += vec3(1.0, 0.91, 0.78) * horizonGlow * (0.16 + 0.34 * pow(sunDot, 2.2));
+    col += vec3(1.0, 0.91, 0.78) * horizonGlow * (0.05 + 0.16 * pow(sunDot, 2.2));
     col += mix(uSunColor, vec3(1.0, 0.86, 0.64), 0.45) * pow(sunDot, 5.0) * 0.24;
     col += vec3(1.0, 0.90, 0.72) * pow(sunDot, 32.0) * 0.42;
     col += vec3(1.0, 0.95, 0.84) * pow(sunDot, 160.0) * 0.85;
@@ -70,10 +70,14 @@ export const skyFragmentShader = /* glsl */ `
     // Soft layered cumulus clouds
     if (dir.y > 0.03) {
       vec2 uv = dir.xz / (dir.y + 0.18) * 1.3 + vec2(uTime * 0.008, uTime * 0.004);
-      float c = noise(uv * 2.0) * 0.6 + noise(uv * 4.5) * 0.3 + noise(uv * 9.0) * 0.1;
-      float cloudAlpha = smoothstep(0.56, 0.80, c) * smoothstep(0.03, 0.22, dir.y) * (1.0 - smoothstep(0.62, 0.92, dir.y));
-      vec3 cloudCol = mix(vec3(0.97, 0.98, 0.99), vec3(1.0, 0.96, 0.90), pow(sunDot, 4.0) * 0.55);
-      col = mix(col, cloudCol, cloudAlpha * 0.58);
+      vec2 drift = vec2(noise(uv * 2.2), noise(uv * 1.8 + 8.5)) * 0.58;
+      vec2 cloudUv = uv + drift;
+      float c = noise(cloudUv * 1.7) * 0.53 + noise(cloudUv * 4.1) * 0.25 +
+        noise(cloudUv * 8.8) * 0.15 + noise(cloudUv * 17.1) * 0.07;
+      float cloudAlpha = smoothstep(0.47, 0.64, c) * smoothstep(0.03, 0.16, dir.y) * (1.0 - smoothstep(0.55, 0.9, dir.y));
+      float lightEdge = smoothstep(-0.035, 0.19, c - noise((cloudUv + sunN.xz * 0.082) * 1.7) * 0.84);
+      vec3 cloudCol = mix(vec3(0.59, 0.67, 0.72), vec3(0.99, 0.95, 0.86), lightEdge);
+      col = mix(col, cloudCol, cloudAlpha * 0.91);
     }
 
     gl_FragColor = vec4(col, 1.0);
@@ -87,18 +91,15 @@ export const waterVertexShader = /* glsl */ `
   varying float vCrest;
 
   void main() {
-    vec3 pos = position;
-    float w1 = 0.35 * sin(0.11 * pos.x + 1.25 * uTime);
-    float w2 = 0.20 * sin(0.22 * (0.7 * pos.x + 0.7 * pos.z) + 1.8 * uTime);
-    float w3 = 0.11 * sin(0.41 * (-0.4 * pos.x + 0.9 * pos.z) + 2.3 * uTime);
-    pos.y += w1 + w2 + w3;
-    vCrest = (w1 + w2 + w3);
-
-    float dx = 0.35 * 0.11 * cos(0.11 * pos.x + 1.25 * uTime) + 0.20 * 0.22 * 0.7 * cos(0.22 * (0.7 * pos.x + 0.7 * pos.z) + 1.8 * uTime);
-    float dz = 0.20 * 0.22 * 0.7 * cos(0.22 * (0.7 * pos.x + 0.7 * pos.z) + 1.8 * uTime) + 0.11 * 0.41 * 0.9 * cos(0.41 * (-0.4 * pos.x + 0.9 * pos.z) + 2.3 * uTime);
-    vNormal = normalize(vec3(-dx, 1.0, -dz));
-
-    vec4 wp = modelMatrix * vec4(pos, 1.0);
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vec2 p = wp.xz;
+    float phaseA = 0.11 * p.x + 1.25 * uTime;
+    float phaseB = 0.22 * (0.7 * p.x + 0.7 * p.y) + 1.8 * uTime;
+    float phaseC = 0.41 * (-0.4 * p.x + 0.9 * p.y) + 2.3 * uTime;
+    vCrest = 0.42 * sin(phaseA) + 0.24 * sin(phaseB) + 0.14 * sin(phaseC);
+    wp.y += vCrest;
+    vec2 slope = vec2(0.0462, 0.0) * cos(phaseA) + vec2(0.037, 0.037) * cos(phaseB) + vec2(-0.023, 0.052) * cos(phaseC);
+    vNormal = vec3(-slope.x, 1.0, -slope.y);
     vWorldPos = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
@@ -115,77 +116,66 @@ export const waterFragmentShader = /* glsl */ `
   varying vec3 vNormal;
   varying float vCrest;
 
+  float waterHash(vec2 p) {
+    vec3 h = fract(vec3(p.xyx) * 0.1031);
+    h += dot(h, h.yzx + 33.33);
+    return fract((h.x + h.y) * h.z);
+  }
+
+  float waterNoise(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(waterHash(i), waterHash(i + vec2(1, 0)), f.x),
+      mix(waterHash(i + vec2(0, 1)), waterHash(i + vec2(1, 1)), f.x), f.y);
+  }
+
   void main() {
     vec2 p = vWorldPos.xz;
-    float dist = length(vWorldPos.xz);
-    bool inCanal = abs(vWorldPos.z + 95.0) < 24.0 && vWorldPos.x > 65.0 && vWorldPos.x < 290.0;
-
-    // Per-fragment multi-octave wave normal with crisp capillary micro-ripples
-    float dx = 0.085 * cos(0.09 * p.x + 1.2 * uTime)
-             + 0.052 * cos(0.24 * p.x + 0.16 * p.y + 1.8 * uTime)
-             + 0.032 * cos(0.55 * p.x - 0.35 * p.y + 2.6 * uTime)
-             + 0.018 * cos(1.35 * p.x + 0.92 * p.y - 3.4 * uTime);
-    float dz = 0.085 * cos(0.08 * p.y - 1.1 * uTime)
-             + 0.052 * cos(0.16 * p.x + 0.24 * p.y + 1.8 * uTime)
-             + 0.032 * cos(-0.35 * p.x + 0.55 * p.y + 2.4 * uTime)
-             + 0.018 * cos(-0.95 * p.x + 1.28 * p.y + 3.1 * uTime);
-    vec3 n = normalize(vec3(-dx, 1.0, -dz));
-
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
-    float ndv = max(dot(viewDir, n), 0.0);
-    float fresnel = clamp(0.04 + 0.96 * pow(1.0 - ndv, 4.0), 0.0, 1.0);
+    float cameraDistance = distance(vWorldPos, uCameraPos);
+    float detail = 1.0 - smoothstep(55.0, 860.0, cameraDistance);
+    float wind = waterNoise(p * 0.082 + vec2(uTime * -0.04, uTime * 0.025));
+    float rippleA = cos(dot(p, vec2(0.92, 1.58)) + uTime * 3.3 + wind * 5.9);
+    float rippleB = cos(dot(p, vec2(-1.79, 0.62)) - uTime * 2.7 + wind * 3.4);
+    vec3 n = normalize(vNormal + vec3(rippleA + rippleB * 0.69, 0.0, rippleB - rippleA * 0.46) * 0.042 * detail);
 
-    // Depth-based coastal turquoise to offshore deep Mediterranean sapphire gradient
-    vec3 shallowTurquoise = mix(uShallow, vec3(0.06, 0.77, 0.85), 0.78);
-    vec3 deepSapphire = mix(uDeep, vec3(0.016, 0.25, 0.54), 0.82);
-    float offshoreDepth = inCanal ? 0.05 : smoothstep(218.0, 295.0, dist);
-    vec3 base = mix(shallowTurquoise, deepSapphire, clamp(offshoreDepth * 0.82 + fresnel * 0.32, 0.0, 1.0));
+    float dist = length(p);
+    vec2 siteUV = vec2(p.x / 105.0, (p.y + 469.0) / 116.0);
+    float siteAngle = atan(siteUV.x, siteUV.y);
+    float site = length(siteUV) / (1.0 + sin(siteAngle * 3.0) * 0.067 + sin(siteAngle * 5.0 + 0.6) * 0.035);
+    bool canal = abs(p.y + 95.0) < 24.0 && p.x > 65.0 && p.x < 290.0;
+    float deep = canal ? 0.13 : min(smoothstep(228.0, 294.0, dist), smoothstep(0.84, 1.29, site));
+    vec3 water = mix(uShallow, uDeep, deep);
+    water += (wind - 0.52) * vec3(0.025, 0.065, 0.066) * (1.0 - deep);
+    float caustic = pow(max(0.0, cos(p.x * 0.49 + wind * 5.5 + 0.45 * uTime) *
+      sin(p.y * 0.40 + wind * 6.1 - 0.58 * uTime)), 4.0);
+    water += vec3(0.05, 0.12, 0.085) * caustic * (1.0 - deep) * detail;
 
-    // Subtle caustic shimmer in shallow coastal & Venetian canal waters
-    float caustic = sin(p.x * 0.38 + uTime * 2.1) * cos(p.y * 0.38 - uTime * 1.7);
-    base += vec3(0.06, 0.19, 0.21) * max(caustic, 0.0) * (1.0 - offshoreDepth) * 0.48;
+    float facing = max(dot(viewDir, n), 0.0);
+    float fresnel = 0.024 + 0.976 * pow(1.0 - facing, 5.0);
+    vec3 reflected = reflect(-viewDir, n);
+    vec3 reflectedSky = mix(vec3(0.69, 0.77, 0.77), vec3(0.19, 0.44, 0.60), smoothstep(-0.035, 0.72, reflected.y));
+    float solarPath = pow(max(dot(reflected, normalize(uSunDir)), 0.0), 25.0);
+    float glitter = pow(max(dot(n, normalize(viewDir + uSunDir)), 0.0), mix(36.0, 132.0, detail));
+    vec2 crossing = p + normalize(uSunDir).xz * 13.0;
+    float bridgeShadow = (1.0 - smoothstep(14.0, 23.0, abs(crossing.x))) *
+      smoothstep(-399.0, -372.0, crossing.y) * (1.0 - smoothstep(-250.0, -224.0, crossing.y));
+    vec3 col = mix(water * (1.0 - bridgeShadow * 0.37), reflectedSky, fresnel * 0.81);
+    col += vec3(1.0, 0.81, 0.55) * (solarPath * 0.19 + glitter * (0.16 + wind * 0.48));
 
-    // Photographic Fresnel sky reflection (cerulean zenith to pale-azure horizon)
-    vec3 reflDir = reflect(-viewDir, n);
-    vec3 skyReflect = mix(vec3(0.81, 0.90, 0.96), vec3(0.16, 0.48, 0.72), clamp(reflDir.y * 1.8, 0.0, 1.0));
-    base = mix(base, skyReflect, fresnel * 0.58);
+    float headland = abs(dist - 244.0) / 19.0;
+    float landing = abs(site - 0.955) / 0.14;
+    float tideLine = min(headland, landing);
+    float breakPhase = headland < landing ? dist * 0.59 : site * 58.0;
+    float waveFront = sin(breakPhase + wind * 5.5 + 1.6 * uTime);
+    float shoreFoam = (1.0 - smoothstep(0.32, 1.1, tideLine)) * smoothstep(0.64, 0.97, waveFront);
+    shoreFoam *= mix(0.17, 0.72, smoothstep(0.29, 0.74, wind));
+    float cap = smoothstep(0.38, 0.72, vCrest + (wind - 0.54) * 0.41) * detail * 0.19;
+    col = mix(col, uFoam, clamp(shoreFoam + cap, 0.0, 0.8));
 
-    // Warm golden sun-glare path + crisp multi-scale sunlight specular glints on waves
-    vec3 halfVec = normalize(viewDir + normalize(uSunDir));
-    float ndh = max(dot(n, halfVec), 0.0);
-    float goldenPath = pow(ndh, 28.0);
-    float waveGlint = pow(ndh, 160.0);
-    float crispSparkle = pow(ndh, 380.0);
-    base += vec3(1.0, 0.87, 0.58) * goldenPath * 0.38;
-    base += vec3(1.0, 0.97, 0.88) * waveGlint * 1.35;
-    base += vec3(1.0, 0.99, 0.95) * crispSparkle * 2.2;
-
-    // Open-water whitecap interference
-    float wA = sin(0.18 * p.x + 0.11 * p.y + 1.6 * uTime);
-    float wB = sin(-0.14 * p.x + 0.21 * p.y - 1.3 * uTime);
-    float openFoam = smoothstep(0.72, 0.96, wA * wB) * (0.35 + 0.65 * fresnel) * 0.35;
-
-    // Breaking whitewater surf foam rings along the island beach shoreline (225..268m)
-    float totalFoam = openFoam;
-    if (dist > 224.0 && dist < 270.0) {
-      float surfZone = smoothstep(225.0, 236.0, dist) * (1.0 - smoothstep(254.0, 268.0, dist));
-      float warp = sin(p.x * 0.07 + p.y * 0.05) * 2.4;
-      float breaker1 = sin(dist * 0.52 + warp + uTime * 2.5);
-      float surfFoam = surfZone * smoothstep(0.36, 0.86, breaker1) * 0.85;
-      totalFoam = clamp(openFoam + surfFoam, 0.0, 1.0);
-    }
-
-    vec3 col = mix(base, uFoam, totalFoam);
-    float alpha = mix(0.84, 0.95, clamp(offshoreDepth + totalFoam * 0.5, 0.0, 1.0));
-
-    // Seamless atmospheric horizon mist so the ocean dissolves cleanly into the sky
-    float camDist = length(vWorldPos - uCameraPos);
-    float horizonMist = smoothstep(320.0, 1500.0, camDist);
-    vec3 horizonSkyCol = vec3(0.81, 0.90, 0.96);
-    col = mix(col, horizonSkyCol, horizonMist);
-    alpha = mix(alpha, 1.0, horizonMist);
-
-    gl_FragColor = vec4(col, alpha);
+    float haze = smoothstep(340.0, 1540.0, cameraDistance);
+    col = mix(col, vec3(0.71, 0.80, 0.82), haze);
+    gl_FragColor = vec4(col, mix(0.78, 0.99, max(deep, max(haze, fresnel))));
   }
 `;
 
@@ -251,20 +241,30 @@ export const beamFragmentShader = /* glsl */ `
 `;
 
 export const terrainVertexShader = /* glsl */ `
+  #include <common>
+  #include <shadowmap_pars_vertex>
   varying vec3 vWorldPos;
   varying vec3 vNormal;
   varying vec2 vUv;
 
   void main() {
-    vUv = uv;
-    vec4 wp = modelMatrix * vec4(position, 1.0);
-    vWorldPos = wp.xyz;
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vec4 mvPosition = viewMatrix * worldPosition;
+    vec3 transformedNormal = normalize(normalMatrix * normal);
+    vWorldPos = worldPosition.xyz;
     vNormal = normalize(mat3(modelMatrix) * normal);
-    gl_Position = projectionMatrix * viewMatrix * wp;
+    vUv = uv;
+    #include <shadowmap_vertex>
+    gl_Position = projectionMatrix * mvPosition;
   }
 `;
 
 export const terrainFragmentShader = /* glsl */ `
+  #include <common>
+  #include <packing>
+  #include <lights_pars_begin>
+  #include <shadowmap_pars_fragment>
+  #include <shadowmask_pars_fragment>
   uniform vec3 uSunDir;
   uniform vec3 uCameraPos;
   uniform float uTime;
@@ -329,7 +329,19 @@ export const terrainFragmentShader = /* glsl */ `
     float specStrength = 0.0;
     float specPower = 24.0;
 
-    if (onRoad) {
+    if (p.y < -330.0) {
+      float grain = fbm(p * 1.8);
+      float grade = fbm(vec2(p.x * 0.075, p.y * 0.31));
+      float striations = smoothstep(0.72, 0.94, sin(p.x * 0.95 + p.y * 0.1)) * 0.055;
+      vec3 compacted = mix(vec3(0.27, 0.155, 0.083), vec3(0.54, 0.37, 0.22), grain * 0.55 + grade * 0.45);
+      vec3 beach = mix(vec3(0.34, 0.29, 0.19), vec3(0.63, 0.52, 0.36), grain);
+      albedo = mix(beach, compacted - striations, smoothstep(0.8, 3.7, vWorldPos.y));
+      float haulRoad = abs(p.x - sin((p.y + 400.0) * 0.027) * 9.0);
+      float tireTrack = 1.0 - smoothstep(0.38, 1.15, abs(haulRoad - 3.7));
+      if (p.y < -401.0 && p.y > -540.0) {
+        albedo = mix(albedo, compacted * (0.82 - tireTrack * 0.15), 1.0 - smoothstep(7.1, 8.6, haulRoad));
+      }
+    } else if (onRoad) {
       // Crisp dark-charcoal weathered asphalt base with mineral micro-grain sparkle
       float aggCoarse = noise(p * 8.5);
       float aggFine = noise(p * 32.0);
@@ -569,41 +581,7 @@ export const terrainFragmentShader = /* glsl */ `
       }
     }
 
-    // Analytical Soft Building & Palm Shadows cast along -sunDir.xz
-    float shadow = 1.0;
-    vec2 sunProj = p + sunDir.xz * 18.0;
-
-    // Strip hotel tower row shadows
-    if (abs(sunProj.x) > 30.0 && abs(sunProj.x) < 56.0 && abs(sunProj.y) < 110.0) {
-      float towerRow = smoothstep(30.0, 35.0, abs(sunProj.x)) * (1.0 - smoothstep(51.0, 56.0, abs(sunProj.x)));
-      float towerGap = smoothstep(-0.2, 0.35, sin(sunProj.y * 0.48));
-      shadow = min(shadow, 1.0 - 0.38 * towerRow * towerGap);
-    }
-
-    // Luxor & Eiffel landmark analytical shadows
-    float luxorDist = length((p + sunDir.xz * 26.0) - vec2(-82.0, 32.0));
-    float luxorDistActual = length((p + sunDir.xz * 26.0) - vec2(-115.0, 85.0));
-    shadow = min(shadow, 0.62 + 0.38 * smoothstep(14.0, 28.0, min(luxorDist, luxorDistActual)));
-
-    float eiffelDist = length((p + sunDir.xz * 28.0) - vec2(-72.0, -62.0));
-    float eiffelDistActual = length((p + sunDir.xz * 28.0) - vec2(95.0, 35.0));
-    shadow = min(shadow, 0.66 + 0.34 * smoothstep(10.0, 24.0, min(eiffelDist, eiffelDistActual)));
-
-    // Repeating dappled palm-frond shadows along Strip sidewalks
-    if (abs(p.x) > 17.5 && abs(p.x) < 28.5 && abs(p.y) < 118.0) {
-      vec2 palmProj = p + sunDir.xz * 5.2;
-      float palmSideX = palmProj.x > 0.0 ? 23.5 : -23.5;
-      float palmCellZ = floor((palmProj.y + 7.0) / 14.0) * 14.0;
-      vec2 dPalm = palmProj - vec2(palmSideX, palmCellZ);
-      float rPalm = length(dPalm);
-      if (rPalm < 4.4) {
-        float ang = atan(dPalm.y, dPalm.x);
-        float fronds = smoothstep(-0.25, 0.55, cos(ang * 7.0 + rPalm * 0.8));
-        float canopyFalloff = (1.0 - smoothstep(1.2, 4.3, rPalm)) * fronds;
-        shadow = min(shadow, 1.0 - canopyFalloff * 0.42);
-      }
-    }
-
+    float shadow = mix(0.43, 1.0, getShadowMask());
     // Analytical Directional Sunlight + Sky Hemisphere Lighting
     float ndl = max(dot(n, sunDir), 0.0);
     float wrapDiff = max(0.0, (dot(n, sunDir) + 0.25) / 1.25);
@@ -618,7 +596,7 @@ export const terrainFragmentShader = /* glsl */ `
     vec3 finalCol = albedo * (skyAmb * 0.52 + sunLight) + specCol;
     float camDist = length(vWorldPos - uCameraPos);
     float distHaze = smoothstep(420.0, 1500.0, camDist);
-    finalCol = mix(finalCol, vec3(0.81, 0.90, 0.96), distHaze * 0.88);
+    finalCol = mix(finalCol, vec3(0.71, 0.80, 0.82), distHaze * 0.88);
     gl_FragColor = vec4(finalCol, 1.0);
   }
 `;

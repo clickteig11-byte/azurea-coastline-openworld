@@ -1,457 +1,205 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  ArrowUp,
-  Crosshair,
-  Flame,
-  Repeat,
-  Umbrella,
-  Wrench,
-  Zap,
+  ArrowDown, ArrowUp, Camera, ChevronUp, Crosshair, Footprints, Move, Repeat, Umbrella, Wrench, Zap,
 } from 'lucide-react';
 import { simState, WEAPON_SPECS } from '../game/store';
 import type { VehicleMode } from '../game/worldMath';
 
-export interface MobileControlsProps {
+interface MobileControlsProps {
   mode: VehicleMode;
-  gameMode: string;
   visible: boolean;
+  vehicleHp: number;
+  onSelectMode: (mode: VehicleMode) => void;
 }
 
-const JOYSTICK_SIZES = { SM: 108, MD: 128, LG: 152 } as const;
-const KNOB_SIZE = 52;
-const DEADZONE = 0.14;
+const sizes = { SM: 98, MD: 120, LG: 146 };
+const modes: VehicleMode[] = ['FOOT', 'CAR', 'BOAT', 'PLANE'];
+const nextModel = { CAR: 'cycle-car', BOAT: 'cycle-boat', PLANE: 'cycle-plane' };
+const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
+const emit = (name: string) => window.dispatchEvent(new CustomEvent(name));
 
-const MOVEMENT_KEYS = ['KeyW', 'KeyS', 'KeyA', 'KeyD'] as const;
-const ACTION_KEYS = ['ShiftLeft', 'Space', 'KeyF'] as const;
-
-function clearMovementKeys() {
-  for (const key of MOVEMENT_KEYS) {
-    simState.keys.delete(key);
-  }
-  simState.analogMoveX = 0;
-  simState.analogMoveY = 0;
-}
-
-function clearActionKeys() {
-  for (const key of ACTION_KEYS) {
-    simState.keys.delete(key);
-  }
-}
-
-export function MobileControls({ mode, gameMode, visible }: MobileControlsProps) {
-  // Virtual joystick state
-  const padRef = useRef<HTMLDivElement | null>(null);
-  const joyPointerIdRef = useRef<number | null>(null);
-  const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [joyActive, setJoyActive] = useState(false);
-  const [joySizeKey, setJoySizeKey] = useState<'SM' | 'MD' | 'LG'>(
-    () => simState.controlSettings?.joystickSize ?? 'MD'
-  );
-
+function HoldButton({ label, icon: Icon, accent, onHold }: {
+  label: string;
+  icon: typeof ArrowUp;
+  accent?: string;
+  onHold: (held: boolean) => void;
+}) {
+  const pointer = useRef<number | null>(null);
+  const [held, setHeld] = useState(false);
+  const release = () => {
+    pointer.current = null;
+    setHeld(false);
+    onHold(false);
+  };
   useEffect(() => {
-    const onControlsUpdated = () => {
-      setJoySizeKey(simState.controlSettings?.joystickSize ?? 'MD');
-    };
-    window.addEventListener('controls-updated', onControlsUpdated);
-    return () => window.removeEventListener('controls-updated', onControlsUpdated);
-  }, []);
-
-  const joystickSize = JOYSTICK_SIZES[joySizeKey] ?? 128;
-  const maxRadius = (joystickSize - KNOB_SIZE) / 2;
-
-  // Action button pressed states for tactile visual feedback
-  const [boostPressed, setBoostPressed] = useState(false);
-  const [spacePressed, setSpacePressed] = useState(false);
-  const [firePressed, setFirePressed] = useState(false);
-
-  const showFire = mode === 'FOOT' || mode === 'CAR' || gameMode === 'BATTLE_ROYALE';
-  const showDrop = gameMode === 'BATTLE_ROYALE' || mode === 'FOOT';
-  const showRepair = mode !== 'FOOT' && (simState.vehicleHp ?? 100) < 85;
-
-  // Ensure no keys ever stick on hide or unmount
-  useEffect(() => {
-    if (!visible) {
-      joyPointerIdRef.current = null;
-      setKnobPos({ x: 0, y: 0 });
-      setJoyActive(false);
-      setBoostPressed(false);
-      setSpacePressed(false);
-      setFirePressed(false);
-      clearMovementKeys();
-      clearActionKeys();
-    }
+    window.addEventListener('blur', release);
     return () => {
-      clearMovementKeys();
-      clearActionKeys();
+      window.removeEventListener('blur', release);
+      onHold(false);
     };
-  }, [visible]);
-
-  // If Fire button disappears while held, release KeyF cleanly
-  useEffect(() => {
-    if (!showFire) {
-      simState.keys.delete('KeyF');
-      setFirePressed(false);
-    }
-  }, [showFire]);
-
-  const updateJoystickFromClient = useCallback(
-    (clientX: number, clientY: number) => {
-      const pad = padRef.current;
-      if (!pad) return;
-      const rect = pad.getBoundingClientRect();
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-
-      let offsetX = clientX - cx;
-      let offsetY = clientY - cy;
-      const dist = Math.hypot(offsetX, offsetY);
-
-      if (dist > maxRadius) {
-        const scale = maxRadius / dist;
-        offsetX *= scale;
-        offsetY *= scale;
-      }
-
-      setKnobPos({ x: offsetX, y: offsetY });
-
-      const rawX = offsetX / maxRadius;
-      const rawY = offsetY / maxRadius;
-
-      // Smooth proportional curve after deadzone so small pushes steer gently and full pushes turn sharply
-      const shape = (v: number) => {
-        const abs = Math.abs(v);
-        if (abs <= DEADZONE) return 0;
-        const norm = (abs - DEADZONE) / (1 - DEADZONE);
-        return Math.sign(v) * Math.pow(norm, 1.3);
-      };
-
-      const shapedX = shape(rawX);
-      const shapedY = shape(-rawY); // up on screen is positive forward
-      simState.analogMoveX = shapedX;
-      simState.analogMoveY = shapedY;
-
-      if (shapedY > 0.08) simState.keys.add('KeyW');
-      else simState.keys.delete('KeyW');
-
-      if (shapedY < -0.08) simState.keys.add('KeyS');
-      else simState.keys.delete('KeyS');
-
-      if (shapedX < -0.08) simState.keys.add('KeyA');
-      else simState.keys.delete('KeyA');
-
-      if (shapedX > 0.08) simState.keys.add('KeyD');
-      else simState.keys.delete('KeyD');
-    },
-    [maxRadius]
-  );
-
-  const releaseJoystick = useCallback(() => {
-    joyPointerIdRef.current = null;
-    setKnobPos({ x: 0, y: 0 });
-    setJoyActive(false);
-    clearMovementKeys();
   }, []);
-
-  const handleJoyPointerDown = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (joyPointerIdRef.current !== null) return;
-      joyPointerIdRef.current = e.pointerId;
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        // Ignore if pointer capture is unsupported
-      }
-      setJoyActive(true);
-      updateJoystickFromClient(e.clientX, e.clientY);
-    },
-    [updateJoystickFromClient]
-  );
-
-  const handleJoyPointerMove = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (joyPointerIdRef.current !== e.pointerId) return;
-      e.preventDefault();
-      e.stopPropagation();
-      updateJoystickFromClient(e.clientX, e.clientY);
-    },
-    [updateJoystickFromClient]
-  );
-
-  const handleJoyPointerEnd = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (joyPointerIdRef.current !== e.pointerId) return;
-      e.preventDefault();
-      e.stopPropagation();
-      try {
-        if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-          e.currentTarget.releasePointerCapture(e.pointerId);
-        }
-      } catch {
-        // Ignore
-      }
-      releaseJoystick();
-    },
-    [releaseJoystick]
-  );
-
-  // Hold-button helpers (ShiftLeft, Space, KeyF)
-  const makeHoldHandlers = useCallback(
-    (
-      keyCode: 'ShiftLeft' | 'Space' | 'KeyF',
-      setPressed: React.Dispatch<React.SetStateAction<boolean>>,
-      onPressExtra?: () => void
-    ) => ({
-      onPointerDown: (e: React.PointerEvent<HTMLButtonElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          e.currentTarget.setPointerCapture(e.pointerId);
-        } catch {
-          // Ignore
-        }
-        simState.keys.add(keyCode);
-        setPressed(true);
-        onPressExtra?.();
-      },
-      onPointerUp: (e: React.PointerEvent<HTMLButtonElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-            e.currentTarget.releasePointerCapture(e.pointerId);
-          }
-        } catch {
-          // Ignore
-        }
-        simState.keys.delete(keyCode);
-        setPressed(false);
-      },
-      onPointerCancel: (e: React.PointerEvent<HTMLButtonElement>) => {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-            e.currentTarget.releasePointerCapture(e.pointerId);
-          }
-        } catch {
-          // Ignore
-        }
-        simState.keys.delete(keyCode);
-        setPressed(false);
-      },
-      onLostPointerCapture: () => {
-        simState.keys.delete(keyCode);
-        setPressed(false);
-      },
-    }),
-    []
-  );
-
-  const boostHandlers = makeHoldHandlers('ShiftLeft', setBoostPressed);
-  const spaceHandlers = makeHoldHandlers('Space', setSpacePressed);
-  const fireHandlers = makeHoldHandlers('KeyF', setFirePressed, () => {
-    window.dispatchEvent(new CustomEvent('fire-weapon'));
-  });
-
-  const handleCycleAction = useCallback(
-    (e: React.PointerEvent<HTMLButtonElement>) => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (mode === 'CAR') {
-        window.dispatchEvent(new CustomEvent('cycle-car'));
-      } else if (mode === 'BOAT') {
-        window.dispatchEvent(new CustomEvent('cycle-boat'));
-      } else if (mode === 'PLANE') {
-        window.dispatchEvent(new CustomEvent('cycle-plane'));
-      } else {
-        const nextIdx = (simState.activeWeaponIdx + 1) % WEAPON_SPECS.length;
-        window.dispatchEvent(new CustomEvent('select-weapon', { detail: nextIdx }));
-      }
-    },
-    [mode]
-  );
-
-  const handleSkyDrop = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    window.dispatchEvent(new CustomEvent('br-drop'));
-  }, []);
-
-  const handleRepair = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    window.dispatchEvent(new CustomEvent('repair-vehicle'));
-  }, []);
-
-  if (!visible) return null;
-
-  const spaceLabel =
-    mode === 'FOOT'
-      ? 'Jump'
-      : mode === 'CAR'
-        ? 'Drift'
-        : mode === 'BOAT'
-          ? 'Brake'
-          : 'Climb';
-
-  const boostLabel = mode === 'FOOT' ? 'Sprint' : 'Boost';
-
-  const cycleLabel =
-    mode === 'CAR'
-      ? 'Car'
-      : mode === 'BOAT'
-        ? 'Boat'
-        : mode === 'PLANE'
-          ? 'Plane'
-          : 'Gun';
 
   return (
-    <>
-      {/* Left Thumb — Virtual 360° Analog Joystick */}
-      <div
-        ref={padRef}
-        role="application"
-        aria-label="Virtual movement joystick"
-        onPointerDown={handleJoyPointerDown}
-        onPointerMove={handleJoyPointerMove}
-        onPointerUp={handleJoyPointerEnd}
-        onPointerCancel={handleJoyPointerEnd}
-        onLostPointerCapture={releaseJoystick}
-        style={{ width: joystickSize, height: joystickSize }}
-        className={`pointer-events-auto fixed bottom-6 left-5 z-40 flex items-center justify-center rounded-full border backdrop-blur-md touch-none select-none transition-colors duration-150 ${
-          joyActive
-            ? 'border-white/40 bg-neutral-950/65 shadow-[0_0_24px_rgba(255,255,255,0.14)]'
-            : 'border-white/20 bg-neutral-950/55 shadow-[0_8px_28px_rgba(0,0,0,0.45)]'
-        }`}
-      >
-        {/* Subtle inner guide ring & directional pips */}
-        <div className="pointer-events-none absolute inset-3 rounded-full border border-white/10" />
-        <span className="pointer-events-none absolute top-2.5 h-1.5 w-1.5 rounded-full bg-white/30" />
-        <span className="pointer-events-none absolute bottom-2.5 h-1.5 w-1.5 rounded-full bg-white/30" />
-        <span className="pointer-events-none absolute left-2.5 h-1.5 w-1.5 rounded-full bg-white/30" />
-        <span className="pointer-events-none absolute right-2.5 h-1.5 w-1.5 rounded-full bg-white/30" />
+    <button type="button" aria-label={label} aria-pressed={held}
+      className={'touch-action-button ' + (accent ?? '')} data-held={held}
+      onPointerDown={(event) => {
+        if (pointer.current !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
+        event.preventDefault();
+        pointer.current = event.pointerId;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setHeld(true);
+        onHold(true);
+      }}
+      onPointerUp={(event) => { if (pointer.current === event.pointerId) release(); }}
+      onPointerCancel={(event) => { if (pointer.current === event.pointerId) release(); }}
+      onLostPointerCapture={(event) => { if (pointer.current === event.pointerId) release(); }}>
+      <Icon size={20} strokeWidth={2} />
+      <span>{label}</span>
+    </button>
+  );
+}
 
-        {/* Draggable Thumb Knob */}
-        <div
-          style={{
-            width: KNOB_SIZE,
-            height: KNOB_SIZE,
-            transform: `translate3d(${knobPos.x}px, ${knobPos.y}px, 0)`,
-          }}
-          className={`pointer-events-none flex items-center justify-center rounded-full border transition-[background-color,box-shadow] duration-100 ${
-            joyActive
-              ? 'border-white/80 bg-white/40 shadow-[0_0_16px_rgba(255,255,255,0.4)]'
-              : 'border-white/45 bg-white/25 shadow-[0_4px_14px_rgba(0,0,0,0.4)]'
-          }`}
-        >
-          <div className="h-4 w-4 rounded-full bg-white/60" />
-        </div>
+function setTouchKey(key: string, held: boolean) {
+  if (held) simState.touchKeys.add(key);
+  else simState.touchKeys.delete(key);
+}
+
+export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: MobileControlsProps) {
+  const [size, setSize] = useState(() => simState.controlSettings.joystickSize);
+  const pad = useRef<HTMLDivElement>(null);
+  const knob = useRef<HTMLDivElement>(null);
+  const stickPointer = useRef<number | null>(null);
+  const stickBounds = useRef<DOMRect | null>(null);
+  const orbitPointer = useRef<{ id: number; x: number; y: number } | null>(null);
+
+  const releaseStick = () => {
+    stickPointer.current = null;
+    simState.analogMoveX = simState.analogMoveY = 0;
+    if (knob.current) knob.current.style.transform = '';
+    if (pad.current) delete pad.current.dataset.active;
+  };
+
+  useEffect(() => {
+    const syncSize = () => setSize(simState.controlSettings.joystickSize);
+    const release = () => {
+      releaseStick();
+      orbitPointer.current = null;
+      simState.touchThrottle = 0;
+      simState.touchBrake = false;
+      simState.touchKeys.clear();
+    };
+    const onVisibility = () => { if (document.hidden) release(); };
+    window.addEventListener('controls-updated', syncSize);
+    window.addEventListener('blur', release);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      release();
+      window.removeEventListener('controls-updated', syncSize);
+      window.removeEventListener('blur', release);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
+  useEffect(() => {
+    if (!visible) {
+      releaseStick();
+      orbitPointer.current = null;
+    }
+  }, [visible]);
+
+  const moveStick = (x: number, y: number) => {
+    const rect = stickBounds.current;
+    if (!rect) return;
+    const radius = rect.width * 0.34;
+    const offsetX = x - rect.left - rect.width / 2;
+    const offsetY = y - rect.top - rect.height / 2;
+    const distance = Math.hypot(offsetX, offsetY);
+    const multiplier = distance > radius ? radius / distance : 1;
+    const strength = Math.pow(clamp((distance / radius - 0.105) / 0.895, 0, 1), 1.16) / Math.max(1, distance);
+    simState.analogMoveX = offsetX * strength;
+    simState.analogMoveY = -offsetY * strength;
+    if (knob.current) knob.current.style.transform = 'translate3d(' + offsetX * multiplier + 'px,' + offsetY * multiplier + 'px,0)';
+  };
+
+  const resetCamera = () => {
+    simState.orbitYaw = simState.orbitPitch = 0;
+    simState.cameraView = (simState.cameraView + 1) % 3;
+  };
+
+  if (!visible) return null;
+  const flying = mode === 'PLANE';
+  const foot = mode === 'FOOT';
+  const boat = mode === 'BOAT';
+
+  return (
+    <div className="touch-game-controls" aria-label="Touch controls">
+      <div className="touch-orbit-area" aria-label="Drag to orbit camera"
+        onPointerDown={(event) => {
+          if (orbitPointer.current || (event.pointerType === 'mouse' && event.button !== 0)) return;
+          event.preventDefault();
+          orbitPointer.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const last = orbitPointer.current;
+          if (last?.id !== event.pointerId) return;
+          const scale = 0.008 * clamp(420 / Math.min(window.innerWidth, window.innerHeight), 0.68, 1.32);
+          simState.orbitYaw -= (event.clientX - last.x) * scale;
+          simState.orbitPitch = clamp(simState.orbitPitch - (event.clientY - last.y) * scale, -0.92, 0.96);
+          last.x = event.clientX;
+          last.y = event.clientY;
+        }}
+        onPointerUp={(event) => { if (orbitPointer.current?.id === event.pointerId) orbitPointer.current = null; }}
+        onPointerCancel={() => { orbitPointer.current = null; }}
+        onLostPointerCapture={() => { orbitPointer.current = null; }}
+      />
+
+      <div className="touch-stick" role="application" aria-label="Analog joystick" ref={pad}
+        style={{ '--stick-size': sizes[size] + 'px' } as React.CSSProperties}
+        onPointerDown={(event) => {
+          if (stickPointer.current !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
+          event.preventDefault();
+          stickPointer.current = event.pointerId;
+          stickBounds.current = event.currentTarget.getBoundingClientRect();
+          event.currentTarget.dataset.active = 'true';
+          event.currentTarget.setPointerCapture(event.pointerId);
+          moveStick(event.clientX, event.clientY);
+        }}
+        onPointerMove={(event) => { if (stickPointer.current === event.pointerId) moveStick(event.clientX, event.clientY); }}
+        onPointerUp={(event) => { if (stickPointer.current === event.pointerId) releaseStick(); }}
+        onPointerCancel={releaseStick} onLostPointerCapture={releaseStick}>
+        <span className="touch-stick-ring" />
+        <div className="touch-stick-knob" ref={knob}><Move size={17} strokeWidth={1.6} /></div>
       </div>
 
-      {/* Right Thumb — Ergonomic Tactile Action Buttons */}
-      <div className="pointer-events-none fixed bottom-6 right-5 z-40 flex flex-col items-end gap-2.5">
-        {/* Top utility row: Repair, Sky-Drop & Next Vehicle / Next Gun */}
-        <div className="pointer-events-auto flex items-center gap-2.5">
-          {showRepair && (
-            <button
-              type="button"
-              aria-label="Repair Vehicle"
-              onPointerDown={handleRepair}
-              className="pointer-events-auto flex h-12 w-12 flex-col items-center justify-center gap-0.5 rounded-full border border-emerald-400/50 bg-emerald-950/75 text-emerald-200 shadow-[0_6px_20px_rgba(16,185,129,0.35)] backdrop-blur-md touch-none select-none active:scale-95 active:border-emerald-300/80 active:bg-emerald-500/35"
-            >
-              <Wrench className="h-4 w-4" strokeWidth={2.2} />
-              <span className="text-[9px] font-semibold uppercase tracking-wider leading-none">
-                Repair
-              </span>
-            </button>
-          )}
-
-          {showDrop && (
-            <button
-              type="button"
-              aria-label="Sky-Drop Parachute"
-              onPointerDown={handleSkyDrop}
-              className="flex h-12 w-12 flex-col items-center justify-center gap-0.5 rounded-full border border-sky-300/35 bg-neutral-950/60 text-sky-200 shadow-[0_6px_20px_rgba(0,0,0,0.45)] backdrop-blur-md touch-none select-none active:scale-95 active:border-sky-200/70 active:bg-sky-500/30"
-            >
-              <Umbrella className="h-4 w-4" strokeWidth={2.2} />
-              <span className="text-[9px] font-semibold uppercase tracking-wider leading-none">
-                Drop
-              </span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            aria-label={`Next ${cycleLabel}`}
-            onPointerDown={handleCycleAction}
-            className="flex h-12 w-12 flex-col items-center justify-center gap-0.5 rounded-full border border-white/25 bg-neutral-950/60 text-white/90 shadow-[0_6px_20px_rgba(0,0,0,0.45)] backdrop-blur-md touch-none select-none active:scale-95 active:border-white/60 active:bg-white/20"
-          >
-            <Repeat className="h-4 w-4" strokeWidth={2.2} />
-            <span className="text-[9px] font-semibold uppercase tracking-wider leading-none">
-              {cycleLabel}
-            </span>
-          </button>
+      <div className="touch-actions" key={mode}>
+        <div className="touch-utilities">
+          {!foot && vehicleHp < 100 && <button type="button" aria-label="Repair vehicle" className="touch-action-button touch-repair"
+            onClick={() => emit('repair-vehicle')}><Wrench size={15} /><span>Repair</span></button>}
+          {foot && <button type="button" aria-label="Skydive" className="touch-action-button"
+            onClick={() => emit('br-drop')}><Umbrella size={16} /><span>Drop</span></button>}
+          <button type="button" aria-label="Next vehicle or weapon" className="touch-action-button" onClick={() => {
+            if (mode === 'FOOT') window.dispatchEvent(new CustomEvent('select-weapon', { detail: (simState.activeWeaponIdx + 1) % WEAPON_SPECS.length }));
+            else emit(nextModel[mode]);
+          }}><Repeat size={16} /><span>{foot ? 'Gear' : 'Model'}</span></button>
+          <button type="button" aria-label="Switch travel mode" className="touch-action-button"
+            onClick={() => onSelectMode(modes[(modes.indexOf(mode) + 1) % modes.length])}><Footprints size={16} /><span>Mode</span></button>
+          <button type="button" aria-label="Switch camera view" className="touch-action-button"
+            onClick={resetCamera}><Camera size={16} /><span>View</span></button>
         </div>
-
-        {/* Primary thumb arc: Fire, Jump/Drift/Brake/Climb, Boost/Sprint */}
-        <div className="pointer-events-auto flex items-end gap-2.5">
-          {showFire && (
-            <button
-              type="button"
-              aria-label="Fire Weapon"
-              {...fireHandlers}
-              className={`flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-full border shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md touch-none select-none transition-transform duration-75 ${
-                firePressed
-                  ? 'scale-95 border-rose-300/80 bg-rose-500/45 text-white shadow-[0_0_20px_rgba(244,63,94,0.55)]'
-                  : 'border-rose-400/35 bg-neutral-950/65 text-rose-200'
-              }`}
-            >
-              <Crosshair className="h-5 w-5" strokeWidth={2.2} />
-              <span className="text-[9px] font-bold uppercase tracking-wider leading-none">
-                Fire
-              </span>
-            </button>
-          )}
-
-          <button
-            type="button"
-            aria-label={spaceLabel}
-            {...spaceHandlers}
-            className={`flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-full border shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md touch-none select-none transition-transform duration-75 ${
-              spacePressed
-                ? 'scale-95 border-white/80 bg-white/30 text-white shadow-[0_0_18px_rgba(255,255,255,0.35)]'
-                : 'border-white/25 bg-neutral-950/65 text-white/95'
-            }`}
-          >
-            {mode === 'CAR' ? (
-              <Flame className="h-5 w-5" strokeWidth={2.2} />
-            ) : (
-              <ArrowUp className="h-5 w-5" strokeWidth={2.2} />
-            )}
-            <span className="text-[9px] font-bold uppercase tracking-wider leading-none">
-              {spaceLabel}
-            </span>
-          </button>
-
-          <button
-            type="button"
-            aria-label={boostLabel}
-            {...boostHandlers}
-            className={`flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-full border shadow-[0_8px_24px_rgba(0,0,0,0.5)] backdrop-blur-md touch-none select-none transition-transform duration-75 ${
-              boostPressed
-                ? 'scale-95 border-amber-200/90 bg-amber-400/45 text-white shadow-[0_0_22px_rgba(251,191,36,0.6)]'
-                : 'border-amber-300/35 bg-neutral-950/65 text-amber-200'
-            }`}
-          >
-            <Zap className="h-5 w-5" strokeWidth={2.2} />
-            <span className="text-[9px] font-bold uppercase tracking-wider leading-none">
-              {boostLabel}
-            </span>
-          </button>
+        <div className="touch-primary">
+          {foot ? <HoldButton label="Fire" icon={Crosshair} accent="touch-fire" onHold={(held) => {
+            setTouchKey('KeyF', held);
+            if (held) emit('fire-weapon');
+          }} /> : <HoldButton label={flying ? simState.activePlaneIdx === 1 ? 'Down' : 'Airbrake' : 'Brake'} icon={ArrowDown} onHold={(held) => { simState.touchBrake = held; }} />}
+          {!foot && <HoldButton label={flying ? 'Power' : 'Gas'} icon={ChevronUp} accent="touch-throttle"
+            onHold={(held) => { simState.touchThrottle = held ? 1 : 0; }} />}
+          {!boat && <HoldButton label={foot ? 'Jump' : flying ? 'Climb' : 'Drift'} icon={ArrowUp}
+            onHold={(held) => setTouchKey('Space', held)} />}
+          <HoldButton label={foot ? 'Sprint' : 'Boost'} icon={Zap} accent="touch-boost" onHold={(held) => setTouchKey('ShiftLeft', held)} />
+          {!foot && !flying && !boat && <HoldButton label="Fire" icon={Crosshair} accent="touch-fire"
+            onHold={(held) => { setTouchKey('KeyF', held); if (held) emit('fire-weapon'); }} />}
         </div>
       </div>
-    </>
+    </div>
   );
 }

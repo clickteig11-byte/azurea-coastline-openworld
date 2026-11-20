@@ -1,11 +1,19 @@
 import * as THREE from 'three';
 import { RouletteOutcome, VehicleMode } from './worldMath';
+import { grandPrixGates } from './grandPrix';
+import type { VehicleSweep } from './vehicleContact';
 
 export type GamePlayMode = 'FREE_ROAM' | 'BATTLE_ROYALE' | 'GRAND_PRIX' | 'WORLD_TOUR';
 
 export type WeaponId = 'AR' | 'SHOTGUN' | 'SNIPER' | 'MINIGUN' | 'RPG';
 
-export type CharacterArchetype = 'RPM_CUSTOM' | 'MICHELLE_VIP' | 'VANGUARD_SOLDIER';
+export type CharacterArchetype = 'COAST_NAVIGATOR' | 'RESCUE_PILOT' | 'RPM_CUSTOM' | 'MICHELLE_VIP' | 'VANGUARD_SOLDIER';
+export const COASTAL_CHARACTERS = {
+  COAST_NAVIGATOR: { label: 'Harbor Navigator', url: '/models/characters/harbor-navigator.glb', height: 1.76 },
+  RESCUE_PILOT: { label: 'Rescue Pilot', url: '/models/characters/coastal-rescue-pilot.glb', height: 1.86 },
+} as const satisfies Partial<Record<CharacterArchetype, { label: string; url: string; height: number }>>;
+export type CoastalCharacter = keyof typeof COASTAL_CHARACTERS;
+
 export type EyewearStyle = 'NONE' | 'AVIATOR_GOLD' | 'CYBER_VISOR';
 
 export interface CharacterCustomization {
@@ -72,6 +80,38 @@ export const FOOTWEAR_COLOR_SWATCHES: string[] = [
 ];
 
 export const CHARACTER_PRESETS: CharacterCustomization[] = [
+  {
+    archetype: 'COAST_NAVIGATOR',
+    presetName: 'Harbor Navigator',
+    skinColor: '#f0c39d',
+    topColor: '#427b7e',
+    topRoughness: 0.73,
+    topMetalness: 0,
+    bottomColor: '#51595b',
+    footwearColor: '#252f32',
+    headwearOn: true,
+    headwearColor: '#295b62',
+    beardOn: false,
+    beardColor: '#29241e',
+    eyewear: 'NONE',
+    backpackOn: true,
+  },
+  {
+    archetype: 'RESCUE_PILOT',
+    presetName: 'Coastal Rescue Pilot',
+    skinColor: '#d6a787',
+    topColor: '#9e5b3f',
+    topRoughness: 0.71,
+    topMetalness: 0,
+    bottomColor: '#394449',
+    footwearColor: '#272c30',
+    headwearOn: true,
+    headwearColor: '#b85333',
+    beardOn: false,
+    beardColor: '#2d251e',
+    eyewear: 'NONE',
+    backpackOn: true,
+  },
   {
     archetype: 'RPM_CUSTOM',
     presetName: 'Vegas High Roller',
@@ -538,16 +578,21 @@ export interface CheckpointGate {
   yaw: number;
 }
 
-export const GRAND_PRIX_CHECKPOINTS: CheckpointGate[] = [
-  { id: 'gp-1', name: 'MIDTOWN GRAND AVE', position: [0, 0, 25], yaw: Math.PI },
-  { id: 'gp-2', name: 'EMPIRE & TOKYO CROSSING', position: [0, 0, -55], yaw: Math.PI },
-  { id: 'gp-3', name: 'BURJ KHALIFA NORTH AVE', position: [0, 0, -135], yaw: Math.PI },
-  { id: 'gp-4', name: 'GOLDEN GATE BRIDGE APPROACH', position: [0, 0, -185], yaw: 1.2 },
-  { id: 'gp-5', name: 'VENICE RIALTO CANALWAY', position: [110, 0, -95], yaw: 0 },
-  { id: 'gp-6', name: 'PARIS EIFFEL BOULEVARD', position: [72, 0, 35], yaw: -0.6 },
-  { id: 'gp-7', name: 'SYDNEY HARBOR & RIO DRIVE', position: [25, 0, 125], yaw: -1.57 },
-  { id: 'gp-8', name: 'ROME COLOSSEUM & AIRPORT STRAIGHT', position: [-75, 0, 80], yaw: 0.8 },
-];
+export const GRAND_PRIX_CHECKPOINTS: CheckpointGate[] = grandPrixGates;
+
+export type AircraftDamageStage = 'sound' | 'smoking' | 'failing' | 'burning' | 'wrecked';
+
+export interface AircraftDamage {
+  hull: number;
+  left: number;
+  right: number;
+  state: AircraftDamageStage;
+  settled: boolean;
+}
+
+export function freshAircraftDamage(): AircraftDamage {
+  return { hull: 100, left: 100, right: 100, state: 'sound', settled: false };
+}
 
 export interface GameHudSnapshot {
   mode: VehicleMode;
@@ -564,6 +609,7 @@ export interface GameHudSnapshot {
   fps: number;
   gliding: boolean;
   activeCheckpoint?: number;
+  raceCountdown?: number;
   checkpointName?: string;
   checkpointDist?: number;
   lapTime?: number;
@@ -595,6 +641,8 @@ export interface GameHudSnapshot {
   vehicleHp?: number;
   vehicleMaxHp?: number;
   vehicleWrecked?: boolean;
+  aircraftDamage?: AircraftDamage;
+  aircraftThrottle?: number;
 }
 
 export const INITIAL_CHIPS: ChipNode[] = [
@@ -694,6 +742,12 @@ export const simState = {
   controlSettings: loadControlSettings(),
   analogMoveX: 0, // -1 (left) .. +1 (right) smooth analog joystick
   analogMoveY: 0, // -1 (back) .. +1 (forward) smooth analog joystick
+  touchKeys: new Set<string>(),
+  touchThrottle: 0,
+  touchBrake: false,
+  orbitYaw: 0,
+  orbitPitch: 0,
+  cameraView: 0,
   touchControlsEnabled: false,
   tourVisitedIds: [] as string[],
   gliding: false,
@@ -717,6 +771,9 @@ export const simState = {
   // Grand Prix Circuit & Stunt Telemetry
   checkpoints: GRAND_PRIX_CHECKPOINTS,
   activeCheckpoint: 0,
+  raceCountdown: 0,
+  raceElapsed: 0,
+  raceTraffic: [] as [number, number, number][],
   lapTime: 0,
   bestLapTime: null as number | null,
   lapCount: 0,
@@ -726,7 +783,7 @@ export const simState = {
   trafficPositions: [] as [number, number, number][],
 
   // Battle Royale, Parachute Sky-Drop & Weapon Loadout State
-  brActive: true,
+  brActive: false,
   parachuting: false,
   activeWeaponIdx: 0,
   ammo: 30,
@@ -736,6 +793,9 @@ export const simState = {
   vehicleHp: 100,
   vehicleMaxHp: 100,
   vehicleWrecked: false,
+  aircraftDamage: freshAircraftDamage(),
+  carDamage: { hp: 100, wrecked: false },
+  boatDamage: { hp: 100, wrecked: false },
   cameraShake: 0,
   crashFlashTimer: 0,
   lastCrashPos: [0, 0, 0] as [number, number, number],
@@ -759,6 +819,7 @@ export const simState = {
   carVel: new THREE.Vector3(0, 0, 0),
   carYaw: Math.PI,
   carSpeed: 0,
+  carSweep: { start: new THREE.Vector3(), end: new THREE.Vector3(), speed: 0, yaw: 0, travel: 0, tick: 0 } as VehicleSweep,
 
   boatPos: new THREE.Vector3(145, 0.5, -95),
   boatVel: new THREE.Vector3(0, 0, 0),
@@ -771,6 +832,7 @@ export const simState = {
   planePitch: 0,
   planeRoll: 0,
   planeSpeed: 0,
+  planeThrottle: 0.56,
 
   chipNodes: INITIAL_CHIPS.map((c) => ({ ...c })),
   keys: new Set<string>(),

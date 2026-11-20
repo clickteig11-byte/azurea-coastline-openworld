@@ -13,16 +13,20 @@ import {
   LandmarkBeacons,
 } from './components/World';
 import { VehicleDirector, triggerRouletteSpin } from './components/Vehicles';
+import { NorthBay } from './components/NorthBay';
+import { GrandPrixCourse } from './components/GrandPrix';
+import { CoastalCity } from './components/City';
+import { WorldEffects } from './components/WorldEffects';
 import { LivingWorldNPCs } from './components/NPCs';
 import { HUD } from './components/HUD';
 import { GameHudSnapshot, simState } from './game/store';
-import { getTerrainHeight, VehicleMode } from './game/worldMath';
+import { COAST_SUN, getTerrainHeight, getTravelHeight, VehicleMode } from './game/worldMath';
 
 function PerformanceGovernor() {
-  const { gl } = useThree();
+  const { setDpr, viewport } = useThree();
   const times = useRef<number[]>([]);
   const lastCheck = useRef(Date.now());
-  const dpr = useRef(1.0);
+  const dpr = useRef(viewport.dpr);
 
   useFrame((_, delta) => {
     times.current.push(delta);
@@ -31,10 +35,10 @@ function PerformanceGovernor() {
       const avg = times.current.reduce((a, b) => a + b, 0) / times.current.length;
       if (avg > 0.024 && dpr.current > 0.8) {
         dpr.current = Math.max(0.8, dpr.current - 0.1);
-        gl.setPixelRatio(dpr.current);
+        setDpr(dpr.current);
       } else if (avg < 0.017 && dpr.current < 1.2) {
         dpr.current = Math.min(1.2, dpr.current + 0.1);
-        gl.setPixelRatio(dpr.current);
+        setDpr(dpr.current);
       }
       lastCheck.current = Date.now();
     }
@@ -55,7 +59,74 @@ function ProceduralEnvMap() {
   return null;
 }
 
+function CoastalLighting() {
+  const light = useRef<THREE.DirectionalLight>(null);
+  const target = useRef<THREE.Object3D>(null);
+  const quality = useRef({ elapsed: 0, interval: 0.065, average: 0.017 });
+  const desktop = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches;
+  useFrame(({ gl }, dt) => {
+    if (!light.current || !target.current || !gl.shadowMap.enabled) return;
+    const timing = quality.current;
+    timing.average = THREE.MathUtils.lerp(timing.average, Math.min(0.12, dt), 0.024);
+    timing.elapsed += dt;
+    const interval = timing.average > 0.038 ? 0.22 : timing.interval;
+    if (timing.elapsed < interval) return;
+    timing.elapsed = 0;
+    const focus = simState.mode === 'CAR' ? simState.carPos : simState.mode === 'PLANE' ? simState.planePos :
+      simState.mode === 'BOAT' ? simState.boatPos : simState.playerPos;
+    const size = desktop ? 150 : 108;
+    const texel = size / (desktop ? 1536 : 768);
+    target.current.position.set(Math.round(focus.x / texel) * texel, Math.min(focus.y, 28), Math.round(focus.z / texel) * texel);
+    target.current.updateMatrixWorld();
+    light.current.position.copy(target.current.position).addScaledVector(COAST_SUN, 142);
+    light.current.target = target.current;
+    gl.shadowMap.autoUpdate = false;
+    gl.shadowMap.needsUpdate = true;
+  });
+  const halfSize = desktop ? 75 : 54;
+  return (
+    <>
+      <object3D ref={target} />
+      <hemisphereLight args={['#dbeaff', '#88796e', 0.75]} />
+      <directionalLight ref={light} position={COAST_SUN.clone().multiplyScalar(142)} intensity={2.15}
+        color="#fff0d9" castShadow shadow-mapSize-width={desktop ? 1536 : 768}
+        shadow-mapSize-height={desktop ? 1536 : 768} shadow-camera-near={10} shadow-camera-far={260}
+        shadow-camera-left={-halfSize} shadow-camera-right={halfSize} shadow-camera-top={halfSize}
+        shadow-camera-bottom={-halfSize} shadow-normalBias={0.16} shadow-bias={-0.00022}
+        shadow-radius={3.2} shadow-intensity={0.83} />
+      <directionalLight position={[35, 24, 55]} intensity={0.21} color="#9fc8f1" />
+    </>
+  );
+}
+
+const GameWorld = React.memo(function GameWorld({ onHudUpdate }: { onHudUpdate: (hud: GameHudSnapshot) => void }) {
+  return (
+    <>
+      <ProceduralEnvMap />
+      <PerformanceGovernor />
+      <CoastalLighting />
+      <fog attach="fog" args={['#b5cbd1', 325, 1320]} />
+
+      <SkyDome />
+      <IslandTerrain />
+      <NorthBay />
+      <CoastalCity />
+      <GrandPrixCourse />
+      <WorldEffects />
+      <VegasStripDetails />
+      <InstancedFoliage />
+      <VegasLandmarks />
+      <StylizedOcean />
+      <ChipCollectibles />
+      <LandmarkBeacons />
+      <LivingWorldNPCs />
+      <VehicleDirector onHudUpdate={onHudUpdate} />
+    </>
+  );
+});
+
 export function App() {
+  const [softwareRenderer, setSoftwareRenderer] = useState(false);
   const [hud, setHud] = useState<GameHudSnapshot>({
     mode: 'FOOT',
     speedKmh: 0,
@@ -71,6 +142,7 @@ export function App() {
   });
 
   const switchMode = useCallback((next: VehicleMode) => {
+    if (next === simState.mode) return;
     const prevPos =
       simState.mode === 'CAR'
         ? simState.carPos
@@ -93,28 +165,31 @@ export function App() {
         simState.gliding = true;
         simState.parachuting = false;
         simState.playerPos.copy(simState.planePos);
+        simState.playerYaw = simState.planeYaw;
+        simState.playerVel.set(0, Math.min(simState.planeVel.y, -1.5), 0);
       } else if (simState.mode === 'CAR') {
         simState.parachuting = false;
         simState.gliding = false;
         // Step out 5.2m perpendicular to the car's heading so the parked car sits to the side and never blocks the camera
         const exitX = prevPos.x + Math.cos(prevYaw) * 5.2;
         const exitZ = prevPos.z - Math.sin(prevYaw) * 5.2;
-        const groundY = Math.max(getTerrainHeight(exitX, exitZ) + 0.08, simState.tideOffset);
+        const groundY = Math.max(getTravelHeight(exitX, exitZ, prevPos.y) + 0.08, simState.tideOffset);
         simState.playerPos.set(exitX, groundY, exitZ);
         simState.playerYaw = prevYaw;
         simState.playerVel.set(0, 0, 0);
       } else {
         simState.parachuting = false;
         simState.gliding = false;
-        const groundY = Math.max(getTerrainHeight(simState.playerPos.x, simState.playerPos.z) + 0.08, simState.tideOffset);
+        const groundY = Math.max(getTravelHeight(simState.playerPos.x, simState.playerPos.z, prevPos.y) + 0.08, simState.tideOffset);
         simState.playerPos.y = groundY;
         simState.playerVel.set(0, 0, 0);
       }
     } else if (next === 'CAR') {
       simState.parachuting = false;
       simState.gliding = false;
-      if (simState.carPos.distanceTo(prevPos) > 18) {
-        const groundY = Math.max(getTerrainHeight(prevPos.x, prevPos.z) + 0.08, simState.tideOffset + 0.1);
+      const surface = getTravelHeight(prevPos.x, prevPos.z, prevPos.y);
+      if (simState.carPos.distanceTo(prevPos) > 18 && surface > simState.tideOffset + 0.08) {
+        const groundY = surface + 0.08;
         simState.carPos.set(prevPos.x, groundY, prevPos.z);
         simState.carYaw = prevYaw;
       }
@@ -129,7 +204,7 @@ export function App() {
     } else if (next === 'PLANE') {
       simState.parachuting = false;
       simState.gliding = false;
-      if (simState.planePos.distanceTo(prevPos) > 45) {
+      if (simState.planePos.distanceTo(prevPos) > 45 && simState.aircraftDamage.state !== 'wrecked') {
         const airY = Math.max(getTerrainHeight(prevPos.x, prevPos.z) + 28, 32);
         simState.planePos.set(prevPos.x, airY, prevPos.z);
         simState.planeYaw = prevYaw;
@@ -139,6 +214,8 @@ export function App() {
       }
     }
     simState.mode = next;
+    simState.orbitYaw = simState.orbitPitch = 0;
+    simState.cameraView = 0;
     window.dispatchEvent(new CustomEvent('mode-switched', { detail: next }));
   }, []);
 
@@ -187,7 +264,7 @@ export function App() {
       if (lowerKey === 'd') simState.keys.add('KeyD');
       if (lowerKey === 'f') simState.keys.add('KeyF');
 
-      if (code === 'KeyM' || code === 'Escape' || code === 'Tab') {
+      if (!e.repeat && (code === 'KeyM' || code === 'Escape' || code === 'Tab')) {
         const nextOpen = !Boolean(s.startMenuOpen);
         s.startMenuOpen = nextOpen;
         if (nextOpen) {
@@ -206,6 +283,10 @@ export function App() {
       if (code === 'Digit2') switchMode('CAR');
       if (code === 'Digit3') switchMode('BOAT');
       if (code === 'Digit4') switchMode('PLANE');
+      if (code === 'KeyX' && !e.repeat) {
+        simState.cameraView = (simState.cameraView + 1) % 3;
+        simState.orbitYaw = simState.orbitPitch = 0;
+      }
       if (code === 'KeyR') triggerRouletteSpin();
       if (code === 'KeyE') {
         if (simState.mode !== 'FOOT') {
@@ -242,46 +323,26 @@ export function App() {
   return (
     <div className="fixed inset-0 h-[100dvh] w-[100dvw] overflow-hidden bg-slate-950">
       <Canvas
+        shadows={softwareRenderer ? false : 'percentage'}
+        onCreated={({ gl }) => {
+          const context = gl.getContext();
+          const gpu = context.getExtension('WEBGL_debug_renderer_info');
+          const device = gpu ? context.getParameter(gpu.UNMASKED_RENDERER_WEBGL) : '';
+          if (/SwiftShader|llvmpipe|software rasteriz/i.test(String(device))) {
+            gl.shadowMap.enabled = false;
+            setSoftwareRenderer(true);
+          }
+        }}
         dpr={[0.85, 1.15]}
-        camera={{ fov: 60, near: 0.5, far: 3400, position: [0, 12, 38] }}
+        camera={{ fov: 60, near: 0.22, far: 3400, position: [0, 12, 38] }}
         gl={{
-          antialias: false,
+          antialias: !window.matchMedia('(pointer: coarse)').matches,
           powerPreference: 'high-performance',
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.06,
+          toneMappingExposure: 1.02,
         }}
       >
-        <ProceduralEnvMap />
-        <PerformanceGovernor />
-        <hemisphereLight args={['#dbeafe', '#d6c8b4', 0.92]} />
-        <directionalLight
-          position={[140, 180, -140]}
-          intensity={2.5}
-          color="#fff8e7"
-          castShadow
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-          shadow-camera-near={20}
-          shadow-camera-far={520}
-          shadow-camera-left={-110}
-          shadow-camera-right={110}
-          shadow-camera-top={110}
-          shadow-camera-bottom={-110}
-          shadow-bias={-0.0005}
-        />
-        <directionalLight position={[-120, 80, 120]} intensity={0.75} color="#7dd3fc" />
-        <fog attach="fog" args={['#cfe5f5', 420, 1600]} />
-
-        <SkyDome />
-        <IslandTerrain />
-        <VegasStripDetails />
-        <InstancedFoliage />
-        <VegasLandmarks />
-        <StylizedOcean />
-        <ChipCollectibles />
-        <LandmarkBeacons />
-        <LivingWorldNPCs />
-        <VehicleDirector onHudUpdate={setHud} />
+        <GameWorld onHudUpdate={setHud} />
       </Canvas>
 
       <HUD hud={hud} onSelectMode={switchMode} />

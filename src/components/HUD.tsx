@@ -42,6 +42,7 @@ import {
   simState,
   WEAPON_SPECS,
 } from '../game/store';
+import { GRAND_PRIX_START } from '../game/grandPrix';
 import { getTerrainHeight, VehicleMode } from '../game/worldMath';
 import { soundEngine } from '../game/soundEngine';
 import { MobileControls } from './MobileControls';
@@ -139,7 +140,7 @@ const GAME_MODE_OPTIONS: Array<{
   {
     id: 'GRAND_PRIX',
     title: 'Grand Prix',
-    description: 'Race the 8-checkpoint street circuit for the fastest lap.',
+    description: 'Race eight gates on a closed street circuit with three rivals.',
     badge: 'Circuit',
   },
   {
@@ -244,10 +245,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     menuLabel: 'Golden Gate',
     fullTitle: 'Golden Gate Bridge',
     cityBadge: 'SAN FRANCISCO',
-    note: 'Twin International Orange suspension towers spanning the northern bay channel.',
+    note: 'Follow Grand Central Avenue across North Bay to the Island II construction gate.',
     isWorldWonder: true,
     x: 0,
-    z: -205,
+    z: -286,
     color: '#f97316',
     spawnCarX: 4,
     spawnCarZ: -148,
@@ -470,16 +471,9 @@ export function HUD({ hud, onSelectMode }: Props) {
     const onFsChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
     };
-    const onResize = () => {
-      if (window.innerWidth < 900) {
-        setTouchUi(true);
-      }
-    };
     document.addEventListener('fullscreenchange', onFsChange);
-    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('fullscreenchange', onFsChange);
-      window.removeEventListener('resize', onResize);
     };
   }, []);
 
@@ -505,8 +499,7 @@ export function HUD({ hud, onSelectMode }: Props) {
   const [touchUi, setTouchUi] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return (
-      window.innerWidth < 900 ||
-      'ontouchstart' in window ||
+      window.matchMedia('(pointer: coarse)').matches ||
       (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0)
     );
   });
@@ -528,6 +521,11 @@ export function HUD({ hud, onSelectMode }: Props) {
       window.removeEventListener('mode-switched', onSyncUi);
     };
   }, []);
+
+  useEffect(() => {
+    simState.controlsOpen = controlsOpen;
+    return () => { simState.controlsOpen = false; };
+  }, [controlsOpen]);
 
   const s = simState as any;
   const isStartMenuOpen = Boolean(s.startMenuOpen);
@@ -564,6 +562,7 @@ export function HUD({ hud, onSelectMode }: Props) {
 
   const handleSelectGameMode = (mode: GamePlayMode) => {
     s.gameMode = mode;
+    if (mode !== 'BATTLE_ROYALE') simState.brActive = false;
     if (mode === 'GRAND_PRIX' && simState.mode !== 'CAR') {
       onSelectMode('CAR');
     } else if (mode === 'BATTLE_ROYALE' && simState.mode !== 'FOOT') {
@@ -765,8 +764,13 @@ export function HUD({ hud, onSelectMode }: Props) {
     simState.activeCheckpoint = 0;
     simState.lapTime = 0;
     simState.driftScore = 0;
-    const startY = Math.max(getTerrainHeight(0, 12), 0) + 0.1;
-    simState.carPos.set(0, startY, 12);
+    const [startX, startZ] = GRAND_PRIX_START;
+    const startY = getTerrainHeight(startX, startZ) + 0.1;
+    simState.carPos.set(startX, startY, startZ);
+    simState.raceCountdown = 3;
+    simState.raceElapsed = 0;
+    simState.carDamage.hp = 100;
+    simState.carDamage.wrecked = false;
     simState.carYaw = Math.PI;
     simState.carSpeed = 0;
     simState.carVel.set(0, 0, 0);
@@ -790,6 +794,7 @@ export function HUD({ hud, onSelectMode }: Props) {
     simState.keys.clear();
     s.startMenuOpen = false;
     simState.customizerOpen = false;
+    simState.brActive = activeGameMode === 'BATTLE_ROYALE';
     setMobileTeleportOpen(false);
 
     const chosenDest =
@@ -947,15 +952,16 @@ export function HUD({ hud, onSelectMode }: Props) {
   // =========================================================================
   if (isStartMenuOpen) {
     return (
-      <div className="pointer-events-auto fixed inset-0 z-50 flex select-none bg-gradient-to-r from-neutral-950/92 via-neutral-950/65 to-transparent font-sans text-white">
-        <div className="flex h-full w-full max-w-md flex-col justify-between overflow-y-auto px-6 py-6 sm:max-w-lg sm:px-8 sm:py-8">
+      <div className="world-start-screen pointer-events-auto fixed inset-0 z-50 flex select-none font-sans text-white">
+        <div className="world-start-live"><span /> Live Grand Prix</div>
+        <div className="world-start-panel flex h-full w-full max-w-md flex-col justify-between overflow-y-auto px-6 py-6 sm:max-w-lg sm:px-8 sm:py-8">
           <div className="space-y-6">
             {/* Brand Title */}
             <div>
               <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
                 World Horizon
               </h1>
-              <p className="mt-1 text-sm text-neutral-400">Open-World City Sandbox</p>
+              <p className="mt-2 text-sm text-slate-300">Azurea Coast</p>
             </div>
 
             {/* Section 1 — Game Mode (4 Clearly Defined Game Modes) */}
@@ -1166,12 +1172,12 @@ export function HUD({ hud, onSelectMode }: Props) {
           </div>
 
           {/* Bottom CTA */}
-          <div className="mt-6 pt-4">
+          <div className="world-start-cta mt-6 pt-4">
             <button
               onClick={handleStartGame}
               className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-neutral-950 shadow-lg transition hover:bg-neutral-200 active:scale-[0.99]"
             >
-              Start Game
+              {activeGameMode === 'GRAND_PRIX' ? 'Start Race' : 'Start Game'}
             </button>
           </div>
         </div>
@@ -1184,6 +1190,11 @@ export function HUD({ hud, onSelectMode }: Props) {
   // =========================================================================
   return (
     <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans">
+      {activeGameMode === 'GRAND_PRIX' && (hud.raceCountdown ?? 0) > 0 && (
+        <div className="pointer-events-none fixed left-1/2 top-[32%] z-40 -translate-x-1/2 rounded-3xl border border-white/20 bg-slate-950/80 px-7 py-5 text-center text-5xl font-semibold text-white shadow-2xl" role="status">
+          {Math.ceil(hud.raceCountdown!)}
+        </div>
+      )}
       {/* 0. IMPACT VIGNETTE FLASH */}
       {crashFlashTimer > 0 && (
         <div
@@ -1474,6 +1485,11 @@ export function HUD({ hud, onSelectMode }: Props) {
             </button>
           </div>
 
+          <p className="mb-3 text-[11px] leading-relaxed text-neutral-300">
+            {touchUi
+              ? 'Drag the right side to orbit. Tap View to change camera distance. Hold Gas and steer with the joystick.'
+              : 'WASD moves or steers. Right-drag orbits and X changes the view. Aircraft use I/K for power, Space to climb and Ctrl to brake or descend.'}
+          </p>
           {/* One-Tap Handling Presets */}
           <div className="mb-4">
             <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-neutral-400">
@@ -1753,6 +1769,8 @@ export function HUD({ hud, onSelectMode }: Props) {
               <div className="grid grid-cols-3 gap-1.5">
                 {(
                   [
+                    { id: 'COAST_NAVIGATOR', label: 'Navigator' },
+                    { id: 'RESCUE_PILOT', label: 'Rescue Pilot' },
                     { id: 'RPM_CUSTOM', label: 'Standard' },
                     { id: 'MICHELLE_VIP', label: 'VIP' },
                     { id: 'VANGUARD_SOLDIER', label: 'Tactical' },
@@ -1762,12 +1780,10 @@ export function HUD({ hud, onSelectMode }: Props) {
                   return (
                     <button
                       key={item.id}
-                      onClick={() =>
-                        updateCustomization({
-                          archetype: item.id,
-                          presetName: item.label,
-                        })
-                      }
+                      onClick={() => {
+                        const preset = CHARACTER_PRESETS.find(({ archetype }) => archetype === item.id);
+                        if (preset) updateCustomization(preset);
+                      }}
                       className={`rounded-lg border py-1.5 text-center text-[11px] font-medium transition ${
                         active
                           ? 'border-white bg-white/15 text-white'
@@ -1995,7 +2011,7 @@ export function HUD({ hud, onSelectMode }: Props) {
              Hidden on small screens when touch controls are active so thumbstick has full space */}
       <div
         className={`pointer-events-auto fixed bottom-3 left-3 z-30 items-end gap-2.5 ${
-          touchUi ? 'hidden sm:flex' : 'flex'
+          touchUi ? 'hidden' : 'flex'
         }`}
       >
         {/* Clean circular 128x128 Minimap */}
@@ -2235,7 +2251,7 @@ export function HUD({ hud, onSelectMode }: Props) {
       {/* 7. BOTTOM-RIGHT: Vehicle Integrity + Speedometer + Battle Royale Weapon Bar */}
       <div
         className={`pointer-events-auto fixed z-30 flex flex-col items-end gap-1.5 ${
-          touchUi ? 'right-3 top-14 sm:bottom-3 sm:top-auto' : 'bottom-3 right-3'
+          touchUi ? 'right-3 top-[max(7.1rem,env(safe-area-inset-top))] max-sm:[&>div]:scale-[0.9] max-sm:[&>div]:origin-top-right' : 'bottom-3 right-3'
         }`}
       >
         {/* Vehicle Integrity Readout & Quick Repair Pill (whenever driving/sailing/flying) */}
@@ -2271,6 +2287,21 @@ export function HUD({ hud, onSelectMode }: Props) {
           </div>
         )}
 
+        {hud.mode === 'PLANE' && hud.aircraftDamage && hud.aircraftDamage.state !== 'sound' && (
+          <div role="status" className="pointer-events-none rounded-lg border border-amber-300/35 bg-slate-950/85 px-2.5 py-1 text-[10px] font-semibold text-amber-200">
+            {hud.aircraftDamage.state === 'wrecked'
+              ? hud.aircraftDamage.settled ? 'WRECKED' : 'ENGINE FAILURE'
+              : hud.aircraftDamage.state === 'burning' ? 'ENGINE FIRE'
+              : hud.aircraftDamage.state === 'failing' ? 'CONTROL DEGRADED' : 'ENGINE SMOKE'}
+            <span className="ml-2 text-slate-300">L {Math.round(hud.aircraftDamage.left)}% · R {Math.round(hud.aircraftDamage.right)}%</span>
+          </div>
+        )}
+        {hud.mode === 'PLANE' && !touchUi && (
+          <p className="rounded-lg bg-slate-950/80 px-2.5 py-1.5 text-[10px] font-medium text-slate-200">
+            {simState.activePlaneIdx === 1 ? 'WASD fly · Space climb · Ctrl descend' :
+              'W/S pitch · A/D bank · I/K power ' + Math.round((hud.aircraftThrottle ?? 0.56) * 100) + '% · Ctrl brake'}
+          </p>
+        )}
         {/* Clean Digital Speedometer */}
         <div className="flex items-baseline gap-3 rounded-2xl border border-white/10 bg-neutral-950/75 px-3.5 py-1.5 shadow-xl backdrop-blur-md sm:px-4 sm:py-2">
           <div className="flex items-baseline gap-1">
@@ -2293,7 +2324,7 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
 
         {/* 5-Slot Weapon Loadout + Fire — Battle Royale only */}
-        {activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
+        {!touchUi && activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
           <div className="hidden items-center gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 p-1.5 shadow-xl backdrop-blur-md sm:flex">
             {WEAPON_SPECS.map((spec, idx) => {
               const isSelected = activeWeaponIdx === idx;
@@ -2327,8 +2358,9 @@ export function HUD({ hud, onSelectMode }: Props) {
       {/* 8. MOBILE TOUCH CONTROLS OVERLAY */}
       <MobileControls
         mode={hud.mode}
-        gameMode={activeGameMode}
-        visible={touchUi && !isStartMenuOpen && !isCustomizerOpen}
+        vehicleHp={vehicleHp}
+        onSelectMode={onSelectMode}
+        visible={touchUi && !isStartMenuOpen && !isCustomizerOpen && !controlsOpen}
       />
     </div>
   );
