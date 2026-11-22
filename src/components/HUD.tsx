@@ -42,8 +42,8 @@ import {
   simState,
   WEAPON_SPECS,
 } from '../game/store';
-import { GRAND_PRIX_START } from '../game/grandPrix';
-import { getTerrainHeight, VehicleMode } from '../game/worldMath';
+import { GRAND_PRIX_START, nearestRaceProgress } from '../game/grandPrix';
+import { coastBeachWidth, coastRoadRadius, getTerrainHeight, NORTH_BAY_BRIDGE, VehicleMode } from '../game/worldMath';
 import { soundEngine } from '../game/soundEngine';
 import { MobileControls } from './MobileControls';
 
@@ -56,13 +56,23 @@ export type MetropolisGameMode = GamePlayMode;
 
 const RADAR_SIZE = 128;
 const RADAR_CENTER = RADAR_SIZE / 2; // 64
-const RADAR_SCALE = 52 / 260;
+const RADAR_SCALE = 52 / 309;
 
 function worldToRadar(x: number, z: number): [number, number] {
   const rx = Math.max(7, Math.min(RADAR_SIZE - 7, RADAR_CENTER + x * RADAR_SCALE));
   const rz = Math.max(7, Math.min(RADAR_SIZE - 7, RADAR_CENTER + z * RADAR_SCALE));
   return [rx, rz];
 }
+
+function radarCoast(beach: boolean) {
+  return Array.from({ length: 84 }, (_, index) => {
+    const angle = index / 84 * Math.PI * 2;
+    const distance = coastRoadRadius(angle) + (beach ? coastBeachWidth(angle) : 0);
+    return worldToRadar(Math.sin(angle) * distance, Math.cos(angle) * distance).join(',');
+  }).join(' ');
+}
+const radarShoreline = radarCoast(true);
+const radarCoastalRoad = radarCoast(false);
 
 function formatLapTime(seconds: number): string {
   const safe = Math.max(0, seconds);
@@ -592,8 +602,6 @@ export function HUD({ hud, onSelectMode }: Props) {
     onSelectMode('CAR');
     s.activeCarIdx = idx;
     s.activeCarName = CAR_FLEET_MENU[idx]?.codeName ?? 'FERRARI 458 ITALIA';
-    simState.stuntText = `${CAR_FLEET_MENU[idx]?.label ?? 'Car'} Selected`;
-    simState.stuntTimer = 2.0;
     setUiTick((t) => t + 1);
   };
 
@@ -610,8 +618,6 @@ export function HUD({ hud, onSelectMode }: Props) {
       simState.boatYaw = -Math.PI / 2;
       simState.boatSpeed = 0;
     }
-    simState.stuntText = `${BOAT_FLEET_MENU[idx]?.label ?? 'Boat'} Selected`;
-    simState.stuntTimer = 2.0;
     setUiTick((t) => t + 1);
   };
 
@@ -619,8 +625,6 @@ export function HUD({ hud, onSelectMode }: Props) {
     onSelectMode('PLANE');
     s.activePlaneIdx = idx;
     s.activePlaneName = PLANE_FLEET_MENU[idx]?.codeName ?? 'GULFSTREAM G700 JET';
-    simState.stuntText = `${PLANE_FLEET_MENU[idx]?.label ?? 'Aircraft'} Selected`;
-    simState.stuntTimer = 2.0;
     setUiTick((t) => t + 1);
   };
 
@@ -753,8 +757,6 @@ export function HUD({ hud, onSelectMode }: Props) {
     }
 
     if (matched) {
-      simState.stuntText = `${matched.cityBadge} · ${matched.fullTitle}`;
-      simState.stuntTimer = 2.2;
     }
     setUiTick((t) => t + 1);
   };
@@ -762,6 +764,8 @@ export function HUD({ hud, onSelectMode }: Props) {
   const resetGrandPrixRace = () => {
     onSelectMode('CAR');
     simState.activeCheckpoint = 0;
+    simState.lapCount = 0;
+    simState.sectorTimes.length = 0;
     simState.lapTime = 0;
     simState.driftScore = 0;
     const [startX, startZ] = GRAND_PRIX_START;
@@ -769,13 +773,12 @@ export function HUD({ hud, onSelectMode }: Props) {
     simState.carPos.set(startX, startY, startZ);
     simState.raceCountdown = 3;
     simState.raceElapsed = 0;
+    simState.raceRivalDistances.fill(0);
     simState.carDamage.hp = 100;
     simState.carDamage.wrecked = false;
     simState.carYaw = Math.PI;
     simState.carSpeed = 0;
     simState.carVel.set(0, 0, 0);
-    simState.stuntText = 'Grand Prix — Gate 1 Ahead';
-    simState.stuntTimer = 2.6;
     setUiTick((t) => t + 1);
   };
 
@@ -811,8 +814,6 @@ export function HUD({ hud, onSelectMode }: Props) {
         chosenDest.x - chosenDest.spawnFootX,
         chosenDest.z - chosenDest.spawnFootZ
       );
-      simState.stuntText = `Sky-Drop · ${chosenDest.menuLabel}`;
-      simState.stuntTimer = 3.0;
     } else if (activeGameMode === 'GRAND_PRIX') {
       simState.lapCount = 0;
       resetGrandPrixRace();
@@ -860,8 +861,10 @@ export function HUD({ hud, onSelectMode }: Props) {
   const lapTime = hud.lapTime ?? simState.lapTime ?? 0;
   const bestLapTime = hud.bestLapTime ?? simState.bestLapTime ?? null;
   const lapCount = hud.lapCount ?? simState.lapCount ?? 0;
-  const stuntCallout = hud.stuntText ?? simState.stuntText;
   const driftScore = Math.round(hud.driftScore ?? simState.driftScore);
+  const lastSector = (simState.activeCheckpoint + simState.checkpoints.length - 1) % simState.checkpoints.length;
+  const split = simState.sectorTimes[lastSector] === undefined || simState.bestSectors[lastSector] === undefined ?
+    null : simState.sectorTimes[lastSector] - simState.bestSectors[lastSector];
 
   const [playerRx, playerRz] = worldToRadar(activePos.x, activePos.z);
   const [cpRx, cpRz] = worldToRadar(activeCp.position[0], activeCp.position[2]);
@@ -887,8 +890,9 @@ export function HUD({ hud, onSelectMode }: Props) {
   const wingRX = playerRx - fwdX * 4.5 + rightX * 3.8;
   const wingRZ = playerRz - fwdZ * 4.5 + rightZ * 3.8;
 
-  const [aveTopX, aveTopZ] = worldToRadar(0, -210);
-  const [aveBotX, aveBotZ] = worldToRadar(0, 175);
+  const [aveTopX, aveTopZ] = worldToRadar(0, NORTH_BAY_BRIDGE.approach);
+  const [aveBotX, aveBotZ] = worldToRadar(0, coastRoadRadius(0));
+  const [bridgeX, bridgeZ] = worldToRadar(0, NORTH_BAY_BRIDGE.gate);
   const [midWestX, midWestZ] = worldToRadar(-150, 0);
   const [midEastX, midEastZ] = worldToRadar(150, 0);
   const [canalStartX, canalStartZ] = worldToRadar(82, -95);
@@ -896,7 +900,6 @@ export function HUD({ hud, onSelectMode }: Props) {
   const [runwayStartX, runwayStartZ] = worldToRadar(-195, 155);
   const [runwayEndX, runwayEndZ] = worldToRadar(-45, 155);
 
-  const killFeedText = hud.killFeedText ?? simState.killFeedText;
   const playerHp = Math.max(0, Math.min(100, Math.round(hud.playerHp ?? simState.playerHp ?? 100)));
   const playerShield = Math.max(
     0,
@@ -932,13 +935,9 @@ export function HUD({ hud, onSelectMode }: Props) {
     Math.min(WORLD_TOUR_STOPS.length, (simState.tourVisitedIds || []).length || 1)
   );
 
-  const notificationBanner =
-    (activeGameMode === 'BATTLE_ROYALE' ? killFeedText : null) ||
-    stuntCallout ||
-    (activeGameMode === 'GRAND_PRIX' && driftScore > 0 ? `Drift +${driftScore}` : null) ||
-    (hud.nearbyVehicle ? `Press E to enter ${hud.nearbyVehicle.toLowerCase()}` : null) ||
-    hud.nearLandmark ||
-    null;
+  const activeRace = activeGameMode === 'GRAND_PRIX' && !isStartMenuOpen;
+  const progress = activeRace ? nearestRaceProgress(activePos, simState.lapCount, simState.activeCheckpoint) : 0;
+  const raceRank = 1 + simState.raceRivalDistances.filter((distance) => distance > progress + 1).length;
 
   const currentFinish =
     custom.topRoughness >= 0.48
@@ -1174,6 +1173,7 @@ export function HUD({ hud, onSelectMode }: Props) {
           {/* Bottom CTA */}
           <div className="world-start-cta mt-6 pt-4">
             <button
+              id="world-start-game"
               onClick={handleStartGame}
               className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-neutral-950 shadow-lg transition hover:bg-neutral-200 active:scale-[0.99]"
             >
@@ -1190,11 +1190,6 @@ export function HUD({ hud, onSelectMode }: Props) {
   // =========================================================================
   return (
     <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans">
-      {activeGameMode === 'GRAND_PRIX' && (hud.raceCountdown ?? 0) > 0 && (
-        <div className="pointer-events-none fixed left-1/2 top-[32%] z-40 -translate-x-1/2 rounded-3xl border border-white/20 bg-slate-950/80 px-7 py-5 text-center text-5xl font-semibold text-white shadow-2xl" role="status">
-          {Math.ceil(hud.raceCountdown!)}
-        </div>
-      )}
       {/* 0. IMPACT VIGNETTE FLASH */}
       {crashFlashTimer > 0 && (
         <div
@@ -1207,9 +1202,7 @@ export function HUD({ hud, onSelectMode }: Props) {
       {activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
         <div className="pointer-events-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
           <div
-            className={`relative h-5 w-5 transition-transform duration-150 ${
-              killFeedText ? 'scale-125' : 'scale-100'
-            }`}
+            className="relative h-5 w-5"
           >
             <span className="absolute left-1/2 top-0 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/80" />
             <span className="absolute bottom-0 left-1/2 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/80" />
@@ -1360,7 +1353,7 @@ export function HUD({ hud, onSelectMode }: Props) {
             <div className="flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
               <span className="text-neutral-400">Alive</span>
-              <span className="font-semibold tabular-nums">{aliveCount}</span>
+              <span className="font-semibold tabular-nums">{simState.brResult === 'OUT' ? Math.max(0, aliveCount - 1) : aliveCount}</span>
             </div>
             <span className="h-3.5 w-px bg-white/15" />
             <div className="flex items-center gap-1.5">
@@ -1379,7 +1372,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               onClick={() => window.dispatchEvent(new CustomEvent('br-drop'))}
               className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-neutral-950 transition hover:bg-neutral-200"
             >
-              Drop Again (P)
+              {simState.brResult ? 'Play again' : 'Drop Again (P)'}
             </button>
           </div>
         </div>
@@ -1388,6 +1381,7 @@ export function HUD({ hud, onSelectMode }: Props) {
       {activeGameMode === 'GRAND_PRIX' && (
         <div className="pointer-events-auto fixed left-1/2 top-14 z-30 w-[92vw] max-w-xl -translate-x-1/2 sm:top-16 sm:w-auto">
           <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl border border-white/15 bg-neutral-950/80 px-4 py-2 text-xs text-white shadow-xl backdrop-blur-md">
+            <span className="font-semibold tabular-nums text-amber-200" aria-label="Race position">P{raceRank}</span>
             <div className="flex items-center gap-1.5">
               <Flag className="h-3.5 w-3.5 text-amber-400" />
               <span className="text-neutral-400">Lap</span>
@@ -1422,9 +1416,12 @@ export function HUD({ hud, onSelectMode }: Props) {
                   </span>
                 </span>
               )}
-              {driftScore > 0 && (
-                <span className="font-semibold text-amber-300">Drift {driftScore}</span>
+              {split !== null && (
+                <span className={split <= 0 ? 'text-emerald-300' : 'text-amber-300'}>
+                  {split > 0 ? '+' : '−'}{Math.abs(split).toFixed(2)}
+                </span>
               )}
+              <meter className="hidden h-2 w-12 accent-amber-400 sm:inline" aria-label="Drift boost" min={0} max={100} value={driftScore} />
             </div>
             <button
               onClick={resetGrandPrixRace}
@@ -1695,18 +1692,6 @@ export function HUD({ hud, onSelectMode }: Props) {
           >
             Reset to Defaults
           </button>
-        </div>
-      )}
-
-      {/* FLOATING NOTIFICATION PILL */}
-      {notificationBanner && (
-        <div className="pointer-events-none fixed left-1/2 top-28 z-20 -translate-x-1/2 sm:top-32">
-          <div className="flex items-center gap-2 rounded-full border border-white/15 bg-neutral-950/80 px-4 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-md">
-            {activeGameMode === 'BATTLE_ROYALE' && killFeedText && (
-              <Crosshair className="h-3.5 w-3.5 text-rose-400" />
-            )}
-            <span>{notificationBanner}</span>
-          </div>
         </div>
       )}
 
@@ -2050,6 +2035,9 @@ export function HUD({ hud, onSelectMode }: Props) {
               strokeWidth="1"
             />
 
+            <polygon points={radarShoreline} fill="#6e8b7a38" stroke="#9fb6a365" strokeWidth="0.75" />
+            <polygon points={radarCoastalRoad} fill="none" stroke="#d3e5dd82" strokeWidth="1.35" />
+            <line x1={aveTopX} y1={aveTopZ} x2={bridgeX} y2={bridgeZ} stroke="#ddac79af" strokeWidth="1.5" />
             <line
               x1={canalStartX}
               y1={canalStartZ}
@@ -2360,7 +2348,8 @@ export function HUD({ hud, onSelectMode }: Props) {
         mode={hud.mode}
         vehicleHp={vehicleHp}
         onSelectMode={onSelectMode}
-        visible={touchUi && !isStartMenuOpen && !isCustomizerOpen && !controlsOpen}
+        visible={touchUi && !isStartMenuOpen && !isCustomizerOpen && !controlsOpen &&
+          !(activeGameMode === 'BATTLE_ROYALE' && simState.brResult === 'OUT')}
       />
     </div>
   );

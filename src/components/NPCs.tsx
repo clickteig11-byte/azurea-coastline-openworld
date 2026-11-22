@@ -4,9 +4,13 @@ import { useFrame } from '@react-three/fiber';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { animateHumanoid, createHumanoidRig, type HumanoidRig } from '../game/humanoid';
-import { getTerrainHeight, getWaveHeight } from '../game/worldMath';
+import { getTerrainHeight, getTravelHeight, getWaveHeight } from '../game/worldMath';
 import { simState, COASTAL_CHARACTERS } from '../game/store';
 import { pedestrianContact } from '../game/vehicleContact';
+import { injureBot, injurePlayer } from '../game/combat';
+import { launchTumble, stepTumble, type Tumble } from '../game/motion';
+import { damageWorld, emitEnvironment, traceWorld } from '../game/worldDamage';
+import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture } from './Textures';
 
 // ============================================================================
@@ -142,7 +146,54 @@ interface PedestrianAgent {
   dodgeZ: number;
   dodgeAlert: number;
   resilience?: number;
-  impact?: { elapsed: number; duration: number; vx: number; vz: number; side: number; strength: number };
+  impact?: Tumble & { y: number; duration: number };
+}
+
+interface BotTactics {
+  round: number;
+  awareness: number;
+  exposed: boolean;
+  coverX: number;
+  coverZ: number;
+  direction: number;
+  cooldown: number;
+  burst: number;
+  retreat: number;
+  phase: number;
+  tracer: number;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+}
+
+function positionFall(mount: THREE.Group, fall: Tumble, recovery = 1) {
+  mount.rotation.set(fall.pitch * recovery, 0, fall.roll * recovery, 'YXZ');
+  mount.position.y = (0.13 + Math.min(0.56, Math.abs(Math.sin(fall.pitch)) * 0.42)) * recovery;
+}
+
+function moveTumbling(
+  actor: { x: number; z: number }, fall: Tumble, height: number, dt: number,
+) {
+  const speed = Math.hypot(fall.vx, fall.vz);
+  let x = actor.x + fall.vx * dt;
+  let z = actor.z + fall.vz * dt;
+  if (speed > 0.15) {
+    const obstacle = traceWorld(_vecA.set(actor.x, height + 0.56, actor.z),
+      _vecB.set(fall.vx / speed, 0, fall.vz / speed), speed * dt, 0.18);
+    if (obstacle && Math.abs(obstacle.normal.y) < 0.72) {
+      x = actor.x;
+      z = actor.z;
+      fall.vx *= -0.33;
+      fall.vz *= -0.33;
+    }
+  }
+  actor.x = x;
+  actor.z = z;
+  const ground = getTravelHeight(x, z, height + 0.35);
+  const result = stepTumble(fall, height, ground, dt);
+  if (result.impulse > 1.8) {
+    emitEnvironment('dust', _vecA.set(x, result.y + 0.13, z), Math.min(0.7, result.impulse * 0.1));
+  }
+  return result.y;
 }
 
 const civilianLooks = ['commuter', 'tourist', 'hotel_guest', 'high_roller', 'server', 'pool_guest', 'security'];
@@ -873,7 +924,13 @@ export function LivingWorldNPCs() {
   const botHudBillboardRefs = useRef<Array<THREE.Group | null>>([]);
   const botHpBarRefs = useRef<Array<THREE.Mesh | null>>([]);
   const botShieldBarRefs = useRef<Array<THREE.Mesh | null>>([]);
-  const botHitFlashRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const botTracers = useRef<(THREE.Mesh | null)[]>([]);
+  const botDrops = useRef<(THREE.Group | null)[]>([]);
+  const tactic = useMemo<BotTactics[]>(() => simState.botTargets.map((_, i) => ({
+    round: -1, awareness: 0, exposed: false, coverX: 0, coverZ: 0, direction: i % 2 ? 1 : -1,
+    cooldown: 0, burst: 0, retreat: i % 3 === 1 ? 39 : 26, phase: i, tracer: 0,
+    from: new THREE.Vector3(), to: new THREE.Vector3(),
+  })), []);
   const botMuzzleFlashRefs = useRef<Array<THREE.Group | null>>([]);
   const botStrideRigs = useRef<Array<HumanoidRig | null>>(
     simState.botTargets.map(() => null)
@@ -1269,10 +1326,11 @@ export function LivingWorldNPCs() {
     const camPos = state.camera.position;
 
     const sweep = simState.carSweep;
-    const canStrike = simState.mode === 'CAR' && !simState.startMenuOpen;
+    const canStrike = simState.mode === 'CAR' && !simState.startMenuOpen && (!simState.brActive || simState.brResult !== 'OUT');
     const applyBump = (severity: number) => {
       simState.carSpeed *= 0.95 - 0.16 * severity;
-      simState.cameraShake = Math.max(simState.cameraShake, 0.12 + severity * 0.23);
+      simState.cameraShake = Math.max(simState.cameraShake, 0.10 + severity * 0.24);
+      soundEngine.playSurface('landing', 0.24 + severity * 0.44);
     };
 
     // ------------------------------------------------------------------------
@@ -1291,36 +1349,29 @@ export function LivingWorldNPCs() {
         const remaining = Math.max(0, (p.resilience ?? 100) - contact.damage);
         p.resilience = remaining;
         p.impact = {
-          elapsed: 0, duration: remaining === 0 ? 6.5 : 2 + contact.severity * 2,
-          vx: contact.travelX, vz: contact.travelZ, side: contact.side, strength: contact.severity,
+          ...launchTumble(contact.travelX, contact.travelZ, contact.severity, contact.side),
+          y: getTravelHeight(p.x, p.z), duration: remaining === 0 ? 7.5 : 2 + contact.severity * 2,
         };
         p.yaw = Math.atan2(contact.travelX, contact.travelZ);
         applyBump(contact.severity);
       }
       if (p.impact) {
         const fall = p.impact;
-        fall.elapsed = Math.min(fall.duration, fall.elapsed + dt);
-        p.x += fall.vx * dt;
-        p.z += fall.vz * dt;
-        const drag = Math.exp(-dt * 3.4);
-        fall.vx *= drag;
-        fall.vz *= drag;
-        const knockedDown = THREE.MathUtils.smoothstep(fall.elapsed, 0.03, 0.38);
-        const recovery = 1 - THREE.MathUtils.smoothstep(fall.elapsed, fall.duration - 0.82, fall.duration);
+        fall.y = moveTumbling(p, fall, fall.y, dt);
+        const recover = p.resilience === 0 ? 1 : 1 - THREE.MathUtils.smoothstep(fall.elapsed, fall.duration - 0.76, fall.duration);
         if (group) {
-          group.position.set(p.x, getTerrainHeight(p.x, p.z), p.z);
+          group.position.set(p.x, fall.y, p.z);
           group.rotation.y = p.yaw;
+          group.scale.setScalar(p.resilience === 0 ? 1 - THREE.MathUtils.smoothstep(fall.elapsed, 6.1, fall.duration) : 1);
         }
-        if (model) {
-          model.position.y = knockedDown * recovery * 0.19;
-          model.rotation.set(-knockedDown * recovery * (0.65 + 0.76 * fall.strength), 0, knockedDown * recovery * 0.85 * fall.side);
-        }
+        if (model) positionFall(model, fall, recover);
         const rig = citizenStrideRigs.current[i];
         if (rig) animateHumanoid(rig, { dt, time: elapsed, phase: p.phase, speed: 0,
-          airborne: fall.elapsed < 0.27 ? 'jump' : undefined, fallSpeed: -4, landing: knockedDown * recovery * 0.65 });
+          airborne: fall.grounded ? undefined : 'jump', fallSpeed: fall.vy, landing: recover * (fall.grounded ? 0.87 : 0.39) });
         if (fall.elapsed >= fall.duration && Math.hypot(threatX - p.x, threatZ - p.z) > 3.5) {
           p.resilience = 100;
           p.impact = undefined;
+          group?.scale.setScalar(1);
           if (model) {
             model.position.y = 0;
             model.rotation.set(0, 0, 0);
@@ -1418,169 +1469,254 @@ export function LivingWorldNPCs() {
     }
 
     // ------------------------------------------------------------------------
-    // 2. Update 8 Armed Battle Royale Combat Bots (Parachute Sky-Drop, Patrol, Muzzle Flash & HP/Shield Bars)
-    // ------------------------------------------------------------------------
+    // 2. Battle Royale combat, drops, and character reactions.
+    const combat = simState.brActive && simState.gameMode === 'BATTLE_ROYALE' && !simState.startMenuOpen;
     for (let i = 0; i < simState.botTargets.length; i++) {
       const bot = simState.botTargets[i];
-      const botGroup = botGroupRefs.current[i];
-      if (!simState.brActive || simState.gameMode !== 'BATTLE_ROYALE') {
-        if (botGroup) botGroup.visible = false;
+      const ai = tactic[i];
+      const group = botGroupRefs.current[i];
+      const tracer = botTracers.current[i];
+      const drop = botDrops.current[i];
+      if (!combat) {
+        if (group) group.visible = false;
+        if (tracer) tracer.visible = false;
+        if (drop) drop.visible = false;
         continue;
       }
-      const parachuteGroup = botParachuteRefs.current[i];
-      const hudBillboard = botHudBillboardRefs.current[i];
+      if (ai.round !== simState.brRound) {
+        ai.round = simState.brRound;
+        ai.awareness = i * 0.065;
+        ai.cooldown = 0.7 + i * 0.28;
+        ai.burst = ai.tracer = 0;
+        ai.exposed = false;
+        ai.coverX = ai.coverZ = 0;
+      }
+      const parachute = botParachuteRefs.current[i];
+      const billboard = botHudBillboardRefs.current[i];
       const hpBar = botHpBarRefs.current[i];
       const shieldBar = botShieldBarRefs.current[i];
-      const hitFlashMesh = botHitFlashRefs.current[i];
-      const muzzleFlashGroup = botMuzzleFlashRefs.current[i];
-      const botRig = botStrideRigs.current[i];
+      const muzzle = botMuzzleFlashRefs.current[i];
+      const mount = botModelMountRefs.current[i];
+      const gun = botGunMountRefs.current[i];
+      const rig = botStrideRigs.current[i];
+      let visualSpeed = 0;
+      let lateral = 0;
+      let aim = 0;
 
-      if (!bot.alive) {
-        if (botGroup) botGroup.visible = false;
-        bot.respawnTimer -= dt;
-        if (bot.respawnTimer <= 0) {
-          bot.alive = true;
-          bot.hp = bot.maxHp;
-          bot.shield = bot.maxShield;
-          bot.parachuting = true;
-          bot.parachuteY = 65;
-          bot.x = bot.homeX;
-          bot.z = bot.homeZ;
-          bot.y = 65;
-          bot.hitFlash = 0;
-          bot.muzzleFlash = 0;
-        }
-        continue;
+      if (group) {
+        group.visible = bot.alive || Boolean(bot.fall && bot.fall.elapsed < 9);
+        group.scale.setScalar(bot.alive ? 1 : 1 - THREE.MathUtils.smoothstep(bot.fall?.elapsed ?? 8, 7.1, 9));
       }
-
-      if (botGroup) botGroup.visible = true;
-
-      if (canStrike && !bot.parachuting && bot.hitFlash < 0.03) {
-        const contact = pedestrianContact(sweep, bot.x, bot.y, bot.z);
-        if (contact) {
-          const absorbed = Math.min(bot.shield, contact.damage);
-          bot.shield -= absorbed;
-          bot.hp = Math.max(0, bot.hp - (contact.damage - absorbed));
-          bot.hitFlash = 0.48;
-          bot.x += contact.travelX * 0.19;
-          bot.z += contact.travelZ * 0.19;
-          applyBump(contact.severity);
-          if (bot.hp <= 0) {
-            bot.alive = false;
-            bot.respawnTimer = 9;
-            simState.eliminations++;
-            simState.aliveCount = Math.max(1, simState.aliveCount - 1);
-            simState.killFeedText = 'VEHICLE ELIMINATION · ' + bot.name;
-            simState.killFeedTimer = 3;
-            if (botGroup) botGroup.visible = false;
-            continue;
-          }
+      if (canStrike && bot.alive && !bot.fall && !bot.parachuting) {
+        const hit = pedestrianContact(sweep, bot.x, bot.y, bot.z);
+        if (hit && simState.brResult === null) {
+          injureBot(bot, hit.damage, hit.travelX, hit.travelZ, hit.severity, hit.side);
+          applyBump(hit.severity);
         }
       }
-      const groundY = getTerrainHeight(bot.x, bot.z);
-
-      if (bot.parachuting) {
+      if (bot.fall) {
+        const fall = bot.fall;
+        bot.y = moveTumbling(bot, fall, bot.y, dt);
+        if (fall.grounded && !bot.alive && !bot.dropSpawned) {
+          bot.drop = [bot.x + fall.side * 0.72, bot.y + 0.085, bot.z + 0.36];
+          bot.dropSpawned = true;
+        }
+        const recovery = bot.alive ? 1 - THREE.MathUtils.smoothstep(fall.elapsed, (bot.downUntil ?? 2) - 0.64, bot.downUntil ?? 2) : 1;
+        if (mount) positionFall(mount, fall, recovery);
+        if (rig) animateHumanoid(rig, { dt, time: elapsed, phase: ai.phase, speed: 0,
+          airborne: fall.grounded ? undefined : 'jump', fallSpeed: fall.vy, landing: recovery * 0.88 });
+        if (bot.alive && recovery < 0.01 && fall.grounded) bot.fall = undefined;
+      } else if (bot.parachuting) {
         bot.parachuteY -= 9.5 * dt;
-        bot.y = bot.parachuteY;
-        bot.x = bot.homeX + Math.sin(elapsed * 1.4 + i) * 1.6;
-        bot.z = bot.homeZ + Math.cos(elapsed * 1.2 + i) * 1.6;
-        bot.yaw = Math.sin(elapsed * 0.9 + i) * 0.35;
-
-        if (bot.y <= groundY + 0.1) {
-          bot.parachuting = false;
-          bot.y = groundY;
-          bot.parachuteY = groundY;
+        bot.x = bot.homeX + Math.sin(elapsed * 1.2 + i) * 1.4;
+        bot.z = bot.homeZ + Math.cos(elapsed * 1.1 + i) * 1.4;
+        const surface = getTravelHeight(bot.x, bot.z);
+        bot.y = Math.max(surface, bot.parachuteY);
+        bot.yaw = Math.sin(elapsed * 0.74 + i) * 0.4;
+        if (bot.y <= surface + 0.04) bot.parachuting = false;
+      } else if (bot.alive) {
+        if (mount) {
+          mount.position.y = 0;
+          mount.rotation.set(0, 0, -Math.sin(bot.hitFlash * 16) * bot.hitFlash * 0.42);
         }
-      } else {
-        // Tactical sidewalk/plaza patrol around (bot.homeX, bot.homeZ) — never blocking road lanes or inside landmarks
-        const patrolAngle = elapsed * 0.55 + i * 1.15;
-        const targetX = bot.homeX + Math.cos(patrolAngle) * 1.4;
-        const targetZ = bot.homeZ + Math.sin(patrolAngle * 0.85) * 8.5;
-
-        const dxPatrol = targetX - bot.x;
-        const dzPatrol = targetZ - bot.z;
-        const patrolDist = Math.hypot(dxPatrol, dzPatrol);
-        if (patrolDist > 0.05) {
-          const moveStep = Math.min(patrolDist, 2.35 * dt);
-          bot.x += (dxPatrol / patrolDist) * moveStep;
-          bot.z += (dzPatrol / patrolDist) * moveStep;
-        }
-        bot.y = getTerrainHeight(bot.x, bot.z);
-
-        // Check distance to player for combat engagement within 42m
-        const dxPlayer = threatX - bot.x;
-        const dzPlayer = threatZ - bot.z;
-        const distToPlayer = Math.hypot(dxPlayer, dzPlayer);
-
-        if (distToPlayer < 42.0) {
-          bot.yaw = Math.atan2(dxPlayer, dzPlayer);
-          const fireCycle = (elapsed * 2.4 + i * 0.73) % 1.0;
-          if (fireCycle < 0.14 && bot.muzzleFlash <= 0) {
-            bot.muzzleFlash = 0.12;
+        const dx = threatX - bot.x;
+        const dz = threatZ - bot.z;
+        const dist = Math.hypot(dx, dz);
+        const engaging = simState.brResult === null && !simState.parachuting && dist < 70 && dist > 0.02;
+        let moveX = bot.homeX + Math.cos(elapsed * 0.43 + i) * 4 - bot.x;
+        let moveZ = bot.homeZ + Math.sin(elapsed * 0.37 + i) * 7 - bot.z;
+        let pace = 2.15;
+        if (engaging) {
+          const fx = dx / dist;
+          const fz = dz / dist;
+          ai.awareness -= dt;
+          const targetY = simState.playerPos.y + (simState.mode === 'FOOT' ? 1.05 : 0.74);
+          if (ai.awareness <= 0) {
+            ai.awareness = 0.31 + i * 0.021;
+            _vecA.set(bot.x, bot.y + 1.3, bot.z);
+            _vecB.set(dx, targetY - _vecA.y, dz);
+            const rayLength = _vecB.length();
+            ai.exposed = !traceWorld(_vecA, _vecB.divideScalar(rayLength), rayLength, 0.02);
+            if (ai.coverX === 0 && bot.hitFlash > 0.04 && bot.shield < bot.maxShield / 2) {
+              for (const side of [ai.direction, -ai.direction]) {
+                const cx = bot.x + fz * side * 5.5 - fx * 2;
+                const cz = bot.z - fx * side * 5.5 - fz * 2;
+                const cy = getTravelHeight(cx, cz) + 1.28;
+                _vecA.set(cx, cy, cz);
+                _vecB.set(threatX - cx, targetY - cy, threatZ - cz);
+                const length = _vecB.length();
+                if (traceWorld(_vecA, _vecB.divideScalar(length), length, 0.025)) {
+                  ai.coverX = cx;
+                  ai.coverZ = cz;
+                  ai.direction = side;
+                  break;
+                }
+              }
+            }
           }
-        } else if (patrolDist > 0.05) {
-          bot.yaw = Math.atan2(dxPatrol, dzPatrol);
+          const desired = ai.retreat;
+          const approach = THREE.MathUtils.clamp((dist - desired) / 12, -0.8, 0.94);
+          const sideStep = ai.direction * (ai.exposed ? 0.86 : 1.22);
+          moveX = fx * approach + fz * sideStep;
+          moveZ = fz * approach - fx * sideStep;
+          pace = ai.exposed ? 3.65 : 4.65;
+          if (ai.coverX !== 0) {
+            moveX = ai.coverX - bot.x;
+            moveZ = ai.coverZ - bot.z;
+            pace = 5.15;
+            if (Math.hypot(moveX, moveZ) < 0.9) {
+              ai.coverX = ai.coverZ = 0;
+              ai.cooldown = 0.72;
+            }
+          }
+          if (canStrike && simState.carSpeed > 6 && dist < 16) {
+            const heading = (bot.x - threatX) * Math.sin(sweep.yaw) + (bot.z - threatZ) * Math.cos(sweep.yaw);
+            const side = (bot.x - threatX) * Math.cos(sweep.yaw) - (bot.z - threatZ) * Math.sin(sweep.yaw);
+            if (heading > 0 && Math.abs(side) < 3.1 && heading < simState.carSpeed * 1.05) {
+              moveX = Math.cos(sweep.yaw) * (Math.sign(side) || ai.direction);
+              moveZ = -Math.sin(sweep.yaw) * (Math.sign(side) || ai.direction);
+              pace = 5.9;
+            }
+          }
+
+          bot.yaw = Math.atan2(dx, dz);
+          lateral = ai.direction * 0.7;
+          aim = ai.exposed && dist < 54 ? 1 : 0.43;
+          ai.cooldown -= dt;
+          if (ai.exposed && dist < 51 && bot.hitFlash < 0.17 && ai.cooldown <= 0) {
+            const accurate = 1 - THREE.MathUtils.smoothstep(dist, 9, 52) * 0.58;
+            const chance = accurate * (simState.mode === 'CAR' ? 0.67 : 0.81);
+            const hitTarget = Math.random() < chance;
+            const miss = hitTarget ? 0 : (Math.random() < 0.5 ? -1 : 1) * (0.64 + Math.random() * 2.45);
+            ai.from.set(bot.x + fz * 0.21 + fx * 0.68, bot.y + 1.34, bot.z - fx * 0.21 + fz * 0.68);
+            ai.to.set(threatX + fz * miss, targetY + (hitTarget ? 0 : Math.random() * 0.86), threatZ - fx * miss);
+            _vecB.copy(ai.to).sub(ai.from);
+            const length = _vecB.length();
+            const obstruction = traceWorld(ai.from, _vecB.divideScalar(length), length, 0);
+            if (obstruction && obstruction.distance < length - 0.1) {
+              ai.to.copy(obstruction.point);
+              damageWorld(obstruction, 6 + 3 * accurate);
+            } else if (hitTarget) injurePlayer((simState.mode === 'CAR' ? 6 : 9) + accurate * 2.3);
+            if (dist < 32) soundEngine.playDistantShot(1 - dist / 42);
+            ai.tracer = 0.085;
+            bot.muzzleFlash = 0.115;
+            ai.burst++;
+            if (ai.burst >= 2 + i % 3) {
+              ai.burst = 0;
+              ai.cooldown = 1 + i * 0.105 + Math.random() * 0.46;
+            } else ai.cooldown = 0.18 + i % 3 * 0.018;
+          }
+        } else {
+          ai.cooldown = Math.max(0.42, ai.cooldown - dt);
+          if (Math.hypot(moveX, moveZ) > 0.15) bot.yaw = Math.atan2(moveX, moveZ);
+        }
+
+        if (Math.hypot(bot.x, bot.z) > simState.stormRadius - 7) {
+          moveX -= bot.x / 42;
+          moveZ -= bot.z / 42;
+        }
+        const length = Math.hypot(moveX, moveZ);
+        if (length > 0.02) {
+          let x = moveX / length;
+          let z = moveZ / length;
+          const step = Math.min(pace * dt, length);
+          const origin = _vecA.set(bot.x, bot.y + 0.7, bot.z);
+          let wall = traceWorld(origin, _vecB.set(x, 0, z), step + 0.45, 0.29, (hit) => Math.abs(hit.normal.y) < 0.72);
+          if (wall) {
+            const against = x * wall.normal.x + z * wall.normal.z;
+            x -= against * wall.normal.x;
+            z -= against * wall.normal.z;
+            if (Math.hypot(x, z) < 0.25) {
+              x = wall.normal.z * ai.direction;
+              z = -wall.normal.x * ai.direction;
+            }
+            wall = traceWorld(origin, _vecB.set(x, 0, z).normalize(), step, 0.29, (hit) => Math.abs(hit.normal.y) < 0.72);
+          }
+          if (!wall) {
+            const nx = bot.x + x * step;
+            const nz = bot.z + z * step;
+            const surface = getTravelHeight(nx, nz, bot.y + 0.5);
+            if (surface > simState.tideOffset - 0.1 && Math.abs(surface - bot.y) < 0.67) {
+              bot.x = nx;
+              bot.z = nz;
+              bot.y = surface;
+              visualSpeed = step / dt;
+            }
+          }
+        }
+        ai.phase += dt * visualSpeed * 3.4;
+      }
+
+      bot.hitFlash = Math.max(0, bot.hitFlash - dt);
+      bot.muzzleFlash = Math.max(0, bot.muzzleFlash - dt);
+      ai.tracer = Math.max(0, ai.tracer - dt);
+      if (group) {
+        group.position.set(bot.x, bot.y, bot.z);
+        const turn = Math.atan2(Math.sin(bot.yaw - group.rotation.y), Math.cos(bot.yaw - group.rotation.y));
+        group.rotation.y += turn * (1 - Math.exp(-13 * dt));
+      }
+      if (parachute) parachute.visible = bot.parachuting;
+      if (gun) gun.visible = bot.alive && !bot.fall && !bot.parachuting;
+      if (muzzle) muzzle.visible = bot.alive && bot.muzzleFlash > 0 && !bot.parachuting;
+      if (tracer) {
+        tracer.visible = ai.tracer > 0;
+        if (tracer.visible) {
+          _vecA.copy(ai.to).sub(ai.from);
+          tracer.position.copy(ai.from).lerp(ai.to, 0.5);
+          tracer.quaternion.setFromUnitVectors(_Y_AXIS, _vecB.copy(_vecA).normalize());
+          tracer.scale.set(1, _vecA.length(), 1);
         }
       }
-
-      if (bot.hitFlash > 0) {
-        bot.hitFlash = Math.max(0, bot.hitFlash - dt * 4.5);
+      if (drop) {
+        drop.visible = Boolean(bot.drop);
+        if (bot.drop) {
+          drop.position.fromArray(bot.drop);
+          drop.rotation.y = bot.yaw;
+          if (simState.brResult === null && simState.mode === 'FOOT' &&
+              simState.playerPos.distanceTo(drop.position) < 1.72) {
+            simState.ammo = Math.min(simState.maxAmmo, simState.ammo + 13);
+            simState.playerShield = Math.min(100, simState.playerShield + 11);
+            bot.drop = undefined;
+            drop.visible = false;
+            soundEngine.playChipPickup(false);
+          }
+        }
       }
-      if (bot.muzzleFlash > 0) {
-        bot.muzzleFlash = Math.max(0, bot.muzzleFlash - dt);
+      if (billboard) {
+        billboard.visible = bot.alive && !bot.fall && bot.hitFlash > 0 && Math.hypot(threatX - bot.x, threatZ - bot.z) < 45;
+        billboard.rotation.y = Math.atan2(camPos.x - bot.x, camPos.z - bot.z) - bot.yaw;
       }
-
-      if (botGroup) {
-        botGroup.position.set(bot.x, bot.y, bot.z);
-        const yaw = botGroup.rotation.y;
-        botGroup.rotation.y += Math.atan2(Math.sin(bot.yaw - yaw), Math.cos(bot.yaw - yaw)) * (1 - Math.exp(-12 * dt));
-      }
-
-      if (parachuteGroup) {
-        parachuteGroup.visible = bot.parachuting;
-      }
-
-      if (muzzleFlashGroup) {
-        muzzleFlashGroup.visible = bot.muzzleFlash > 0 && !bot.parachuting;
-      }
-
-      if (hitFlashMesh) {
-        hitFlashMesh.visible = bot.hitFlash > 0;
-      }
-
-      // Scale overhead HP (#22c55e) & Shield (#38bdf8) bars
       if (hpBar) {
-        const hpRatio = THREE.MathUtils.clamp(bot.hp / Math.max(1, bot.maxHp), 0.001, 1);
-        hpBar.scale.x = hpRatio;
-        hpBar.position.x = -0.44 * (1 - hpRatio);
+        hpBar.scale.x = Math.max(0.001, bot.hp / bot.maxHp);
+        hpBar.position.x = -0.44 * (1 - hpBar.scale.x);
       }
       if (shieldBar) {
-        const shieldRatio = THREE.MathUtils.clamp(
-          bot.shield / Math.max(1, bot.maxShield),
-          0.001,
-          1
-        );
-        shieldBar.scale.x = shieldRatio;
-        shieldBar.position.x = -0.44 * (1 - shieldRatio);
+        shieldBar.scale.x = Math.max(0.001, bot.shield / Math.max(1, bot.maxShield));
+        shieldBar.position.x = -0.44 * (1 - shieldBar.scale.x);
       }
-
-      // Billboard the overhead HP/Shield bar toward the active camera
-      if (hudBillboard) {
-        const camYaw = Math.atan2(camPos.x - bot.x, camPos.z - bot.z);
-        hudBillboard.rotation.y = camYaw - bot.yaw;
-      }
-
-      const dxCamBot = camPos.x - bot.x;
-      const dzCamBot = camPos.z - bot.z;
-      if (botRig && dxCamBot * dxCamBot + dzCamBot * dzCamBot < 85 * 85) {
-        const botPhase = elapsed * (bot.parachuting ? 2.5 : 5.8) + i * 1.3;
-        const threatDistance = Math.hypot(threatX - bot.x, threatZ - bot.z);
-        animateHumanoid(botRig, {
-          dt, time: elapsed, phase: botPhase, speed: bot.parachuting ? 0 : threatDistance < 42 ? 1.7 : 2.35,
-          aim: bot.parachuting ? 0 : threatDistance < 42 ? 1 : 0.2,
-          airborne: bot.parachuting ? 'parachute' : undefined,
-          recoil: bot.muzzleFlash > 0 ? bot.muzzleFlash / 0.12 : 0,
-        });
+      if (rig && !bot.fall && Math.hypot(camPos.x - bot.x, camPos.z - bot.z) < 86) {
+        animateHumanoid(rig, { dt, time: elapsed, phase: ai.phase, speed: visualSpeed, lateral, aim,
+          airborne: bot.parachuting ? 'parachute' : undefined, recoil: bot.muzzleFlash / 0.115 });
       }
     }
 
@@ -1797,6 +1933,19 @@ export function LivingWorldNPCs() {
         </group>
       ))}
 
+      {simState.botTargets.map((bot, i) => (
+        <React.Fragment key={bot.id + '-effects'}>
+          <mesh ref={(mesh) => { botTracers.current[i] = mesh; }} visible={false}>
+            <cylinderGeometry args={[0.019, 0.031, 1, 4]} />
+            <meshBasicMaterial color="#ffe0a1" transparent opacity={0.79} />
+          </mesh>
+          <group ref={(group) => { botDrops.current[i] = group; }} visible={false}>
+            <mesh position={[0, 0.04, 0]}><boxGeometry args={[0.14, 0.10, 0.66]} /><meshStandardMaterial color="#3d4949" metalness={0.64} roughness={0.39} /></mesh>
+            <mesh position={[0, 0.04, 0.42]}><boxGeometry args={[0.034, 0.045, 0.19]} /><meshStandardMaterial color="#667579" metalness={0.75} roughness={0.31} /></mesh>
+            <mesh position={[0.14, 0.016, 0.05]}><boxGeometry args={[0.19, 0.07, 0.13]} /><meshStandardMaterial color="#866445" roughness={0.72} /></mesh>
+          </group>
+        </React.Fragment>
+      ))}
       {/* 8 Armed Battle Royale Combat Bots (Smooth PBR Humans + 3D GLB Weapons + Parachute + Overhead HP/Shield Bars) */}
       {simState.botTargets.map((bot, i) => (
         <group
@@ -1812,17 +1961,6 @@ export function LivingWorldNPCs() {
             geometry={pedShadowGeo}
             material={pedShadowMat}
             position={[0, 0.03, 0]}
-          />
-
-          {/* Red Hit Flash Ground Ring */}
-          <mesh
-            ref={(el) => {
-              botHitFlashRefs.current[i] = el;
-            }}
-            geometry={botHitFlashRingGeo}
-            material={botHitFlashMat}
-            position={[0, 0.06, 0]}
-            visible={false}
           />
 
           {/* Cloned Smooth PBR 3D Human Model Mount */}

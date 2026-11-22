@@ -14,6 +14,7 @@ import {
 } from './components/World';
 import { VehicleDirector, triggerRouletteSpin } from './components/Vehicles';
 import { NorthBay } from './components/NorthBay';
+import { CoastRoad } from './components/CoastRoad';
 import { GrandPrixCourse } from './components/GrandPrix';
 import { CoastalCity } from './components/City';
 import { WorldEffects } from './components/WorldEffects';
@@ -64,7 +65,7 @@ function CoastalLighting() {
   const target = useRef<THREE.Object3D>(null);
   const quality = useRef({ elapsed: 0, interval: 0.065, average: 0.017 });
   const desktop = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches;
-  useFrame(({ gl }, dt) => {
+  useFrame(({ gl, camera }, dt) => {
     if (!light.current || !target.current || !gl.shadowMap.enabled) return;
     const timing = quality.current;
     timing.average = THREE.MathUtils.lerp(timing.average, Math.min(0.12, dt), 0.024);
@@ -72,7 +73,7 @@ function CoastalLighting() {
     const interval = timing.average > 0.038 ? 0.22 : timing.interval;
     if (timing.elapsed < interval) return;
     timing.elapsed = 0;
-    const focus = simState.mode === 'CAR' ? simState.carPos : simState.mode === 'PLANE' ? simState.planePos :
+    const focus = simState.startMenuOpen ? camera.position : simState.mode === 'CAR' ? simState.carPos : simState.mode === 'PLANE' ? simState.planePos :
       simState.mode === 'BOAT' ? simState.boatPos : simState.playerPos;
     const size = desktop ? 150 : 108;
     const texel = size / (desktop ? 1536 : 768);
@@ -109,6 +110,7 @@ const GameWorld = React.memo(function GameWorld({ onHudUpdate }: { onHudUpdate: 
 
       <SkyDome />
       <IslandTerrain />
+      <CoastRoad />
       <NorthBay />
       <CoastalCity />
       <GrandPrixCourse />
@@ -240,8 +242,7 @@ export function App() {
         code === 'ArrowUp' ||
         code === 'ArrowDown' ||
         code === 'ArrowLeft' ||
-        code === 'ArrowRight' ||
-        code === 'Tab'
+        code === 'ArrowRight'
       ) {
         e.preventDefault();
       }
@@ -264,7 +265,7 @@ export function App() {
       if (lowerKey === 'd') simState.keys.add('KeyD');
       if (lowerKey === 'f') simState.keys.add('KeyF');
 
-      if (!e.repeat && (code === 'KeyM' || code === 'Escape' || code === 'Tab')) {
+      if (!e.repeat && (code === 'KeyM' || code === 'Escape')) {
         const nextOpen = !Boolean(s.startMenuOpen);
         s.startMenuOpen = nextOpen;
         if (nextOpen) {
@@ -274,9 +275,10 @@ export function App() {
         window.dispatchEvent(new CustomEvent('toggle-start-menu'));
         return;
       }
-      if ((code === 'Enter' || code === 'NumpadEnter') && Boolean(s.startMenuOpen)) {
-        s.startMenuOpen = false;
-        window.dispatchEvent(new CustomEvent('toggle-start-menu'));
+      if (!e.repeat && (code === 'Enter' || code === 'NumpadEnter') && Boolean(s.startMenuOpen) &&
+          !(document.activeElement instanceof HTMLButtonElement)) {
+        e.preventDefault();
+        document.getElementById('world-start-game')?.click();
         return;
       }
       if (code === 'Digit1') switchMode('FOOT');

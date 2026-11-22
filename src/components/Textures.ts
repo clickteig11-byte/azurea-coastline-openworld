@@ -1437,3 +1437,25 @@ export function createGranitePodiumPBR(): {
 
   return { map, roughnessMap };
 }
+
+export function createPavementTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  const pixels = ctx.createImageData(128, 128);
+  const random = makeSeededRand(8707);
+  for (let i = 0; i < pixels.data.length; i += 4) {
+    const mineral = random();
+    const fleck = Math.round(39 + mineral * 21 + (random() < 0.035 ? mineral * 32 : 0));
+    pixels.data[i] = fleck;
+    pixels.data[i + 1] = fleck + 2;
+    pixels.data[i + 2] = fleck + 3;
+    pixels.data[i + 3] = 255;
+  }
+  ctx.putImageData(pixels, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.anisotropy = 4;
+  return texture;
+}

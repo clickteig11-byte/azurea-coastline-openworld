@@ -15,7 +15,7 @@ export interface WorldSection {
   permanent?: boolean;
   solid?: boolean;
   mesh?: THREE.Mesh;
-  onDamage?: (integrity: number, destroyed: boolean) => void;
+  onDamage?: (integrity: number, destroyed: boolean, hit: WorldHit, energy: number) => void;
 }
 
 export interface WorldHit {
@@ -155,22 +155,37 @@ export function traceWorld(origin: THREE.Vector3, direction: THREE.Vector3, rang
   return closest;
 }
 
-export function traceGround(origin: THREE.Vector3, direction: THREE.Vector3, range: number) {
-  let previousDistance = 0;
-  let previous = Math.max(0, origin.y - getTravelHeight(origin.x, origin.z, origin.y));
+export function traceGround(origin: THREE.Vector3, direction: THREE.Vector3, range: number): WorldHit | undefined {
+  if (direction.y >= 0 && origin.y > 14) return undefined;
+  let last = 0;
   const contact = origin.clone();
-  for (let step = 1; step <= Math.ceil(range / 2); step++) {
-    const distance = Math.min(range, step * 2);
+  const heightAt = (distance: number, tolerance = 0) => {
     contact.copy(origin).addScaledVector(direction, distance);
-    const height = getTravelHeight(contact.x, contact.z, contact.y);
-    const clearance = contact.y - height;
-    if (clearance <= 0 && height > 0.03) {
-      const fraction = previous / Math.max(0.001, previous - clearance);
-      const hitDistance = THREE.MathUtils.lerp(previousDistance, distance, fraction);
-      return { distance: hitDistance, point: contact.copy(origin).addScaledVector(direction, hitDistance), normal: new THREE.Vector3(0, 1, 0) };
+    return getTravelHeight(contact.x, contact.z, contact.y + tolerance);
+  };
+  for (let i = 1; i <= Math.ceil(range / 1.7); i++) {
+    const distance = Math.min(range, i * 1.7);
+    const height = heightAt(distance, 1.4);
+    if (contact.y <= height) {
+      let lower = last;
+      let upper = distance;
+      for (let pass = 0; pass < 6; pass++) {
+        const sample = (lower + upper) / 2;
+        const surface = heightAt(sample, 0.8);
+        if (contact.y > surface) lower = sample;
+        else upper = sample;
+      }
+      contact.copy(origin).addScaledVector(direction, upper);
+      const { x, y, z } = contact;
+      const feet = y + 0.4;
+      const normal = new THREE.Vector3(
+        getTravelHeight(x - 0.34, z, feet) - getTravelHeight(x + 0.34, z, feet),
+        0.68,
+        getTravelHeight(x, z - 0.34, feet) - getTravelHeight(x, z + 0.34, feet),
+      ).normalize();
+      return { distance: upper, point: contact, normal };
     }
-    previousDistance = distance;
-    previous = clearance;
+    last = distance;
   }
 }
 
@@ -184,7 +199,7 @@ export function damageWorld(hit: WorldHit, energy: number) {
     if (building) building.current -= before - section.hp;
     destroyed = section.hp === 0;
     if (destroyed && building) building.breaches++;
-    section.onDamage?.(section.hp / section.maxHp, destroyed);
+    section.onDamage?.(section.hp / section.maxHp, destroyed, hit, energy);
   }
   worldImpacts.push({ ...hit, energy, material: section?.material ?? 'road', destroyed });
   if (worldImpacts.length > 64) worldImpacts.shift();
@@ -198,4 +213,44 @@ export function getWorldIntegrity(owner: string) {
   const stage = !building || integrity === 1 ? 'intact' :
     integrity < 0.48 || breaches > building.count * 0.35 ? 'critical' : breaches > 0 ? 'breached' : 'damaged';
   return { integrity, stage };
+}
+
+export function blastWorld(point: THREE.Vector3, radius: number, energy: number, excluded?: WorldSection) {
+  const candidates = findSections(point.x - radius, point.z - radius, point.x + radius, point.z + radius);
+  const position = new THREE.Vector3();
+  const nearby: { section: WorldSection; point: THREE.Vector3; distance: number }[] = [];
+  for (const section of candidates) {
+    if (section === excluded || section.permanent || section.hp <= 0) continue;
+    position.copy(point).sub(section.center);
+    const rotation = inverse.get(section);
+    if (rotation) position.applyQuaternion(rotation);
+    position.clamp(section.halfSize.clone().negate(), section.halfSize);
+    if (section.rotation) position.applyQuaternion(section.rotation);
+    position.add(section.center);
+    const distance = position.distanceTo(point);
+    if (distance < radius) nearby.push({ section, point: position.clone(), distance });
+  }
+  nearby.sort((a, b) => a.distance - b.distance);
+  for (const impact of nearby.slice(0, 22)) {
+    const normal = impact.point.clone().sub(point);
+    if (normal.lengthSq() < 0.01) normal.copy(impact.section.center).sub(point);
+    if (normal.lengthSq() < 0.01) normal.set(0, 1, 0);
+    damageWorld({ ...impact, normal: normal.normalize() }, energy * (1 - impact.distance / radius) ** 2);
+  }
+  emitEnvironment('gravel', point, 1.85);
+}
+
+export type EnvironmentEffect = 'water' | 'dust' | 'gravel' | 'repair' | 'impact';
+export const environmentEffects: {
+  kind: EnvironmentEffect;
+  point: THREE.Vector3;
+  energy: number;
+  motionX: number;
+  motionZ: number;
+}[] = [];
+
+export function emitEnvironment(
+  kind: EnvironmentEffect, point: THREE.Vector3, energy: number, motionX = 0, motionZ = 0,
+) {
+  if (environmentEffects.length < 64) environmentEffects.push({ kind, point: point.clone(), energy, motionX, motionZ });
 }

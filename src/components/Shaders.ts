@@ -2,7 +2,7 @@ export const skyVertexShader = /* glsl */ `
   varying vec3 vWorldPos;
   void main() {
     vec4 wp = modelMatrix * vec4(position, 1.0);
-    vWorldPos = wp.xyz;
+    vWorldPos = position;
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
 `;
@@ -144,7 +144,12 @@ export const waterFragmentShader = /* glsl */ `
     float siteAngle = atan(siteUV.x, siteUV.y);
     float site = length(siteUV) / (1.0 + sin(siteAngle * 3.0) * 0.067 + sin(siteAngle * 5.0 + 0.6) * 0.035);
     bool canal = abs(p.y + 95.0) < 24.0 && p.x > 65.0 && p.x < 290.0;
-    float deep = canal ? 0.13 : min(smoothstep(228.0, 294.0, dist), smoothstep(0.84, 1.29, site));
+    float angle = atan(p.x, p.y);
+    float airport = (angle + 0.82) / 0.49;
+    float roadRadius = 228.0 + 62.0 * exp(-airport * airport) - 23.0 * pow(max(0.0, -cos(angle)), 16.0);
+    float beach = 41.0 + 6.0 * cos(angle * 3.0) - 4.0 * sin(angle * 5.0);
+    float shore = dist - roadRadius - beach;
+    float deep = canal ? 0.13 : min(smoothstep(-6.0, 52.0, shore), smoothstep(0.84, 1.29, site));
     vec3 water = mix(uShallow, uDeep, deep);
     water += (wind - 0.52) * vec3(0.025, 0.065, 0.066) * (1.0 - deep);
     float caustic = pow(max(0.0, cos(p.x * 0.49 + wind * 5.5 + 0.45 * uTime) *
@@ -163,19 +168,22 @@ export const waterFragmentShader = /* glsl */ `
     vec3 col = mix(water * (1.0 - bridgeShadow * 0.37), reflectedSky, fresnel * 0.81);
     col += vec3(1.0, 0.81, 0.55) * (solarPath * 0.19 + glitter * (0.16 + wind * 0.48));
 
-    float headland = abs(dist - 244.0) / 19.0;
+    float headland = abs(shore + 3.5 * sin(uTime * 0.43 + wind * 2.4)) / 14.0;
     float landing = abs(site - 0.955) / 0.14;
     float tideLine = min(headland, landing);
-    float breakPhase = headland < landing ? dist * 0.59 : site * 58.0;
+    float breakPhase = headland < landing ? shore * 0.68 : site * 58.0;
     float waveFront = sin(breakPhase + wind * 5.5 + 1.6 * uTime);
     float shoreFoam = (1.0 - smoothstep(0.32, 1.1, tideLine)) * smoothstep(0.64, 0.97, waveFront);
-    shoreFoam *= mix(0.17, 0.72, smoothstep(0.29, 0.74, wind));
+    shoreFoam *= mix(0.27, 0.92, smoothstep(0.29, 0.74, wind));
     float cap = smoothstep(0.38, 0.72, vCrest + (wind - 0.54) * 0.41) * detail * 0.19;
     col = mix(col, uFoam, clamp(shoreFoam + cap, 0.0, 0.8));
 
     float haze = smoothstep(340.0, 1540.0, cameraDistance);
-    col = mix(col, vec3(0.71, 0.80, 0.82), haze);
-    gl_FragColor = vec4(col, mix(0.78, 0.99, max(deep, max(haze, fresnel))));
+    float sunlight = max(dot(normalize(vec3(-viewDir.x, 0.0, -viewDir.z)), normalize(uSunDir)), 0.0);
+    vec3 horizon = vec3(0.764, 0.818, 0.835) + vec3(1.0, 0.91, 0.78) * 0.16 * pow(sunlight, 2.2);
+    col = mix(col, horizon, haze);
+    float distantFade = 1.0 - smoothstep(1550.0, 2900.0, cameraDistance);
+    gl_FragColor = vec4(col, distantFade * mix(0.78, 0.99, max(deep, max(haze, fresnel))));
   }
 `;
 
@@ -316,7 +324,7 @@ export const terrainFragmentShader = /* glsl */ `
     bool onMidtownCross = abs(p.y) < 11.0 && abs(p.x) < 155.0;
     bool onSouthCross = abs(p.y - 80.0) < 10.0 && abs(p.x) < 155.0;
     bool onCrossBlvd = (onNorthCross || onMidtownCross || onSouthCross) && !inCanalCut;
-    bool onRunway = p.x > -210.0 && p.x < -45.0 && p.y > 135.0 && p.y < 165.0;
+    bool onRunway = p.x > -210.0 && p.x < -45.0 && p.y > 135.0 && p.y < 175.0;
     bool onRoad = onGrandCentral || onCrossBlvd || onRunway;
 
     bool onGrandSidewalk = abs(p.x) >= 18.0 && abs(p.x) < 24.0 && p.y > -225.0 && p.y < 195.0;
@@ -435,11 +443,11 @@ export const terrainFragmentShader = /* glsl */ `
 
       // Airport Runway markings
       if (onRunway) {
-        float rwCenterZ = 150.0;
+        float rwCenterZ = 155.0;
         if (abs(p.y - rwCenterZ) < 0.35 && fract(p.x * 0.08) < 0.55) {
           albedo = vec3(0.92, 0.94, 0.96);
         }
-        if (abs(abs(p.y - rwCenterZ) - 13.0) < 0.22) {
+        if (abs(abs(p.y - rwCenterZ) - 19.2) < 0.22) {
           albedo = vec3(0.92, 0.94, 0.96);
         }
         // Runway threshold piano keys
@@ -528,11 +536,11 @@ export const terrainFragmentShader = /* glsl */ `
         specPower = mix(20.0, 32.0, plazaMask);
       } else {
         // Wet Shoreline Sand (h < 0.75)
-        vec3 wetSand = vec3(0.46, 0.40, 0.31) + (bladeN2 - 0.5) * 0.035;
+        vec3 wetSand = vec3(0.49, 0.37, 0.26) + (bladeN2 - 0.5) * 0.035;
 
         // Dry Wind-Rippled Beach Sand (0.75 .. 1.85)
         float ripple = sin(p.x * 3.5 + p.y * 2.2 + noise(p * 0.5) * 4.0) * 0.5 + 0.5;
-        vec3 drySand = vec3(0.82, 0.74, 0.58) + (ripple - 0.5) * 0.045 + (bladeN1 - 0.5) * 0.03;
+        vec3 drySand = vec3(0.87, 0.745, 0.53) + (ripple - 0.5) * 0.045 + (bladeN1 - 0.5) * 0.03;
 
         // Lush Coastal Grass & Parkland (h >= 1.85) with smooth sunlit organic shading
         vec3 meadowFescue = vec3(0.15, 0.33, 0.13);
@@ -559,7 +567,7 @@ export const terrainFragmentShader = /* glsl */ `
           specStrength = mix(0.55, 0.06, wetToDry);
           specPower = 64.0;
         } else if (noisyH < 1.85) {
-          float sandToGrass = smoothstep(1.35, 1.85, noisyH);
+          float sandToGrass = smoothstep(1.65, 2.12, noisyH);
           albedo = mix(drySand, grassCol, sandToGrass);
           specStrength = 0.05;
           n = normalize(n + vec3((bladeN2 - 0.5) * 0.18, 0.0, (bladeN1 - 0.5) * 0.18) * sandToGrass);

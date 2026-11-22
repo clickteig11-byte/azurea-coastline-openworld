@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RouletteOutcome, VehicleMode } from './worldMath';
+import type { Tumble } from './motion';
 import { grandPrixGates } from './grandPrix';
 import type { VehicleSweep } from './vehicleContact';
 
@@ -359,7 +360,10 @@ export interface BotTarget {
   shield: number;
   maxShield: number;
   alive: boolean;
-  respawnTimer: number;
+  fall?: Tumble;
+  downUntil?: number;
+  drop?: [number, number, number];
+  dropSpawned?: boolean;
   parachuting: boolean;
   parachuteY: number;
   hitFlash: number;
@@ -383,7 +387,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 50,
     maxShield: 50,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -405,7 +408,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 75,
     maxShield: 75,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -427,7 +429,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 50,
     maxShield: 50,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -449,7 +450,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 100,
     maxShield: 100,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -471,7 +471,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 50,
     maxShield: 50,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -493,7 +492,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 75,
     maxShield: 75,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -515,7 +513,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 50,
     maxShield: 50,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -537,7 +534,6 @@ export const INITIAL_BOT_TARGETS: BotTarget[] = [
     shield: 50,
     maxShield: 50,
     alive: true,
-    respawnTimer: 0,
     parachuting: false,
     parachuteY: 0,
     hitFlash: 0,
@@ -616,7 +612,6 @@ export interface GameHudSnapshot {
   bestLapTime?: number | null;
   lapCount?: number;
   driftScore?: number;
-  stuntText?: string | null;
   // Battle Royale & Tactical Weapon Loadout
   brActive?: boolean;
   parachuting?: boolean;
@@ -630,7 +625,6 @@ export interface GameHudSnapshot {
   eliminations?: number;
   aliveCount?: number;
   stormRadius?: number;
-  killFeedText?: string | null;
   // Character Customizer & Fleet Selection
   customizerOpen?: boolean;
   activeCarName?: string;
@@ -774,16 +768,20 @@ export const simState = {
   raceCountdown: 0,
   raceElapsed: 0,
   raceTraffic: [] as [number, number, number][],
+  raceRivalDistances: [0, 0, 0],
+  sectorTimes: [] as number[],
+  bestSectors: [] as number[],
   lapTime: 0,
   bestLapTime: null as number | null,
   lapCount: 0,
   driftScore: 0,
-  stuntText: null as string | null,
-  stuntTimer: 0,
   trafficPositions: [] as [number, number, number][],
 
   // Battle Royale, Parachute Sky-Drop & Weapon Loadout State
   brActive: false,
+  brRound: 0,
+  brResult: null as null | "WON" | "OUT",
+  botImpactCooldown: 0,
   parachuting: false,
   activeWeaponIdx: 0,
   ammo: 30,
@@ -802,8 +800,6 @@ export const simState = {
   eliminations: 0,
   aliveCount: 25,
   stormRadius: 235,
-  killFeedText: null as string | null,
-  killFeedTimer: 0,
   firingTimer: 0,
   shotCooldown: 0,
   lastShotFrom: [0, 0, 0] as [number, number, number],

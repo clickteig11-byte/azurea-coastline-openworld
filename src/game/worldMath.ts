@@ -113,78 +113,103 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/**
- * Analytical Metropolis Island Heightmap:
- * - Smooth, flat Central Metropolis Urban Grid plateau (y ≈ 3.2m) with ZERO bumps on any avenue
- * - Venetian Grand Canal carve-out on East side (x > 72 && x < 290 around z = -95)
- * - Airport runway flat pad on West-South (x > -210 && x < -45, z > 135 && z < 175)
- * - Gentle coastal beaches beyond r > 195m sloping into deep ocean beyond r > 265m
- */
+export const COAST_ROAD_HALF_WIDTH = 8.8;
+const NORTH_BAY_APPROACH = -205;
+const AIRPORT_CENTERLINE_ANGLE = -0.82;
+const AIRPORT_BYPASS_WIDTH = 0.49;
+
+export function coastRoadRadius(angle: number): number {
+  const bearing = Math.abs(angle) <= Math.PI ? angle : Math.atan2(Math.sin(angle), Math.cos(angle));
+  const airport = (bearing - AIRPORT_CENTERLINE_ANGLE) / AIRPORT_BYPASS_WIDTH;
+  const north = Math.cos(angle);
+  return 228 + 62 * Math.exp(-airport * airport) -
+    (228 + NORTH_BAY_APPROACH) * Math.pow(Math.max(0, -north), 16);
+}
+
+export function coastBeachWidth(angle: number): number {
+  return 41 + 6 * Math.cos(angle * 3) - 4 * Math.sin(angle * 5);
+}
+
+export function coastRoadOffset(x: number, z: number): number {
+  return Math.hypot(x, z) - coastRoadRadius(Math.atan2(x, z));
+}
+
+export function coastRoadHeight(x: number, z: number): number {
+  const bridge = x > 70 ? 3.5 * (1 - smoothstep(5, 43, Math.abs(z + 95))) : 0;
+  return 3.25 + bridge;
+}
+
+export const COAST_CONNECTORS = [
+  { z: 0, halfWidth: 11, cityEnd: 150 },
+  { z: 80, halfWidth: 10, cityEnd: 145 },
+  { z: -120, halfWidth: 10, cityEnd: 140 },
+];
+
+export function coastJunction(x: number, z: number, clearance = 0): boolean {
+  return (Math.abs(x) <= 16 + clearance && Math.abs(z) > 175) ||
+    COAST_CONNECTORS.some((road) => Math.abs(z - road.z) < road.halfWidth + clearance);
+}
+
+export function coastConnectorEnd(z: number, side: number, offset = 0): number {
+  let inner = 0;
+  let outer = 310;
+  for (let i = 0; i < 20; i++) {
+    const middle = (inner + outer) / 2;
+    if (coastRoadOffset(middle * side, z) > offset) outer = middle;
+    else inner = middle;
+  }
+  return (inner + outer) / 2 * side;
+}
+
+export function coastConnectorHeight(x: number, z: number): number {
+  return 3.25 + (coastRoadHeight(x, z) - 3.25) * smoothstep(-36, -5, coastRoadOffset(x, z));
+}
+
+export const STUNT_RAMPS = [
+  { x: 29, z: 202, yaw: 0.14, length: 14, width: 7, height: 2.7 },
+  { x: -238, z: -64, yaw: -Math.PI / 2, length: 13, width: 6, height: 2.4 },
+];
+
+export function stuntRampHeight(x: number, z: number, feetY: number): number {
+  for (const ramp of STUNT_RAMPS) {
+    const sx = x - ramp.x;
+    const sz = z - ramp.z;
+    const sin = Math.sin(ramp.yaw);
+    const cos = Math.cos(ramp.yaw);
+    const forward = sx * sin + sz * cos;
+    const across = sx * cos - sz * sin;
+    if (Math.abs(across) > ramp.width * 0.5 || forward < 0 || forward > ramp.length) continue;
+    const start = getTerrainHeight(ramp.x, ramp.z);
+    const y = start + ramp.height * (forward / ramp.length) ** 1.6;
+    if (feetY >= y - 1) return y;
+  }
+  return -Infinity;
+}
+
 function getMainIslandHeight(x: number, z: number): number {
-  const dist = Math.hypot(x, z);
-
-  // Venetian Canal carve-out (east waterway connecting to ocean, clear of Grand Central Ave)
-  const canalMask =
-    Math.exp(-Math.pow((z + 95) / 20, 2)) *
-    (x > 72 && x < 290 ? smoothstep(72, 82, x) : 0);
-  if (canalMask > 0.42) {
-    return -3.2 * canalMask;
+  const radius = Math.hypot(x, z);
+  if (radius > 389) return -6.5;
+  let ground = 3.2;
+  if (radius > 210) {
+    const angle = Math.atan2(x, z);
+    const offset = radius - coastRoadRadius(angle);
+    const beach = coastBeachWidth(angle);
+    ground *= 1 - smoothstep(12, beach + 3, offset);
+    ground -= 6.5 * smoothstep(beach - 5, beach + 50, offset);
   }
-
-  // Airport runway flat pad
-  if (x > -210 && x < -45 && z > 135 && z < 175) {
-    return 1.8;
-  }
-
-  // Deep ocean beyond island perimeter
-  const islandRadius = 265;
-  const normalized = dist / islandRadius;
-  if (normalized > 1.15) return -6.5;
-
-  // Road & Avenue mask (strictly 0 hills on any road or avenue)
-  const onRoadCorridor =
-    (Math.abs(x) < 28 && z > -228 && z < 198) ||
-    (Math.abs(z) < 18 && Math.abs(x) < 160) ||
-    (Math.abs(z + 120) < 16 && Math.abs(x) < 150) ||
-    (Math.abs(z - 80) < 16 && Math.abs(x) < 160);
-
-  // Central Metropolis Urban Grid mask (|x| < 135 && |z| < 165)
-  const inUrbanGrid = Math.abs(x) < 135 && Math.abs(z) < 165;
-
-  // Smooth flat city plateau at y = 3.2m inside r <= 195m, sloping to coastal beach & ocean
-  let base = 3.2;
-  if (dist > 195) {
-    const coastT = smoothstep(195, 244, dist);
-    const oceanT = smoothstep(244, 295, dist);
-    base = 3.2 * (1 - coastT) - 6.5 * oceanT;
-  }
-
-  // Keep Golden Gate north approach avenue level at 3.2m up to z = -222
-  if (Math.abs(x) < 26 && z >= -224 && z <= 195) {
-    return Math.max(base, 3.2 * (1 - smoothstep(218, 242, Math.abs(z))));
-  }
-
-  if (inUrbanGrid || onRoadCorridor) {
-    return base;
-  }
-
-  // Subtle outer coastal terrain relief outside the urban grid & off all roads
-  const outerFactor =
-    smoothstep(135, 165, Math.max(Math.abs(x), Math.abs(z) - 25)) *
-    (1 - smoothstep(205, 240, dist));
-  const gentleDunes =
-    (Math.sin(x * 0.02) * Math.cos(z * 0.022) * 1.4 +
-      Math.sin((x + z) * 0.035) * 0.6) *
-    outerFactor;
-
-  return base + gentleDunes;
+  const canal = x > 69 && Math.abs(z + 95) < 38 ?
+    Math.exp(-(((z + 95) / 15.25) ** 4)) * smoothstep(69, 84, x) : 0;
+  const runway = smoothstep(-223, -210, x) * (1 - smoothstep(-45, -34, x)) *
+    smoothstep(126, 135, z) * (1 - smoothstep(175, 184, z));
+  return THREE.MathUtils.lerp(THREE.MathUtils.lerp(ground, Math.min(-3.2, ground), canal), 1.8, runway);
 }
 
 export const NORTH_BAY_BRIDGE = {
-  approach: -205,
+  approach: NORTH_BAY_APPROACH,
   landing: -402,
   gate: -397,
   halfWidth: 16,
+  railsBegin: NORTH_BAY_APPROACH - 12,
   piers: [-244, -266, -315, -348, -374],
 };
 
@@ -217,18 +242,32 @@ export function getTerrainHeight(x: number, z: number): number {
 export function getBridgeHeight(z: number): number {
   const distance = NORTH_BAY_BRIDGE.approach - z;
   if (distance <= 0) return 3.25;
-  if (z > -352) return 3.25 + 6.15 * smoothstep(0, 64, distance);
+  if (z > -352) return 3.25 + 6.15 * smoothstep(12, 68, distance);
   const grade = getIslandTwoHeight(0, z) + 0.06;
   return THREE.MathUtils.lerp(9.4, grade, smoothstep(352, -NORTH_BAY_BRIDGE.landing, -z));
 }
 
 export function getTravelHeight(x: number, z: number, feetY = Infinity): number {
-  const terrain = getTerrainHeight(x, z);
-  if (z > NORTH_BAY_BRIDGE.approach || z < NORTH_BAY_BRIDGE.landing || Math.abs(x) > NORTH_BAY_BRIDGE.halfWidth + 2) {
-    return terrain;
+  let surface = getTerrainHeight(x, z);
+  const ramp = stuntRampHeight(x, z, feetY);
+  if (ramp > surface) surface = ramp;
+  if (z <= NORTH_BAY_BRIDGE.approach && z >= NORTH_BAY_BRIDGE.landing &&
+      Math.abs(x) <= NORTH_BAY_BRIDGE.halfWidth) {
+    const deck = getBridgeHeight(z);
+    if (feetY >= deck - 1.35) surface = Math.max(surface, deck);
   }
-  const deck = getBridgeHeight(z);
-  return feetY >= deck - 1.4 ? Math.max(terrain, deck) : terrain;
+  const offset = coastRoadOffset(x, z);
+  if (Math.abs(offset) <= COAST_ROAD_HALF_WIDTH + 0.85) {
+    const deck = coastRoadHeight(x, z);
+    if (feetY >= deck - 1.1) surface = Math.max(surface, deck);
+  }
+  for (const road of COAST_CONNECTORS) {
+    if (Math.abs(z - road.z) <= road.halfWidth && Math.abs(x) >= road.cityEnd - 0.5 && offset < 0) {
+      const deck = coastConnectorHeight(x, z);
+      if (feetY >= deck - 1.1) surface = Math.max(surface, deck);
+    }
+  }
+  return surface;
 }
 
 export function isConstructionClosed(x: number, z: number): boolean {

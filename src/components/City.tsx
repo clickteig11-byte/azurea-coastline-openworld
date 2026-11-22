@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo } from 'react';
 import * as THREE from 'three';
-import { getTerrainHeight, LANDMARKS } from '../game/worldMath';
+import { coastRoadOffset, getTerrainHeight, LANDMARKS } from '../game/worldMath';
 import { createLimestonePBR, createSidewalkCobblePBR, createRoofGravelHVACPBR } from './Textures';
 import { WorldSectionBatch, type Vec3, type WorldPart, type WorldFinish } from './WorldSections';
 
@@ -41,7 +41,11 @@ export const cityPlots = (() => {
       if (Math.abs(z + 120) < 21 || Math.abs(z) < 24 || Math.abs(z - 80) < 22) continue;
       if ((z > 123 && x < -35) || (x > 61 && Math.abs(z + 95) < 35)) continue;
       if (protectedAreas.some(([px, pz, radius]) => Math.hypot(x - px, z - pz) < radius + 7)) continue;
-      const heights = [-1, 1].flatMap((a) => [-1, 1].map((b) => getTerrainHeight(x + a * (w / 2 + 2), z + b * (d / 2 + 2))));
+      const corners = [-1, 1].flatMap((a) => [-1, 1].map((b): [number, number] =>
+        [x + a * (w / 2 + 2), z + b * (d / 2 + 2)]));
+      const offsets = corners.map(([cx, cz]) => coastRoadOffset(cx, cz));
+      if (Math.min(...offsets) < 14 && Math.max(...offsets) > -14) continue;
+      const heights = corners.map(([cx, cz]) => getTerrainHeight(cx, cz));
       if (Math.min(...heights) < 1.3 || Math.max(...heights) - Math.min(...heights) > 1.1) continue;
       const y = Math.max(...heights);
       const style = x > 148 || (x > 0 && z > 125) ? 4 : (index * 11 + Math.round(zBase / 30)) % 8;

@@ -6,7 +6,7 @@ import { registerWorldSection } from '../game/worldDamage';
 import { createAsphaltRoadTexture } from './Textures';
 import { DamageableProp, WorldSectionBatch, type Vec3, type WorldPart, type WorldFinish } from './WorldSections';
 
-const { approach, landing, gate, halfWidth, piers } = NORTH_BAY_BRIDGE;
+const { approach, landing, gate, halfWidth, piers, railsBegin } = NORTH_BAY_BRIDGE;
 const towerZ = [-278, -321];
 const roadX = halfWidth + 0.05;
 
@@ -55,8 +55,8 @@ function createDeck(slab = false) {
   return geo;
 }
 
-function Beam({ from, to, width, depth = width, color }: {
-  from: Vec3; to: Vec3; width: number; depth?: number; color: string;
+function Beam({ from, to, width, depth = width, color, rail = false }: {
+  from: Vec3; to: Vec3; width: number; depth?: number; color: string; rail?: boolean;
 }) {
   const a = new THREE.Vector3(...from);
   const b = new THREE.Vector3(...to);
@@ -64,7 +64,7 @@ function Beam({ from, to, width, depth = width, color }: {
   const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
   return (
     <object3D position={a.lerp(b, 0.5)} quaternion={rotation}
-      scale={[width, direction.length() + 0.045, depth]} userData={{ bayBeamColor: color }} />
+      scale={[width, direction.length() + 0.045, depth]} userData={{ bayBeamColor: color, bayRail: rail }} />
   );
 }
 
@@ -92,9 +92,9 @@ export function NorthBay() {
       const size = object.getWorldScale(new THREE.Vector3());
       const durability = Math.round(48 + Math.min(120, size.length() * 2));
       unregister.push(registerWorldSection({
-        owner: 'North Bay works', label: 'Steel beam', material: 'metal',
+        owner: 'North Bay works', label: object.userData.bayRail ? 'Bridge guardrail' : 'Steel beam', material: 'metal',
         center: object.getWorldPosition(new THREE.Vector3()), halfSize: size.multiplyScalar(0.5),
-        rotation: object.getWorldQuaternion(new THREE.Quaternion()), solid: false,
+        rotation: object.getWorldQuaternion(new THREE.Quaternion()), solid: Boolean(object.userData.bayRail),
         hp: durability, maxHp: durability,
         onDamage: (integrity, destroyed) => {
           if (destroyed) {
@@ -140,8 +140,8 @@ export function NorthBay() {
       }
       for (const y of [22, 31]) add('Portal beam', '#ba482d', [0, getBridgeHeight(z) + y, z], [34, 1.7, 2.5], 'steel', true);
     }
-    for (let z = approach - 4; z >= gate + 3; z -= 4) {
-      for (const x of [-roadX, roadX]) add('Rail post', '#cdd2c5', [x, getBridgeHeight(z) + 0.52, z], [0.2, 1.05, 0.22], 'steel');
+    for (let z = railsBegin; z >= gate + 3; z -= 4) {
+      for (const x of [-roadX, roadX]) add('Rail post', '#cdd2c5', [x, getBridgeHeight(z) + 0.52, z], [0.2, 1.05, 0.22], 'steel', true);
     }
     for (const [x, z, w, d] of [[-35, -431, 30, 21], [28, -452, 35, 25], [-37, -490, 27, 32], [20, -513, 33, 24], [62, -476, 19, 20]]) {
       const y = getIslandTwoHeight(x, z);
@@ -233,8 +233,8 @@ export function NorthBay() {
     });
   });
   const rails = useMemo(() => [-roadX, roadX].flatMap((x) => Array.from({ length: 28 }, (_, i) => {
-    const z = THREE.MathUtils.lerp(approach, gate, i / 28);
-    const next = THREE.MathUtils.lerp(approach, gate, (i + 1) / 28);
+    const z = THREE.MathUtils.lerp(railsBegin, gate, i / 28);
+    const next = THREE.MathUtils.lerp(railsBegin, gate, (i + 1) / 28);
     return { x, z, next };
   })), []);
 
@@ -248,7 +248,7 @@ export function NorthBay() {
       {batches.map(({ id, parts, finish }) => <WorldSectionBatch key={id} parts={parts} finish={finish} />)}
       {rails.map(({ x, z, next }) => (
         <React.Fragment key={x + '/' + z}>
-          <Beam from={[x, getBridgeHeight(z) + 0.92, z]} to={[x, getBridgeHeight(next) + 0.92, next]} width={0.19} depth={0.24} color="#d0d4c8" />
+          <Beam from={[x, getBridgeHeight(z) + 0.92, z]} to={[x, getBridgeHeight(next) + 0.92, next]} width={0.19} depth={0.24} color="#d0d4c8" rail />
         </React.Fragment>
       ))}
       {cable.map(({ geometry, points }, side) => (
@@ -260,7 +260,7 @@ export function NorthBay() {
           ))}
         </React.Fragment>
       ))}
-      {[[0, gate, 5.2, 20, 5.625, sign], [11, -207, 5.1, 9.6, 2.8, approachSign]].map((entry, i) => {
+      {[[0, gate, 5.2, 20, 5.625, sign], [11, -221, 5.1, 9.6, 2.8, approachSign]].map((entry, i) => {
         const [x, z, offset, w, h, texture] = entry as [number, number, number, number, number, THREE.Texture];
         const y = getBridgeHeight(z);
         return (

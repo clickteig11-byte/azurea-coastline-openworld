@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { simState } from '../game/store';
-import { worldImpacts, type WorldSection } from '../game/worldDamage';
+import { environmentEffects, worldImpacts, type WorldSection } from '../game/worldDamage';
 import { getTravelHeight } from '../game/worldMath';
 
 const poolSize = 900;
@@ -69,6 +69,8 @@ const fragmentShader = `
       a = (1.0 - smoothstep(0.12, edge, d)) * 0.73;
     } else if (vKind < 1.5) {
       a = 1.0 - smoothstep(0.12, 1.0, length(p * vec2(0.6, 1.8)));
+    } else if (vKind > 2.5) {
+      a = 1.0 - smoothstep(0.39, 1.0, length(p * vec2(1.0, 0.65)));
     } else {
       a = 1.0 - smoothstep(0.33, 0.8, abs(p.x + p.y * 0.31) + abs(p.y - p.x * 0.24));
     }
@@ -83,6 +85,7 @@ export function WorldEffects() {
   const nextScar = useRef(0);
   const scarSections = useRef<(WorldSection | undefined)[]>([]);
   const emission = useRef(0);
+  const plumes = useRef<{ point: THREE.Vector3; life: number; nextPuff: number }[]>([]);
   const previousDamage = useRef(100);
   const previousAircraft = useRef(-1);
   const [stone, glass] = useMemo(() => [scarTexture(false), scarTexture(true)], []);
@@ -147,6 +150,9 @@ export function WorldEffects() {
         scar.material.map = impact.material === 'glass' ? glass : stone;
         scar.visible = true;
       }
+      if (impact.destroyed && impact.material !== 'glass' && impact.energy > 56 && plumes.current.length < 11) {
+        plumes.current.push({ point: impact.point.clone().addScaledVector(impact.normal, 0.32), life: 8.5, nextPuff: 0.24 });
+      }
       const magnitude = Math.min(1.75, impact.energy / 75);
       for (let i = 0; i < 5 + magnitude * 8 + (impact.destroyed ? 10 : 0); i++) {
         const spark = i % 3 === 0 || impact.material === 'metal';
@@ -162,6 +168,35 @@ export function WorldEffects() {
       }
     }
 
+    for (let i = plumes.current.length - 1; i >= 0; i--) {
+      const plume = plumes.current[i];
+      plume.life -= dt;
+      plume.nextPuff -= dt;
+      if (plume.life <= 0) plumes.current.splice(i, 1);
+      else if (plume.nextPuff < 0) {
+        plume.nextPuff = 0.21 + Math.random() * 0.21;
+        velocity.set(Math.random() - 0.42, 1.4 + Math.random() * 0.95, Math.random() - 0.45);
+        spawn(plume.point, velocity, 0, '#595653', 2.8 + Math.random() * 0.9, 0.72, Math.min(0.86, plume.life));
+      }
+    }
+
+    for (const { kind, point, energy, motionX, motionZ } of environmentEffects.splice(0)) {
+      const count = Math.round(3 + 12 * energy);
+      const dust = kind === 'dust' || kind === 'gravel';
+      const water = kind === 'water';
+      for (let i = 0; i < Math.min(28, count); i++) {
+        const angle = i * 2.39996;
+        const speed = 0.7 + Math.random() * (2 + 2.5 * energy);
+        velocity.set(Math.cos(angle) * speed + motionX * 0.2,
+          0.32 + Math.random() * (water ? 3.4 : 1.5) * energy,
+          Math.sin(angle) * speed + motionZ * 0.2);
+        const particle = water ? (i % 3 === 0 ? 0 : 3) : dust ? (i % 4 === 0 && kind === 'gravel' ? 2 : 0) : 1;
+        const tint = water ? '#c4e5e1' : dust ? '#af9a80' : kind === 'repair' ? '#99f4dc' : '#ffcf8d';
+        spawn(point, velocity, particle, tint, 0.22 + Math.random() * (dust ? 0.89 : 0.52),
+          0.065 + Math.random() * (particle === 0 ? 0.33 : 0.19), water && particle === 0 ? 0.57 : 0.85);
+      }
+    }
+
     const aircraft = simState.aircraftDamage;
     if ((aircraft.hull === 100 && previousDamage.current < 100) || previousAircraft.current !== simState.activePlaneIdx) {
       for (const p of pool.values) if (p.flight) p.life = 0;
@@ -172,7 +207,7 @@ export function WorldEffects() {
     if (aircraft.hull < 76 && emission.current <= 0) {
       const heli = simState.activePlaneIdx === 1;
       emission.current = aircraft.hull < 45 ? 0.043 : 0.095;
-      rotation.set(-simState.planePitch, simState.planeYaw, simState.planeRoll);
+      rotation.set(-simState.planePitch, simState.planeYaw, -simState.planeRoll);
       const side = aircraft.left < aircraft.right ? -1 : 1;
       const sources = aircraft.left < 60 && aircraft.right < 60 && !heli ? [-1, 1] : [side];
       for (const source of sources) {
@@ -190,13 +225,18 @@ export function WorldEffects() {
       }
     }
 
+    let dirty = false;
     for (let i = 0; i < poolSize; i++) {
       const p = pool.values[i];
       p.age += dt;
       if (p.age >= p.life) {
-        pool.opacity[i] = 0;
+        if (pool.opacity[i] !== 0) {
+          pool.opacity[i] = 0;
+          dirty = true;
+        }
         continue;
       }
+      dirty = true;
       const fraction = p.age / p.life;
       const type = pool.kind[i];
       if (type > 0) p.velocity.y -= (type === 1 ? 12 : 17) * dt;
@@ -215,7 +255,7 @@ export function WorldEffects() {
       pool.radius[i] = p.size * (type === 0 ? 0.55 + fraction * 2.2 : 1);
       pool.opacity[i] = p.fade * (type === 0 ? Math.min(1, fraction * 9 + 0.28) * (1 - fraction) : Math.min(1, 2 * (1 - fraction)));
     }
-    for (const attribute of Object.values(pool.geometry.attributes)) attribute.needsUpdate = true;
+    if (dirty) for (const attribute of Object.values(pool.geometry.attributes)) attribute.needsUpdate = true;
   });
 
   return (

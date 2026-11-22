@@ -12,6 +12,7 @@ class SoundEngine {
   private engineOsc: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
   private engineFilter: BiquadFilterNode | null = null;
+  private waveNoise: AudioBuffer | null = null;
   private muted = false;
   private userUnlocked = false;
 
@@ -99,6 +100,11 @@ class SoundEngine {
     }
   }
 
+  public playDistantShot(level: number): void {
+    const ctx = this.ensureContext();
+    if (ctx) this.tone(ctx, 149, 'triangle', 0, 0.11, Math.max(0.006, level * 0.045));
+  }
+
   public playHitMarker(eliminated = false): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
@@ -135,6 +141,31 @@ class SoundEngine {
     this.tone(ctx, 88 - clamped * 32, 'sawtooth', 0, 0.14 + clamped * 0.18, 0.14 + clamped * 0.14);
     this.tone(ctx, 54, 'triangle', 0.01, 0.22 + clamped * 0.2, 0.18 + clamped * 0.12);
     this.tone(ctx, 210 + clamped * 140, 'square', 0.005, 0.09 + clamped * 0.08, 0.06 + clamped * 0.06);
+  }
+
+  public playSurface(kind: 'water' | 'landing' | 'step', energy: number): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (!this.waveNoise) {
+      this.waveNoise = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.45), ctx.sampleRate);
+      const samples = this.waveNoise.getChannelData(0);
+      for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+    }
+    const source = ctx.createBufferSource();
+    const filter = ctx.createBiquadFilter();
+    const volume = ctx.createGain();
+    const now = ctx.currentTime;
+    const duration = kind === 'water' ? 0.24 : kind === 'landing' ? 0.19 : 0.105;
+    source.buffer = this.waveNoise;
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(kind === 'water' ? 1700 : kind === 'landing' ? 530 : 820, now);
+    filter.frequency.exponentialRampToValueAtTime(kind === 'water' ? 470 : 115, now + duration);
+    volume.gain.setValueAtTime(Math.max(0.002, Math.min(0.19, energy * (kind === 'step' ? 0.024 : 0.11))), now);
+    volume.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    source.connect(filter).connect(volume).connect(ctx.destination);
+    source.start(now);
+    source.stop(now + duration);
+    if (kind === 'landing') this.tone(ctx, 58, 'sine', 0, 0.16, Math.min(0.16, energy * 0.095));
   }
 
   public playRepair(): void {

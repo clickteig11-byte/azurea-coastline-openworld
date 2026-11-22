@@ -20,7 +20,7 @@ import {
   createModernConcreteSteelPBR,
 } from './Textures';
 import { VegasLandmarks } from './Landmarks';
-import { COAST_SUN, getTerrainHeight, LANDMARKS, NORTH_BAY_BRIDGE } from '../game/worldMath';
+import { COAST_SUN, coastRoadRadius, coastRoadOffset, getTerrainHeight, LANDMARKS, NORTH_BAY_BRIDGE } from '../game/worldMath';
 import { cityPlots } from './City';
 import { DamageableProp } from './WorldSections';
 import { registerWorldSection } from '../game/worldDamage';
@@ -78,6 +78,7 @@ export const REPAIR_BAY_COORDS: [number, number][] = [
 ];
 
 export function SkyDome() {
+  const dome = useRef<THREE.Mesh>(null);
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
@@ -99,13 +100,14 @@ export function SkyDome() {
     const [zenith, horizon] = simState.roulette === 'RED' ? palette.amber :
       simState.roulette === 'BLACK' ? palette.blue : palette.neutral;
     const mix = 1 - Math.exp(-2 * dt);
+    dome.current?.position.copy(state.camera.position);
     uniforms.uZenith.value.lerp(zenith, mix);
     uniforms.uHorizon.value.lerp(horizon, mix);
 
   });
 
   return (
-    <mesh frustumCulled={false} renderOrder={-10}>
+    <mesh ref={dome} frustumCulled={false} renderOrder={-10}>
       <sphereGeometry args={[2200, 32, 20]} />
       <shaderMaterial
         vertexShader={skyVertexShader}
@@ -137,7 +139,7 @@ export function StylizedOcean() {
     mesh.rotateX(-Math.PI / 2);
     const vertices = mesh.attributes.position;
     // Concentrate vertices around the playable coastline and stretch the outer ocean to the horizon.
-    const spread = (v: number) => Math.sign(v) * (Math.abs(v) * 610 + Math.abs(v) ** 10 * 1760);
+    const spread = (v: number) => Math.sign(v) * (Math.abs(v) * 610 + Math.abs(v) ** 15 * 4490);
     for (let i = 0; i < vertices.count; i++) vertices.setXYZ(i, spread(vertices.getX(i)), 0, spread(vertices.getZ(i)) - 140);
     mesh.computeBoundingSphere();
     return mesh;
@@ -175,7 +177,7 @@ export function IslandTerrain() {
   );
 
   const geometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(674, 970, 196, 280);
+    const geo = new THREE.PlaneGeometry(780, 1020, 228, 300);
     geo.rotateX(-Math.PI / 2);
     geo.translate(0, 0, -153);
     const pos = geo.attributes.position;
@@ -712,7 +714,7 @@ export function VegasStripDetails() {
       checkpointGateRef.current.visible = simState.gameMode === 'GRAND_PRIX' && !simState.startMenuOpen;
       const cp = simState.checkpoints[simState.activeCheckpoint] ?? simState.checkpoints[0];
       if (cp) {
-        const gy = getTerrainHeight(cp.position[0], cp.position[2]);
+        const gy = cp.position[1];
         checkpointGateRef.current.position.set(cp.position[0], gy, cp.position[2]);
         checkpointGateRef.current.rotation.set(0, cp.yaw, 0);
       }
@@ -875,13 +877,13 @@ export function VegasStripDetails() {
 
       {/* ==================== TEXTURED 3D METROPOLIS ROADWAYS, INTERSECTIONS & SIDEWALKS ==================== */}
 
-      {/* 1. Grand Central Avenue (x = 0, width 32m, length 390m from z = -205 to z = +185) */}
+      {/* 1. Grand Central Avenue between the North Bay and South Promenade junctions */}
       <mesh
-        position={[0, groundY + 0.05, (185 + NORTH_BAY_BRIDGE.approach) / 2]}
+        position={[0, groundY + 0.05, (coastRoadRadius(0) + NORTH_BAY_BRIDGE.approach) / 2]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
       >
-        <planeGeometry args={[NORTH_BAY_BRIDGE.halfWidth * 2, 185 - NORTH_BAY_BRIDGE.approach]} />
+        <planeGeometry args={[NORTH_BAY_BRIDGE.halfWidth * 2, coastRoadRadius(0) - NORTH_BAY_BRIDGE.approach]} />
         <meshStandardMaterial map={mainAsphaltTex} roughness={0.82} metalness={0.08} />
       </mesh>
 
@@ -1215,7 +1217,7 @@ export function VegasStripDetails() {
 
       {/* Active 3D Grand Prix Checkpoint Gate (Single racing lane) */}
       <group ref={checkpointGateRef} position={[0, getTerrainHeight(0, 52), 52]}>
-        {[-5.8, 5.8].map((px) => (
+        {[-11.45, 11.45].map((px) => (
           <group key={px} position={[px, 0, 0]}>
             <mesh position={[0, 0.45, 0]} castShadow>
               <cylinderGeometry args={[0.85, 1.05, 0.9, 12]} />
@@ -1237,19 +1239,19 @@ export function VegasStripDetails() {
         ))}
         {/* Wide-Span Overhead Carbon & Gold Gantry Arch (35.8m clear span) */}
         <mesh position={[0, 10.45, 0]} castShadow>
-          <boxGeometry args={[35.8, 0.85, 0.95]} />
+          <boxGeometry args={[23.7, 0.65, 0.76]} />
           <meshStandardMaterial color="#1e293b" metalness={0.82} roughness={0.2} />
         </mesh>
         <mesh position={[0, 10.45, 0]}>
-          <boxGeometry args={[33.8, 0.32, 1.08]} />
+          <boxGeometry args={[22.4, 0.26, 0.82]} />
           <meshStandardMaterial color="#22d3ee" emissive="#06b6d4" emissiveIntensity={2.4} />
         </mesh>
         <mesh position={[0, 10.98, 0]}>
-          <boxGeometry args={[31.6, 0.2, 0.65]} />
+          <boxGeometry args={[21.6, 0.2, 0.65]} />
           <meshStandardMaterial color="#fde047" emissive="#f59e0b" emissiveIntensity={1.8} />
         </mesh>
         <mesh position={[0, 9.4, 0]}>
-          <planeGeometry args={[33.2, 1.6]} />
+          <planeGeometry args={[22.4, 0.6]} />
           <meshBasicMaterial color="#22d3ee" transparent opacity={0.18} side={THREE.DoubleSide} depthWrite={false} />
         </mesh>
         <mesh ref={gatePulseRef} position={[0, 0.14, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -1611,7 +1613,8 @@ export function InstancedFoliage() {
 
     for (let i = 0; i < 220; i++) {
       const angle = (i * 137.5 * Math.PI) / 180;
-      const radius = 58 + ((i * 29) % 185);
+      const radius = i < 168 ? 58 + ((i * 29) % 185) :
+        coastRoadRadius(Math.PI / 2 - angle) + 13.5 + (i * 7 % 11);
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = getTerrainHeight(x, z);
@@ -1624,6 +1627,7 @@ export function InstancedFoliage() {
         y < 8.5 &&
         Math.abs(x) > 32 &&
         !onCrossRoad &&
+        Math.abs(coastRoadOffset(x, z)) > 13 &&
         !nearLandmark &&
         !nearBuilding &&
         !(x > -215 && x < -40 && z > 130 && z < 180)
@@ -1656,7 +1660,7 @@ export function InstancedFoliage() {
       const nearCross = Math.abs(z + 120) < 18 || Math.abs(z) < 20 || Math.abs(z - 80) < 18;
       const nearRunway = x > -218 && x < -38 && z > 128 && z < 182;
       const nearCanal = x > 60 && Math.abs(z + 95) < 30;
-      if (y >= 0.2 && y <= 2.5 && !nearStrip && !nearCross && !nearRunway && !nearCanal) {
+      if (y >= 0.2 && y <= 2.5 && !nearStrip && !nearCross && !nearRunway && !nearCanal && Math.abs(coastRoadOffset(x, z)) > 13) {
         const sx = 1.05 + ((i * 13) % 17) * 0.12;
         const sy = 0.55 + ((i * 7) % 11) * 0.08;
         const sz = 0.95 + ((i * 19) % 15) * 0.11;

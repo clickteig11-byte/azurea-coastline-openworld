@@ -28,6 +28,8 @@ export interface HumanoidRig {
   gait: number;
   aim: number;
   air: number;
+  swim: number;
+  stroke: number;
   mixer?: THREE.AnimationMixer;
   clips: Partial<Record<'idle' | 'walk' | 'run', THREE.AnimationAction>>;
 }
@@ -37,6 +39,8 @@ interface Pose {
   time: number;
   phase: number;
   speed: number;
+  swimming?: boolean;
+  swimSpeed?: number;
   reverse?: boolean;
   lateral?: number;
   airborne?: 'jump' | 'glide' | 'parachute';
@@ -65,7 +69,7 @@ function setPose(joint: Joint | undefined, x: number, y: number, z: number, blen
 }
 
 export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, animations: THREE.AnimationClip[] = []): HumanoidRig {
-  const rig: HumanoidRig = { wrapper, joints: {}, gait: 0, aim: 0, air: 0, clips: {}, legs: [] };
+  const rig: HumanoidRig = { wrapper, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0, clips: {}, legs: [] };
   wrapper.updateWorldMatrix(true, true);
   const bones: Record<string, THREE.Bone> = {};
   model.traverse((object) => {
@@ -194,7 +198,7 @@ function groundLegs(rig: HumanoidRig, ground: GroundMotion, phase: number, speed
 
 export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   const { dt, time, phase, speed, reverse = false, lateral = 0, airborne, fallSpeed = 0, landing = 0,
-    aim = 0, recoil = 0, lookPitch = 0, lookYaw = 0, ground } = motion;
+    aim = 0, recoil = 0, lookPitch = 0, lookYaw = 0, ground, swimming = false, swimSpeed = 0 } = motion;
   const joints = rig.joints;
   rig.gait = THREE.MathUtils.damp(rig.gait, THREE.MathUtils.clamp(speed / 2.3, 0, 1), 13, dt);
   rig.aim = THREE.MathUtils.damp(rig.aim, aim, aim > rig.aim ? 22 : 10, dt);
@@ -260,10 +264,30 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
       -sign * rig.aim * 0.24, 0, armWeight);
   }
 
+  rig.swim = THREE.MathUtils.damp(rig.swim, swimming ? 1 : 0, 10, dt);
+  rig.stroke = (rig.stroke + dt * (2.6 + 0.73 * swimSpeed)) % (2 * Math.PI);
+  const swimmingBlend = rig.swim;
+  const freestyle = swimmingBlend * THREE.MathUtils.smoothstep(swimSpeed, 0.18, 2.5);
+  rig.wrapper.rotation.x = THREE.MathUtils.damp(rig.wrapper.rotation.x, 1.13 * freestyle, 12, dt);
+  if (swimmingBlend > 0.02) {
+    setPose(joints.Head, -0.49 * freestyle, Math.sin(rig.stroke * 0.5) * 0.24 * freestyle, 0, swimmingBlend);
+    setPose(joints.Spine, 0.07 * freestyle, 0, Math.sin(rig.stroke) * 0.18 * freestyle, swimmingBlend);
+    for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+      const cycle = rig.stroke + (sign < 0 ? Math.PI : 0);
+      const kick = Math.sin(cycle * 2) * 0.23;
+      setPose(joints[side + 'Arm'], -0.35 + Math.cos(cycle) * 1.42 * freestyle, 0.15 * sign,
+        (0.64 - 0.4 * freestyle + Math.sin(cycle) * 0.34) * sign, swimmingBlend);
+      setPose(joints[side + 'ForeArm'], -0.55 - Math.max(0, Math.sin(cycle)) * 0.74, 0, 0, swimmingBlend);
+      setPose(joints[side + 'UpLeg'], kick * freestyle - 0.23 * (1 - freestyle), 0, sign * 0.09, swimmingBlend);
+      setPose(joints[side + 'Leg'], 0.35 + Math.max(0, -kick) * 1.25, 0, 0, swimmingBlend);
+      setPose(joints[side + 'Foot'], -0.22, 0, 0, swimmingBlend);
+    }
+  }
+
   const bob = ground
     ? (-0.044 - run * 0.093) * rig.gait + Math.abs(sway) * 0.024 * rig.gait + breath * 0.004
     : (animated && !authored ? 0 : Math.abs(sway) * stride * 0.055 + breath * 0.004);
-  rig.wrapper.position.y = THREE.MathUtils.damp(rig.wrapper.position.y, bob - landing * 0.10, 22, dt);
+  rig.wrapper.position.y = THREE.MathUtils.damp(rig.wrapper.position.y, bob - landing * 0.10 + freestyle * 0.7, 22, dt);
   if (ground) groundLegs(rig, ground, phase, speed, run, groundBlend ** 2);
 
 }

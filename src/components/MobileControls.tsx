@@ -74,6 +74,7 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
 
   const releaseStick = () => {
     stickPointer.current = null;
+    stickBounds.current = null;
     simState.analogMoveX = simState.analogMoveY = 0;
     if (knob.current) knob.current.style.transform = '';
     if (pad.current) delete pad.current.dataset.active;
@@ -89,13 +90,16 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
       simState.touchKeys.clear();
     };
     const onVisibility = () => { if (document.hidden) release(); };
+    const onResize = () => { stickBounds.current = pad.current?.getBoundingClientRect() ?? null; };
     window.addEventListener('controls-updated', syncSize);
     window.addEventListener('blur', release);
+    window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       release();
       window.removeEventListener('controls-updated', syncSize);
       window.removeEventListener('blur', release);
+      window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
@@ -107,7 +111,7 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
   }, [visible]);
 
   const moveStick = (x: number, y: number) => {
-    const rect = stickBounds.current;
+    const rect = stickBounds.current ?? pad.current?.getBoundingClientRect();
     if (!rect) return;
     const radius = rect.width * 0.34;
     const offsetX = x - rect.left - rect.width / 2;
@@ -149,8 +153,8 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
           last.y = event.clientY;
         }}
         onPointerUp={(event) => { if (orbitPointer.current?.id === event.pointerId) orbitPointer.current = null; }}
-        onPointerCancel={() => { orbitPointer.current = null; }}
-        onLostPointerCapture={() => { orbitPointer.current = null; }}
+        onPointerCancel={(event) => { if (orbitPointer.current?.id === event.pointerId) orbitPointer.current = null; }}
+        onLostPointerCapture={(event) => { if (orbitPointer.current?.id === event.pointerId) orbitPointer.current = null; }}
       />
 
       <div className="touch-stick" role="application" aria-label="Analog joystick" ref={pad}
@@ -191,7 +195,7 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
             setTouchKey('KeyF', held);
             if (held) emit('fire-weapon');
           }} /> : <HoldButton label={flying ? simState.activePlaneIdx === 1 ? 'Down' : 'Airbrake' : 'Brake'} icon={ArrowDown} onHold={(held) => { simState.touchBrake = held; }} />}
-          {!foot && <HoldButton label={flying ? 'Power' : 'Gas'} icon={ChevronUp} accent="touch-throttle"
+          {!foot && <HoldButton label={flying ? simState.activePlaneIdx === 1 ? 'Forward' : 'Power' : 'Gas'} icon={ChevronUp} accent="touch-throttle"
             onHold={(held) => { simState.touchThrottle = held ? 1 : 0; }} />}
           {!boat && <HoldButton label={foot ? 'Jump' : flying ? 'Climb' : 'Drift'} icon={ArrowUp}
             onHold={(held) => setTouchKey('Space', held)} />}

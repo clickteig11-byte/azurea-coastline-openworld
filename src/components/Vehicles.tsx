@@ -4,14 +4,16 @@ import { useFrame } from '@react-three/fiber';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { simState, GameHudSnapshot, WEAPON_SPECS, freshAircraftDamage, COASTAL_CHARACTERS, type AircraftDamageStage, type CoastalCharacter, type CharacterCustomization } from '../game/store';
-import { getTerrainHeight, getTravelHeight, getBridgeHeight, getWaveHeight, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, NORTH_BAY_BRIDGE, RouletteOutcome } from '../game/worldMath';
+import { getTerrainHeight, getTravelHeight, getWaveHeight, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome } from '../game/worldMath';
 import { fixedWingStep } from '../game/flight';
-import { sampleGrandPrix } from '../game/grandPrix';
+import { crossesRaceGate, previewRaceDistance, raceRivals, sampleGrandPrix } from '../game/grandPrix';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
 import { REPAIR_BAY_COORDS } from './World';
 import { animateHumanoid, createHumanoidRig, strideDistance, type HumanoidRig } from '../game/humanoid';
-import { damageWorld, traceGround, traceWorld, type WorldHit } from '../game/worldDamage';
+import { shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
+import { injureBot, injurePlayer } from '../game/combat';
+import { blastWorld, damageWorld, emitEnvironment, traceGround, traceWorld, type WorldHit } from '../game/worldDamage';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -120,7 +122,6 @@ export function triggerRouletteSpin() {
   simState.roulette = next;
   simState.rouletteTimer = 45;
   simState.multiplier = next === 'GREEN_00' ? 3 : next === 'RED' ? 2 : 1.5;
-  simState.tideOffset = next === 'BLACK' ? -0.35 : 0;
   soundEngine.playRouletteFanfare(next);
 
   // Respawn aerial rings on GREEN_00 jackpot!
@@ -148,6 +149,9 @@ export function triggerBattleRoyaleDrop() {
   if (simState.brActive) {
     simState.eliminations = 0;
     simState.aliveCount = simState.botTargets.length + 1;
+    simState.brRound++;
+    simState.brResult = null;
+    simState.botImpactCooldown = 0;
     simState.lootCrates.forEach((crate) => { crate.opened = false; });
     simState.botTargets.forEach((bot, idx) => {
       bot.alive = true;
@@ -158,12 +162,13 @@ export function triggerBattleRoyaleDrop() {
       bot.x = bot.homeX;
       bot.z = bot.homeZ;
       bot.y = bot.parachuting ? bot.parachuteY : getTerrainHeight(bot.x, bot.z);
-      bot.hitFlash = bot.muzzleFlash = bot.respawnTimer = 0;
+      bot.hitFlash = bot.muzzleFlash = 0;
+      bot.fall = undefined;
+      bot.drop = undefined;
+      bot.dropSpawned = false;
     });
   }
 
-  simState.stuntText = simState.brActive ? 'BATTLE ROYALE DROP · STEER INTO THE CITY' : 'SKYDROP · STEER YOUR PARACHUTE';
-  simState.stuntTimer = 4.0;
   soundEngine.playParachuteDeploy();
 }
 
@@ -441,7 +446,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const cameraOrbit = useRef({ yaw: 0, pitch: 0 });
   const footMotion = useRef({
     phase: 0, landing: 0, airborne: false, jumpHeld: false, speed: 0, directionX: 0, directionZ: 1,
+    swim: false, splash: 0, stepTime: 0, coyote: 0, jumpBuffer: 0, airtime: 0,
   });
+  const suspension = useRef({ support: NaN, offset: 0, velocity: 0, yawRate: 0, pitch: 0, roll: 0,
+    grounded: true, wet: false, splash: 0, slip: 0, boost: 0, x: NaN, z: NaN });
   const footStart = useRef(new THREE.Vector3());
   const camTarget = useRef(new THREE.Vector3());
   const hudAccum = useRef(0);
@@ -527,8 +535,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     const spec = WEAPON_SPECS[safeIdx];
     simState.ammo = spec.clipSize;
     simState.maxAmmo = spec.clipSize;
-    simState.stuntText = 'WEAPON: ' + spec.name;
-    simState.stuntTimer = 2.2;
     weaponMeshesRef.current.forEach((m, i) => {
       if (m) m.visible = i === safeIdx;
     });
@@ -538,7 +544,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   };
 
   const fireActiveWeapon = () => {
-    if (simState.shotCooldown > 0 || simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen) return;
+    if (simState.shotCooldown > 0 || simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen ||
+        simState.gameMode === 'BATTLE_ROYALE' && simState.brResult !== null ||
+        simState.mode === 'FOOT' && footMotion.current.swim) return;
     const spec = WEAPON_SPECS[simState.activeWeaponIdx] ?? WEAPON_SPECS[0];
     simState.shotCooldown = spec.fireRate;
     simState.firingTimer = 0.24;
@@ -610,40 +618,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     let to: THREE.Vector3;
     if (worldHit) {
       to = worldHit.point;
-      const result = damageWorld(worldHit, spec.damage);
-      if (result?.destroyed && sectionHit?.section) {
-        const { owner, label } = sectionHit.section;
-        simState.stuntText = owner === label ? owner + ' · SECTION LOST' :
-          (result.stage === 'critical' ? owner + ' · CRITICAL DAMAGE' : label.toUpperCase() + ' DESTROYED');
-        simState.stuntTimer = 1.6;
-      }
+      damageWorld(worldHit, spec.damage);
+      if (spec.id === 'RPG') blastWorld(to, 6.2, spec.damage * 0.8, worldHit.section);
     } else if (bestBot && botPoint) {
       to = botPoint;
-      let dmg = spec.damage;
-      if (bestBot.shield > 0) {
-        const shieldAbsorb = Math.min(bestBot.shield, dmg);
-        bestBot.shield -= shieldAbsorb;
-        dmg -= shieldAbsorb;
-      }
-      bestBot.hp = Math.max(0, bestBot.hp - dmg);
-      bestBot.hitFlash = 0.22;
-
-      if (bestBot.hp <= 0) {
-        bestBot.alive = false;
-        bestBot.parachuting = false;
-        bestBot.respawnTimer = 9.0;
-        simState.eliminations += 1;
-        simState.aliveCount = Math.max(1, simState.aliveCount - 1);
-        simState.chips += Math.round(500 * simState.multiplier);
-        simState.playerShield = Math.min(100, simState.playerShield + 25);
-        simState.killFeedText = 'ELIMINATED ' + bestBot.name + ' [' + spec.shortName + '] +$500';
-        simState.killFeedTimer = 3.5;
-        soundEngine.playHitMarker(true);
-      } else {
-        simState.killFeedText = 'HIT ' + bestBot.name + ' -' + spec.damage + ' HP [' + spec.shortName + ']';
-        simState.killFeedTimer = 1.6;
-        soundEngine.playHitMarker(false);
-      }
+      const eliminated = injureBot(bestBot, spec.damage, direction.x * 3.9, direction.z * 3.9);
+      soundEngine.playHitMarker(eliminated);
     } else {
       to = from.clone().addScaledVector(direction, Math.min(160, spec.range));
     }
@@ -670,12 +650,13 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     simState.playerShield = 100;
     simState.cameraShake = 0;
     simState.crashFlashTimer = 0;
+    const position = simState.mode === 'PLANE' ? simState.planePos :
+      simState.mode === 'BOAT' ? simState.boatPos : simState.carPos;
+    emitEnvironment('repair', position.clone().addScaledVector(UP, 0.65), 0.8);
     soundEngine.playRepair();
-    simState.stuntText = 'VEHICLE REPAIRED · 100%';
-    simState.stuntTimer = 2.5;
   };
 
-  const registerVehicleImpact = (impactSpeedMps: number, hitPos: THREE.Vector3, sourceLabel: string, hit?: WorldHit) => {
+  const registerVehicleImpact = (impactSpeedMps: number, hitPos: THREE.Vector3, hit?: WorldHit) => {
     if (crashCooldownRef.current > 0 || impactSpeedMps <= 4.5) return;
 
     crashCooldownRef.current = 0.24;
@@ -684,6 +665,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     const airborne = simState.mode === 'PLANE';
     const dmg = Math.round(5 + severity * (airborne ? 46 : 33));
     if (hit) damageWorld(hit, 14 + impactSpeedMps * (airborne ? 2.35 : 1.85));
+    else emitEnvironment('impact', hitPos, severity);
     if (airborne) {
       const side = (hitPos.x - simState.planePos.x) * Math.cos(simState.planeYaw) -
         (hitPos.z - simState.planePos.z) * Math.sin(simState.planeYaw);
@@ -724,14 +706,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     }
 
-    if (simState.vehicleHp <= 0) {
-      simState.vehicleWrecked = true;
-      simState.stuntText = airborne ? 'AIRCRAFT FAILURE · BRACE FOR IMPACT' : 'VEHICLE WRECKED · PRESS [H] TO REPAIR';
-      simState.stuntTimer = 4.0;
-    } else if (severity > 0.35) {
-      simState.stuntText = `${sourceLabel} IMPACT -${dmg}% INTEGRITY`;
-      simState.stuntTimer = 2.0;
-    }
+
   };
 
   // Cycle between 5 Hero Cars, 6 Aircraft, 6 Boats/Ships, Character Customizer Studio, Parachute Sky-Drop & Weapons
@@ -752,8 +727,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       carRigsRef.current.forEach((rig, idx) => {
         if (rig) rig.wrapper.visible = idx === nextIdx;
       });
-      simState.stuntText = 'VEHICLE: ' + CAR_NAMES[nextIdx];
-      simState.stuntTimer = 2.5;
     };
 
     const cycleAircraft = () => {
@@ -769,8 +742,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       planeRigsRef.current.forEach((rig, idx) => {
         if (rig) rig.wrapper.visible = idx === nextIdx;
       });
-      simState.stuntText = 'AIRCRAFT: ' + PLANE_NAMES[nextIdx];
-      simState.stuntTimer = 2.5;
     };
 
     const cycleBoat = () => {
@@ -784,8 +755,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       boatRigsRef.current.forEach((rig, idx) => {
         if (rig) rig.wrapper.visible = idx === nextIdx;
       });
-      simState.stuntText = 'VESSEL: ' + BOAT_NAMES[nextIdx];
-      simState.stuntTimer = 2.5;
     };
 
     const cycleActiveFleetModel = () => {
@@ -804,8 +773,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.mode = 'FOOT';
         simState.parachuting = false;
         simState.gliding = false;
-        simState.stuntText = 'CHARACTER STUDIO // CUSTOMIZE HUMAN RIG & OUTFIT';
-        simState.stuntTimer = 2.5;
       }
     };
 
@@ -1409,8 +1376,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     };
   }, []);
 
-  const walkingSurface = (pos: THREE.Vector3, step = 0.38) => {
-    const deck = getTravelHeight(pos.x, pos.z, pos.y);
+  const walkingSurface = (pos: THREE.Vector3, step = 0.38, probeY = pos.y) => {
+    const deck = getTravelHeight(pos.x, pos.z, probeY);
     const start = new THREE.Vector3(pos.x, pos.y + step, pos.z);
     const hit = traceWorld(start, DOWN, step + 2, 0, (surface) => surface.normal.y > 0.7 && surface.section?.solid !== false);
     return hit && hit.section?.solid !== false && hit.normal.y > 0.7 && hit.point.y >= deck ? hit.point.y : deck;
@@ -1470,18 +1437,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           simState.planeVel.y = Math.max(0, simState.planeVel.y * -0.15);
         }
       }
-      if (speed > 0) registerVehicleImpact(normalSpeed, hit.point, hit.section?.label.toUpperCase() ?? 'WORLD', hit);
-    }
-
-    const { approach, gate, halfWidth } = NORTH_BAY_BRIDGE;
-    if (vehicle !== 'BOAT' && pos.z <= approach && pos.z > gate &&
-        Math.abs(previous.x) < halfWidth + 0.5 && pos.y >= getBridgeHeight(pos.z) - 1.05 &&
-        pos.y < getBridgeHeight(pos.z) + 1.2 && Math.abs(pos.x) > halfWidth - padding) {
-      const normal = new THREE.Vector3(-Math.sign(pos.x), 0, 0);
-      pos.x = -normal.x * (halfWidth - padding);
-      if (isCar) simState.carSpeed *= 0.29;
-      if (speed > 0) registerVehicleImpact(speed * Math.abs(direction.x), pos, 'GUARDRAIL',
-        { point: pos.clone().setX(-normal.x * halfWidth).addScaledVector(UP, 0.65), normal, distance });
+      if (normalSpeed > 4.5) registerVehicleImpact(normalSpeed, hit.point, hit);
+      else if (speed > 11 && Math.abs(direction.dot(hit.normal)) < 0.27 && sparkTimerRef.current <= 0) {
+        emitEnvironment('impact', hit.point, Math.min(0.38, speed / 75), moving.x * 4, moving.z * 4);
+        sparkTimerRef.current = 0.11;
+        if (hit.section) damageWorld(hit, 3 + speed * 0.17);
+      }
     }
 
     if ((pos.y < getTerrainHeight(pos.x, pos.z) + 11 || vehicle === 'BOAT') &&
@@ -1506,8 +1467,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           simState.aircraftDamage.settled = true;
         }
       }
-      simState.stuntText = 'ISLAND II · UNDER CONSTRUCTION';
-      simState.stuntTimer = 2.3;
     }
 
     // C. Rigid Car-to-Traffic Collisions (simState.trafficPositions)
@@ -1515,7 +1474,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (isCar && traffic.length > 0) {
       const fwdX = Math.sin(simState.carYaw);
       const fwdZ = Math.cos(simState.carYaw);
-      for (const [tx, , tz] of traffic) {
+      for (const [tx, ty, tz] of traffic) {
+        if (Math.abs(pos.y - ty) > 1.18) continue;
         const dx = pos.x - tx;
         const dz = pos.z - tz;
         const dist = Math.hypot(dx, dz);
@@ -1533,7 +1493,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           } else {
             simState.carSpeed *= 0.45;
           }
-          registerVehicleImpact(Math.max(impactSpeed, 7.0), pos, 'TRAFFIC');
+          registerVehicleImpact(Math.max(impactSpeed, 7.0), pos);
         }
       }
     }
@@ -1591,18 +1551,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
 
     // Roulette Storm countdown
-    simState.rouletteTimer -= dt;
-    if (simState.rouletteTimer <= 0) {
-      triggerRouletteSpin();
+    if (!simState.startMenuOpen) {
+      simState.rouletteTimer -= dt;
+      if (simState.rouletteTimer <= 0) triggerRouletteSpin();
     }
-
-    // Stunt banner countdown
-    if (simState.stuntTimer > 0) {
-      simState.stuntTimer = Math.max(0, simState.stuntTimer - dt);
-      if (simState.stuntTimer === 0) {
-        simState.stuntText = null;
-      }
-    }
+    simState.tideOffset = THREE.MathUtils.damp(simState.tideOffset, simState.roulette === 'BLACK' ? -0.35 : 0, 0.76, dt);
 
     // Battle Royale timers, Damage/Shake decays & Storm ring shrink
     if (simState.shotCooldown > 0) {
@@ -1619,17 +1572,18 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
     simState.cameraShake = Math.max(0, simState.cameraShake - dt * 2.6);
     simState.crashFlashTimer = Math.max(0, simState.crashFlashTimer - dt);
-    if (simState.killFeedTimer > 0) {
-      simState.killFeedTimer = Math.max(0, simState.killFeedTimer - dt);
-      if (simState.killFeedTimer === 0) {
-        simState.killFeedText = null;
+    if (simState.brActive && !simState.startMenuOpen && simState.brResult === null) {
+      simState.stormRadius = Math.max(58, simState.stormRadius - dt * 0.82);
+      simState.botImpactCooldown = Math.max(0, simState.botImpactCooldown - dt);
+      if (!simState.parachuting && Math.hypot(simState.playerPos.x, simState.playerPos.z) > simState.stormRadius) {
+        injurePlayer(4.8 * dt, false);
       }
     }
-    if (simState.brActive && !simState.startMenuOpen) simState.stormRadius = Math.max(68, simState.stormRadius - dt * 0.85);
 
     const isCustomizerOpen = Boolean(s.customizerOpen);
     const isStartMenuOpen = Boolean(s.startMenuOpen);
-    const isMenuOpen = Boolean(s.customizerOpen || s.startMenuOpen || simState.controlsOpen);
+    const isMenuOpen = Boolean(s.customizerOpen || s.startMenuOpen || simState.controlsOpen ||
+      simState.gameMode === 'BATTLE_ROYALE' && simState.brResult === 'OUT');
     const ctrl = simState.controlSettings;
     const steerSens = ctrl?.steeringSensitivity ?? 1.0;
     const throttleSens = ctrl?.throttleSensitivity ?? 1.0;
@@ -1660,7 +1614,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     simState.vehicleWrecked = simState.mode === 'PLANE' ? flyDamage.state === 'wrecked' : currentVehicle?.wrecked ?? false;
     const previous = previousPosition.current;
 
-    if (!isMenuOpen && (keys.has('KeyF') || simState.touchKeys.has('KeyF') || mouseDownRef.current)) {
+    if (!isMenuOpen && !(simState.mode === 'FOOT' && footMotion.current.swim) && (keys.has('KeyF') || simState.touchKeys.has('KeyF') || mouseDownRef.current)) {
       fireActiveWeapon();
     }
 
@@ -1677,8 +1631,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       footStart.current.copy(player);
       const aim = !isCustomizerOpen && (mouseOrbitRef.current !== null || simState.firingTimer > 0 ||
         simState.gameMode === 'BATTLE_ROYALE' && !simState.gliding && !simState.parachuting);
-      const verticalBefore = simState.playerVel.y;
-      let groundY = Math.max(walkingSurface(player) + 0.08, simState.tideOffset);
+      const motion = footMotion.current;
+      const velocity = simState.playerVel;
+      const verticalBefore = velocity.y;
+      let groundY = walkingSurface(player) + 0.08;
+      if (simState.parachuting) motion.swim = false;
 
       if (simState.parachuting) {
         const turn = (left - right) * 2.5 * dt;
@@ -1694,7 +1651,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.playerPos.y += simState.playerVel.y * dt;
 
         applyWorldCollisions(player, previous, 'FOOT');
-        groundY = Math.max(walkingSurface(player) + 0.08, simState.tideOffset);
+        groundY = Math.max(walkingSurface(player) + 0.08, simState.tideOffset - 0.25);
 
         if (parachuteRef.current) {
           const targetBank = (right - left) * 0.32 + Math.sin(t * 2.4) * 0.06;
@@ -1714,80 +1671,134 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           simState.playerPos.y = groundY;
           simState.playerVel.y = 0;
           simState.parachuting = false;
-          simState.stuntText = 'TOUCHDOWN! WEAPONS FREE [F TO FIRE / Q SWITCH GUN]';
-          simState.stuntTimer = 3.0;
         }
 
         speedKmh = Math.round(Math.hypot(paraFwdSpeed, descentRate) * 3.2);
       } else {
-        const moveSpeed = (boost ? 6.8 : 2.85) * throttleSens;
+        const wave = getWaveHeight(player.x, player.z, t) + simState.tideOffset;
+        const entering = simState.tideOffset - groundY > 0.66 && wave - groundY > 0.73 && player.y < wave - 0.27;
+        const leaving = simState.tideOffset - groundY < 0.43 || player.y > wave + 1.9;
+        if (!motion.swim && entering) {
+          const energy = Math.min(1.9, 0.55 + Math.abs(velocity.y) * 0.065);
+          emitEnvironment('water', player.clone().setY(wave), energy, velocity.x, velocity.z);
+          soundEngine.playSurface('water', energy);
+          motion.swim = true;
+          motion.splash = 0.36;
+          simState.gliding = false;
+          motion.jumpBuffer = 0;
+          motion.coyote = 0;
+        } else if (motion.swim && leaving) {
+          motion.swim = false;
+          player.y = Math.max(player.y, groundY);
+          velocity.y = 0;
+        }
+
+        const jumpPressed = space && !motion.jumpHeld;
+        motion.jumpBuffer = jumpPressed ? 0.15 : Math.max(0, motion.jumpBuffer - dt);
         const forward = fwd - back;
         const strafe = right - left;
         const travelYaw = simState.playerYaw + simState.orbitYaw;
-        const directionX = Math.sin(travelYaw);
-        const directionZ = Math.cos(travelYaw);
+        const dirX = Math.sin(travelYaw);
+        const dirZ = Math.cos(travelYaw);
         const normalize = 1 / Math.max(1, Math.hypot(strafe, forward));
-        const response = player.y > groundY + 0.2 ? 5 : 16;
-        simState.playerVel.x = THREE.MathUtils.damp(simState.playerVel.x, (directionX * forward + directionZ * strafe) * moveSpeed * normalize, response, dt);
-        simState.playerVel.z = THREE.MathUtils.damp(simState.playerVel.z, (directionZ * forward - directionX * strafe) * moveSpeed * normalize, response, dt);
-        player.x += simState.playerVel.x * dt;
-        player.z += simState.playerVel.z * dt;
+        const waterDrag = THREE.MathUtils.smoothstep(wave - groundY, 0.15, 0.95);
+        const moveSpeed = (motion.swim ? boost ? 4.7 : 2.75 : (boost ? 7.35 : 3.05) * (1 - waterDrag * 0.38)) * throttleSens;
+        const onGround = !motion.swim && player.y <= groundY + 0.16 && velocity.y <= 0;
+        const hasInput = Math.abs(forward) + Math.abs(strafe) > 0.015;
+        const response = motion.swim ? 5.8 : onGround ? (hasInput ? 18 : 21) : hasInput ? 2.25 : 0.5;
+        velocity.x = THREE.MathUtils.damp(velocity.x, (dirX * forward + dirZ * strafe) * moveSpeed * normalize, response, dt);
+        velocity.z = THREE.MathUtils.damp(velocity.z, (dirZ * forward - dirX * strafe) * moveSpeed * normalize, response, dt);
+
+        const current = motion.swim ? shoreReturn(player.x, player.z, simState.playerYaw, 570, 820) : null;
+        player.x += (velocity.x + (current?.x ?? 0) * 8) * dt;
+        player.z += (velocity.z + (current?.z ?? 0) * 8) * dt;
         applyWorldCollisions(player, previous, 'FOOT');
-        groundY = Math.max(walkingSurface(player) + 0.08, simState.tideOffset);
-        const onGround = player.y <= groundY + 0.15 && simState.playerVel.y <= 0;
+        groundY = walkingSurface(player) + 0.08;
         if (!simState.gliding && !isMenuOpen) {
-          const hasMotion = Math.hypot(simState.playerVel.x, simState.playerVel.z) > 0.28;
-          const heading = aim ? travelYaw : hasMotion ? Math.atan2(simState.playerVel.x, simState.playerVel.z) : simState.playerYaw;
+          const moving = Math.hypot(velocity.x, velocity.z) > 0.28;
+          const heading = aim && !motion.swim ? travelYaw : moving ? Math.atan2(velocity.x, velocity.z) : simState.playerYaw;
           const step = Math.atan2(Math.sin(heading - simState.playerYaw), Math.cos(heading - simState.playerYaw)) *
-            (1 - Math.exp(-(aim ? 14 : 9) * dt));
+            (1 - Math.exp(-(aim && !motion.swim ? 16 : motion.swim ? 5 : 12) * dt));
           simState.playerYaw += step;
           simState.orbitYaw -= step;
         } else if (simState.gliding) simState.playerYaw += (left - right) * 1.65 * dt;
 
-        // Stratosphere Sky-Jump Pad check
-        const distStrat = Math.hypot(simState.playerPos.x - 10, simState.playerPos.z + 195);
-        if (distStrat < 8 && simState.playerPos.y > 10) {
-          simState.playerVel.y = 58;
-          simState.gliding = true;
-        }
-
-        if (onGround) {
-          simState.playerPos.y = groundY;
-          simState.playerVel.y = 0;
-          simState.gliding = false;
-          if (space && !footMotion.current.jumpHeld) {
-            simState.playerVel.y = 8.8;
-            player.y += simState.playerVel.y * dt;
+        if (motion.swim) {
+          const surface = simState.tideOffset + getWaveHeight(player.x, player.z, t);
+          const depth = THREE.MathUtils.clamp(Math.hypot(velocity.x, velocity.z) / 4, 0, 1);
+          const target = Math.max(groundY, surface - 1.14 - depth * 0.09 + Math.sin(t * 3.7) * 0.052);
+          velocity.y = THREE.MathUtils.damp(velocity.y, (target - player.y) * 10, 8.5, dt);
+          player.y = Math.max(groundY, player.y + velocity.y * dt);
+          motion.splash -= dt;
+          if (hasInput && motion.splash <= 0) {
+            motion.splash = boost ? 0.32 : 0.57;
+            const stroke = 0.33 + depth * 0.45;
+            emitEnvironment('water', player.clone().setY(surface + 0.07), stroke, velocity.x, velocity.z);
+            soundEngine.playSurface('water', stroke * 0.52);
           }
         } else {
-          if (space && simState.playerVel.y < -1.5) {
+          const contact = onGround && player.y <= groundY + 0.18;
+          motion.coyote = contact ? 0.13 : Math.max(0, motion.coyote - dt);
+          if (contact) {
+            player.y = groundY;
+            velocity.y = 0;
+            simState.gliding = false;
+            motion.airtime = 0;
+          } else motion.airtime += dt;
+          if (motion.jumpBuffer > 0 && motion.coyote > 0) {
+            velocity.y = boost && hasInput ? 8.2 : 7.55;
+            motion.coyote = motion.jumpBuffer = 0;
+            soundEngine.playSurface('step', 0.65);
+          } else if (jumpPressed && motion.airtime > 0.68 && velocity.y < -2.5 && player.y - groundY > 3) {
             simState.gliding = true;
           }
-          const grav = simState.gliding ? -4.5 : -26;
-          simState.playerVel.y = Math.max(
-            simState.gliding ? -5.5 : -45,
-            simState.playerVel.y + grav * dt
-          );
-          if (simState.gliding) {
-            previous.copy(player);
-            player.x += Math.sin(simState.playerYaw) * 19 * dt;
-            player.z += Math.cos(simState.playerYaw) * 19 * dt;
-            applyWorldCollisions(player, previous, 'FOOT');
+          if (Math.hypot(player.x - 10, player.z + 195) < 8 && player.y > 10 && player.y < 21 && velocity.y < 9) {
+            velocity.y = 26;
           }
-          previous.copy(player);
-          player.y += simState.playerVel.y * dt;
-          applyWorldCollisions(player, previous, 'FOOT');
+          if (!contact || velocity.y > 0) {
+            const gravity = simState.gliding ? 4.5 : 21.5;
+            const fall = Math.max(simState.gliding ? -5.5 : -45, velocity.y - gravity * dt);
+            previous.copy(player);
+            if (simState.gliding) {
+              player.x += Math.sin(simState.playerYaw) * 19 * dt;
+              player.z += Math.cos(simState.playerYaw) * 19 * dt;
+            }
+            player.y += (velocity.y + fall) * 0.5 * dt;
+            velocity.y = fall;
+            applyWorldCollisions(player, previous, 'FOOT');
+            groundY = walkingSurface(player, 0.38, Math.max(previous.y, player.y)) + 0.08;
+            if (player.y <= groundY && velocity.y < 0) {
+              player.y = groundY;
+              velocity.y = 0;
+              simState.gliding = false;
+              if (fall < -3.6) {
+                const force = Math.min(1.5, -fall / 12);
+                motion.landing = Math.max(motion.landing, 0.28 + force * 0.49);
+                if (getTravelHeight(player.x, player.z) < 3.14) emitEnvironment('dust', player, force, velocity.x, velocity.z);
+                soundEngine.playSurface('landing', force * 0.52);
+              }
+            }
+          }
+          motion.stepTime -= dt;
+          if (hasInput && contact && motion.stepTime <= 0) {
+            motion.stepTime = boost ? 0.28 : 0.42;
+            if (waterDrag > 0.17) {
+              emitEnvironment('water', player.clone().setY(wave), 0.22, velocity.x, velocity.z);
+              soundEngine.playSurface('water', 0.28);
+            } else soundEngine.playSurface('step', boost ? 0.52 : 0.30);
+          }
         }
 
-        speedKmh = Math.round(Math.hypot(simState.playerVel.x, simState.playerVel.z) * 3.6 + (simState.gliding ? 50 : 0));
+        speedKmh = Math.round(Math.hypot(velocity.x, velocity.z) * 3.6 + (simState.gliding ? 50 : 0));
       }
 
       activePos = simState.playerPos;
       activeYaw = simState.playerYaw;
 
-      const groundedNow = player.y <= groundY + 0.18 && simState.playerVel.y <= 0.1;
-      const motion = footMotion.current;
-      if (groundedNow && motion.airborne) motion.landing = THREE.MathUtils.clamp(-verticalBefore / 13, 0.25, 1);
+      const groundedNow = !motion.swim && player.y <= groundY + 0.18 && velocity.y <= 0.1;
+      if (groundedNow && motion.airborne && verticalBefore < -2) {
+        motion.landing = Math.max(motion.landing, THREE.MathUtils.clamp(-verticalBefore / 13, 0.16, 1));
+      }
       motion.airborne = !groundedNow;
       motion.landing = Math.max(0, motion.landing - dt * 4.3);
       motion.jumpHeld = space;
@@ -1811,7 +1822,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const pose = {
         dt, time: t, phase: motion.phase, speed: motion.speed,
         reverse: motion.directionZ < -0.24, lateral: motion.directionX,
-        airborne: isCustomizerOpen ? undefined : simState.parachuting ? 'parachute' as const :
+        swimming: motion.swim, swimSpeed: Math.hypot(velocity.x, velocity.z),
+        airborne: isCustomizerOpen || motion.swim ? undefined : simState.parachuting ? 'parachute' as const :
           simState.gliding ? 'glide' as const : motion.airborne ? 'jump' as const : undefined,
         fallSpeed: simState.playerVel.y, landing: motion.landing, aim: aim && groundedNow ? 1 : 0,
         recoil: Math.max(0, (simState.firingTimer - 0.15) / 0.09),
@@ -1834,81 +1846,92 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     // 2. HERO SUPERCAR FLEET (FERRARI 458 / GT3 / WEDGE / MUSCLE / VIP LIMO + DRIFT + SNAPPY PHYSICS)
     if (simState.mode === 'CAR') {
       previous.copy(simState.carPos);
+      const car = simState.carPos;
+      const ride = suspension.current;
       const gridLocked = simState.gameMode === 'GRAND_PRIX' && simState.raceCountdown > 0;
+      const supportBefore = walkingSurface(car, 0.48) + 0.085;
+      const warped = Math.hypot(car.x - ride.x, car.z - ride.z) > 12 || !Number.isFinite(ride.support);
+      if (gridLocked || warped) {
+        Object.assign(ride, { support: supportBefore, offset: 0, velocity: 0, yawRate: 0,
+          grounded: true, wet: false, slip: 0, boost: 0 });
+        simState.carVel.y = 0;
+      }
+      const oldSpeed = simState.carSpeed;
+      const depth = simState.tideOffset - supportBefore;
+      const grip = THREE.MathUtils.lerp(1, 0.22, THREE.MathUtils.smoothstep(depth, 0.13, 1.42));
+      const integrity = 0.49 + simState.carDamage.hp * 0.0051;
       const throttleInput = gridLocked ? 0 : Math.max(fwd, touchThrottle) - back;
-      const accelPower =
-        (simState.vehicleWrecked
-          ? 16
-          : boost || simState.roulette === 'RED'
-          ? 82
-          : 52) * throttleSens;
-      const accel = throttleInput * accelPower;
-      simState.carSpeed += (brake ? 0 : accel) * dt;
-      if (brake) simState.carSpeed = THREE.MathUtils.damp(simState.carSpeed, 0, 10.5, dt);
+      const drifting = !gridLocked && !simState.vehicleWrecked && ride.grounded && grip > 0.78 && space &&
+        Math.abs(left - right) > 0.1 && Math.abs(oldSpeed) > 9;
+      isDrifting = drifting;
+      const steerScale = Math.min(1, Math.abs(oldSpeed) / 6.9) *
+        THREE.MathUtils.lerp(1, steerAssist ? 0.39 : 0.54, Math.min(1, Math.abs(oldSpeed) / 49));
+      const steer = gridLocked ? 0 : (left - right) * 2.55 * steerSens * steerScale *
+        (drifting ? 1.48 : 1) * (oldSpeed >= 0 ? 1 : -1) * grip * (ride.grounded ? 1 : 0.21);
+      ride.yawRate = THREE.MathUtils.damp(ride.yawRate, steer, drifting ? 8.5 : 13, dt);
+      simState.carYaw += ride.yawRate * dt;
+      ride.slip = THREE.MathUtils.damp(ride.slip, drifting ? (right - left) * 0.36 : -ride.yawRate * 0.045, drifting ? 8 : 12, dt);
 
-      // Snappy braking: when reversing/braking against current motion, stop on a dime
-      if (!brake && throttleInput * simState.carSpeed < 0) {
-        simState.carSpeed += throttleInput * 95 * dt;
-      }
-
-      simState.carSpeed *= Math.pow(
-        simState.vehicleWrecked ? 0.14 : throttleInput === 0 ? 0.18 : 0.28,
-        dt
-      );
-      simState.carSpeed = THREE.MathUtils.clamp(simState.carSpeed, -14, 74);
-      if (simState.vehicleWrecked) {
-        simState.carSpeed = THREE.MathUtils.clamp(simState.carSpeed, -7.5, 7.5);
-      }
-
-      isDrifting = !simState.vehicleWrecked && space && Math.abs(left - right) > 0.1 && Math.abs(simState.carSpeed) > 6;
-      const driftTurnMult = isDrifting ? 1.55 : 1.0;
-      // Easy Steering Assist gently dampens twitchy oversteer at high speed
-      const highSpeedDamp = steerAssist
-        ? Math.max(0.55, 1.0 - Math.abs(simState.carSpeed) / 95)
-        : 1.0;
-      const steer =
-        (left - right) *
-        2.85 *
-        steerSens *
-        highSpeedDamp *
-        driftTurnMult *
-        Math.min(1, Math.abs(simState.carSpeed) / 7 + 0.35) *
-        (simState.carSpeed >= 0 ? 1 : -1);
-      simState.carYaw += steer * dt;
-
-      const impactSpeed = simState.carSpeed;
-      // Powerslide lateral slip & drift score accumulation
-      const slipAngle = isDrifting ? (left - right) * -0.28 : 0;
-      simState.carPos.x += Math.sin(simState.carYaw + slipAngle) * simState.carSpeed * dt;
-      simState.carPos.z += Math.cos(simState.carYaw + slipAngle) * simState.carSpeed * dt;
-
-      if (isDrifting) {
-        simState.driftScore += Math.round(Math.abs(simState.carSpeed) * dt * 15);
-        simState.stuntText = 'DRIFTING // +' + simState.driftScore;
-        simState.stuntTimer = 1.2;
-      } else if (simState.stuntTimer === 0) {
+      if (drifting) simState.driftScore = Math.min(100, simState.driftScore + Math.abs(oldSpeed) * dt * 1.3);
+      if (boost && !drifting && simState.driftScore >= 26 && ride.boost <= 0) {
+        ride.boost = 0.45 + simState.driftScore * 0.012;
         simState.driftScore = 0;
       }
+      ride.boost = Math.max(0, ride.boost - dt);
+      const power = (simState.vehicleWrecked ? 13 : ride.boost > 0 ? 40 : boost ? 29 : 20) * integrity * throttleSens;
+      const engine = power * throttleInput * (ride.grounded ? grip : 0.075);
+      const braking = brake || throttleInput * oldSpeed < 0 ? (brake ? 27 : 36) : 0;
+      let speed = oldSpeed + engine * dt;
+      if (braking > 0) speed -= Math.sign(speed) * Math.min(Math.abs(speed), braking * dt);
+      const loss = (throttleInput === 0 ? 0.82 : 0.24) + (drifting ? 0.28 : 0) + (1 - grip) * 2.4;
+      speed *= Math.exp(-loss * dt);
+      simState.carSpeed = gridLocked ? 0 : THREE.MathUtils.clamp(speed, -13,
+        simState.vehicleWrecked ? 6.8 : (ride.boost > 0 ? 69 : boost ? 56 : 47) * (0.68 + integrity * 0.32));
+      const impactSpeed = simState.carSpeed;
+      const yaw = simState.carYaw + ride.slip;
+      const flow = shoreReturn(car.x, car.z, yaw, 590, 870);
+      car.x += (Math.sin(yaw) * impactSpeed + flow.x * (1 - grip) * 6.5) * dt;
+      car.z += (Math.cos(yaw) * impactSpeed + flow.z * (1 - grip) * 6.5) * dt;
+      applyWorldCollisions(car, previous, 'CAR');
 
-      applyWorldCollisions(simState.carPos, previous, 'CAR');
-      if (walkingSurface(simState.carPos) < simState.tideOffset + 0.08 &&
-          getTravelHeight(previous.x, previous.z, previous.y) >= simState.tideOffset + 0.08) {
-        const speed = Math.abs(simState.carSpeed);
-        simState.carPos.copy(previous);
-        simState.carSpeed *= -0.23;
-        registerVehicleImpact(speed * 0.45, simState.carPos, 'SHORELINE');
+      const ground = walkingSurface(car, 0.49) + 0.085;
+      const wave = getWaveHeight(car.x, car.z, t) + simState.tideOffset;
+      const afloat = wave - ground > 1.1 && simState.tideOffset - ground > 0.72;
+      const support = afloat ? Math.max(ground, wave - 0.92) : ground;
+      const step = surfaceStep(car.y, simState.carVel.y, support, ride.support, dt);
+      car.y = step.y;
+      simState.carVel.y = step.velocity;
+      ride.support = support;
+      ride.grounded = step.grounded;
+      ride.x = car.x;
+      ride.z = car.z;
+      const wet = wave - ground > 0.23 && car.y < wave + 0.23;
+      ride.splash -= dt;
+      if (wet && (!ride.wet || ride.splash < 0 && Math.abs(speed) > 3.8)) {
+        const intensity = THREE.MathUtils.clamp(Math.abs(speed) * 0.054 + step.impact * 0.04, 0.22, 1.7);
+        emitEnvironment('water', car.clone().setY(wave), intensity, Math.sin(yaw) * speed, Math.cos(yaw) * speed);
+        if (!ride.wet || step.impact > 3) soundEngine.playSurface('water', intensity);
+        ride.splash = 0.16;
       }
-
-      // South Strip Stunt Ramp boost
-      const rampDist = Math.hypot(simState.carPos.x - 6.5, simState.carPos.z - 86);
-      const rampBoost = rampDist < 5.5 && Math.abs(simState.carSpeed) > 12 ? 5.2 : 0;
-
-      const groundY = walkingSurface(simState.carPos);
-      simState.carPos.y = THREE.MathUtils.lerp(
-        simState.carPos.y,
-        Math.max(groundY + 0.08 + rampBoost, simState.tideOffset + 0.1),
-        1 - Math.exp(-22 * dt)
-      );
+      ride.wet = wet;
+      if (step.impact > 3.1 && !gridLocked) {
+        const energy = Math.min(1.9, step.impact * 0.1);
+        ride.velocity -= Math.min(step.impact * 0.46, 3.5);
+        simState.cameraShake = Math.max(simState.cameraShake, Math.min(0.6, energy * 0.52));
+        soundEngine.playSurface('landing', energy);
+        if (!wet) emitEnvironment('gravel', car, energy, Math.sin(yaw) * speed, Math.cos(yaw) * speed);
+        if (step.impact > 16 && !wet) {
+          registerVehicleImpact(step.impact - 4, car, { point: car.clone(), normal: UP, distance: 0 });
+        }
+      }
+      const spring = suspensionStep(ride.offset, ride.velocity, dt);
+      ride.offset = spring.offset;
+      ride.velocity = spring.velocity;
+      const gradePitch = Math.atan2(step.velocity, Math.max(8, Math.abs(speed))) * (speed >= 0 ? -1 : 1);
+      const accelerationPitch = THREE.MathUtils.clamp((oldSpeed - speed) * 0.047, -0.12, 0.12);
+      ride.pitch = THREE.MathUtils.damp(ride.pitch, THREE.MathUtils.clamp(gradePitch + accelerationPitch, -0.48, 0.35), 10, dt);
+      ride.roll = THREE.MathUtils.damp(ride.roll, ride.yawRate * (step.grounded ? 0.095 : 0.16) *
+        Math.min(1, Math.abs(speed) / 14), 10.5, dt);
 
       const sweep = simState.carSweep;
       sweep.start.copy(previous);
@@ -1962,7 +1985,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           simState.boatSpeed *= -0.35;
         }
         if (impactSpeed > 8) {
-          registerVehicleImpact(impactSpeed, simState.boatPos, 'SHORELINE');
+          registerVehicleImpact(impactSpeed, simState.boatPos);
         }
       } else {
         simState.boatPos.x = nextX;
@@ -1974,27 +1997,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const terrainY = getTerrainHeight(simState.boatPos.x, simState.boatPos.z);
       simState.boatPos.y = Math.max(waveY + 0.15, terrainY + 0.15);
 
-      // Soft open-ocean boundary turn-back so sailing far out curves smoothly back toward the island
-      const boatRadius = Math.hypot(simState.boatPos.x, simState.boatPos.z);
-      if (boatRadius > 660) {
-        const toCenterYaw = Math.atan2(-simState.boatPos.x, -simState.boatPos.z);
-        const yawDiff = Math.atan2(
-          Math.sin(toCenterYaw - simState.boatYaw),
-          Math.cos(toCenterYaw - simState.boatYaw)
-        );
-        const pull = THREE.MathUtils.clamp((boatRadius - 660) / 140, 0.15, 1.0);
-        simState.boatYaw += yawDiff * Math.min(1, 2.4 * pull * dt);
-        if (boatRadius > 820) {
-          const clampScale = 820 / boatRadius;
-          simState.boatPos.x *= clampScale;
-          simState.boatPos.z *= clampScale;
-        }
-        if (simState.stuntTimer <= 0.2) {
-          simState.stuntText = 'OPEN OCEAN HORIZON · TURNING BACK';
-          simState.stuntTimer = 1.4;
-        }
-      }
-
+      const current = shoreReturn(simState.boatPos.x, simState.boatPos.z, simState.boatYaw, 640, 945);
+      const af = simState.boatSpeed >= 0 ? 1 : -1;
+      simState.boatYaw += current.turn * (0.57 + Math.min(1.2, Math.abs(simState.boatSpeed) / 23)) * dt * af;
+      simState.boatPos.x += current.x * 10.5 * dt;
+      simState.boatPos.z += current.z * 10.5 * dt;
       simState.playerPos.copy(simState.boatPos);
       speedKmh = Math.round(Math.abs(simState.boatSpeed) * 3.0);
       activePos = simState.boatPos;
@@ -2009,35 +2016,49 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const trim = THREE.MathUtils.clamp((flyDamage.right - flyDamage.left) / 65, -1, 1);
       const failing = flyDamage.state === 'failing' || flyDamage.state === 'burning';
       const wrecked = flyDamage.state === 'wrecked';
-      const onPad = plane.y <= Math.max(walkingSurface(plane), simState.tideOffset) + 0.55;
+      const pad = Math.max(walkingSurface(plane, 0.67), simState.tideOffset + 0.18) + 0.25;
+      const onPad = plane.y <= pad + 0.10 && simState.planeVel.y <= 0.45;
       const pitchInput = (fwd - back) * (invertFlightY ? -1 : 1);
       const turn = (left - right) * steerSens;
-      const trimPull = failing ? trim * 0.45 + Math.sin(t * 8) * 0.075 : 0;
-      const power = 0.35 + flyDamage.hull * 0.0065;
+      const trimPull = failing ? trim * 0.38 + Math.sin(t * 8) * 0.065 : 0;
+      const power = 0.32 + flyDamage.hull * 0.0068;
       const throttleDelta = Number(keys.has('KeyI')) - Number(keys.has('KeyK'));
-      simState.planeThrottle = THREE.MathUtils.clamp(simState.planeThrottle + throttleDelta * dt * 0.63, 0, 1);
+      simState.planeThrottle = THREE.MathUtils.clamp(simState.planeThrottle + throttleDelta * dt * 0.54, 0, 1);
+      const wind = shoreReturn(plane.x, plane.z, simState.planeYaw, 720, 1220);
+      const bankCommand = THREE.MathUtils.clamp(turn + wind.turn * 2.4 + trimPull, -1, 1);
 
       if (!wrecked) {
         if (helicopter) {
-          const thrust = brake ? 0 : Math.max(fwd, touchThrottle) * (boost ? 43 : 29) - back * 12;
-          simState.planeSpeed = THREE.MathUtils.damp(simState.planeSpeed, thrust * power * throttleSens, 4.5, dt);
-          simState.planePitch = THREE.MathUtils.damp(simState.planePitch, -(fwd - back) * 0.23, 5.5, dt);
-          simState.planeVel.y = THREE.MathUtils.damp(simState.planeVel.y, (space ? 9.8 : brake ? -6 : 0) * power - (failing ? 2.5 : 0), 4.8, dt);
+          const cyclic = (Math.max(fwd, touchThrottle) - back) * throttleSens;
+          const collective = (space ? 1 : 0) - (brake ? 1 : 0);
+          const forward = cyclic * power * (boost ? 39 : 28);
+          simState.planePitch = THREE.MathUtils.damp(simState.planePitch, -cyclic * 0.29, 4.5, dt);
+          simState.planeRoll = THREE.MathUtils.damp(simState.planeRoll, bankCommand * 0.26, 4.8, dt);
+          simState.planeYaw += (bankCommand * (onPad ? 0.84 : 1.39) + trimPull * 0.15) * dt;
+          const yaw = simState.planeYaw;
+          const sideways = Math.sin(simState.planeRoll) * 6;
+          simState.planeVel.x = THREE.MathUtils.damp(simState.planeVel.x, Math.sin(yaw) * forward + Math.cos(yaw) * sideways, 2.35, dt);
+          simState.planeVel.z = THREE.MathUtils.damp(simState.planeVel.z, Math.cos(yaw) * forward - Math.sin(yaw) * sideways, 2.35, dt);
+          simState.planeSpeed = Math.hypot(simState.planeVel.x, simState.planeVel.z);
+          const tiltLoss = Math.abs(simState.planePitch) * 1.7 + Math.abs(simState.planeRoll) * 0.65;
+          simState.planeVel.y = THREE.MathUtils.damp(simState.planeVel.y,
+            collective * (collective > 0 ? 10.5 : 6.2) * power - tiltLoss - (failing ? 2.75 : 0), 3.5, dt);
         } else {
           const step = fixedWingStep({
-            dt, speed: simState.planeSpeed, pitch: simState.planePitch, verticalSpeed: simState.planeVel.y,
-            throttle: Math.max(simState.planeThrottle, touchThrottle),
-            pitchCommand: THREE.MathUtils.clamp(pitchInput + (space ? 0.54 : 0), -1, 1),
-            takeoffPower: Math.max(fwd, touchThrottle, space ? 0.76 : 0, throttleDelta > 0 ? simState.planeThrottle : 0),
+            dt, speed: simState.planeSpeed, pitch: simState.planePitch, bank: simState.planeRoll,
+            verticalSpeed: simState.planeVel.y, throttle: Math.max(simState.planeThrottle, touchThrottle, boost ? 0.88 : 0),
+            pitchCommand: THREE.MathUtils.clamp(pitchInput + (space ? 0.58 : 0), -1, 1), bankCommand,
+            takeoffPower: Math.max(fwd, touchThrottle, space ? 0.83 : 0, (simState.planeThrottle - 0.56) * 2.28),
             grounded: onPad, brake, boost, autoLevel: steerAssist, integrity: flyDamage.hull,
+            wingHealth: (flyDamage.left + flyDamage.right) / 200,
             thrustSensitivity: throttleSens, steeringSensitivity: steerSens, failing,
           });
           simState.planeSpeed = step.speed;
           simState.planePitch = step.pitch;
+          simState.planeRoll = step.bank;
           simState.planeVel.y = step.verticalSpeed;
+          simState.planeYaw += step.yawRate * dt;
         }
-        simState.planeRoll = THREE.MathUtils.damp(simState.planeRoll, turn * (helicopter ? 0.31 : 0.58) + trimPull, 5.5, dt);
-        simState.planeYaw += (turn * (helicopter ? 1.65 : 1.2) * power + trimPull * 0.42) * dt;
       } else if (!flyDamage.settled) {
         simState.planePitch = THREE.MathUtils.damp(simState.planePitch, -0.52, 1.85, dt);
         simState.planeRoll = THREE.MathUtils.damp(simState.planeRoll, Math.sign(trim || 1) * 0.73 + Math.sin(t * 6) * 0.13, 2.1, dt);
@@ -2052,8 +2073,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.planeRoll = THREE.MathUtils.damp(simState.planeRoll, Math.sign(trim || 1) * 0.22, 5.5, dt);
       }
 
-      plane.x += Math.sin(simState.planeYaw) * simState.planeSpeed * dt;
-      plane.z += Math.cos(simState.planeYaw) * simState.planeSpeed * dt;
+      if (!helicopter || wrecked) {
+        simState.planeVel.x = Math.sin(simState.planeYaw) * simState.planeSpeed;
+        simState.planeVel.z = Math.cos(simState.planeYaw) * simState.planeSpeed;
+      }
+      plane.x += (simState.planeVel.x + wind.x * 17) * dt;
+      plane.z += (simState.planeVel.z + wind.z * 17) * dt;
       plane.y += simState.planeVel.y * dt;
       applyWorldCollisions(plane, previous, 'PLANE');
 
@@ -2061,58 +2086,39 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const groundY = Math.max(terrain, walkingSurface(plane, 0.68)) + 0.25;
       if (plane.y <= groundY) {
         const descent = -simState.planeVel.y;
+        if (!onPad && descent > 0.9 && !flyDamage.settled) {
+          const intensity = Math.min(1.7, 0.21 + descent / 9);
+          emitEnvironment(terrain <= simState.tideOffset + 0.24 ? 'water' : 'dust', plane.clone().setY(groundY), intensity);
+          soundEngine.playSurface('landing', intensity * 0.64);
+          simState.cameraShake = Math.max(simState.cameraShake, Math.min(0.62, intensity * 0.31));
+        }
         const point = new THREE.Vector3(plane.x, groundY - 0.25, plane.z);
         if (descent > 5.3 && !flyDamage.settled) {
           if (wrecked) {
             damageWorld({ point, normal: UP, distance: 0 }, 115);
+            blastWorld(point, 6, 62);
             simState.cameraShake = 1.2;
             simState.crashFlashTimer = 0.45;
             soundEngine.playCrash(1);
           } else {
             const groundHit = traceWorld(plane.clone().addScaledVector(UP, 1.3), DOWN, 2);
-            registerVehicleImpact(descent + Math.abs(simState.planeSpeed) * 0.36, point, 'HARD LANDING',
+            registerVehicleImpact(descent + Math.abs(simState.planeSpeed) * 0.36, point,
               groundHit ?? { point, normal: UP, distance: 0 });
           }
           simState.planeSpeed *= 0.52;
         }
         if (flyDamage.state === 'wrecked' && !flyDamage.settled) {
           flyDamage.settled = true;
-          simState.stuntText = 'CRASH LANDED · PRESS [H] TO REPAIR';
-          simState.stuntTimer = 6;
         }
         plane.y = groundY;
         simState.planeVel.y = Math.max(0, simState.planeVel.y);
-        if (!wrecked) simState.planePitch = Math.max(-0.025, simState.planePitch);
+        if (!wrecked && !helicopter) simState.planePitch = Math.max(-0.025, simState.planePitch);
       }
 
-      // Soft outer-airspace turn-back so flying far over the ocean smoothly banks back toward the city
-      const planeRadius = Math.hypot(simState.planePos.x, simState.planePos.z);
-      if (planeRadius > 700 && !wrecked) {
-        const toCenterYaw = Math.atan2(-simState.planePos.x, -simState.planePos.z);
-        const yawDiff = Math.atan2(
-          Math.sin(toCenterYaw - simState.planeYaw),
-          Math.cos(toCenterYaw - simState.planeYaw)
-        );
-        const pull = THREE.MathUtils.clamp((planeRadius - 700) / 180, 0.2, 1.0);
-        simState.planeYaw += yawDiff * Math.min(1, 2.2 * pull * dt);
-        simState.planeRoll = THREE.MathUtils.lerp(
-          simState.planeRoll,
-          THREE.MathUtils.clamp(yawDiff * 0.9, -0.75, 0.75),
-          4.0 * dt
-        );
-        if (planeRadius > 920) {
-          const clampScale = 920 / planeRadius;
-          simState.planePos.x *= clampScale;
-          simState.planePos.z *= clampScale;
-        }
-        if (simState.stuntTimer <= 0.2) {
-          simState.stuntText = 'OPEN OCEAN AIRSPACE · RETURNING TO CITY';
-          simState.stuntTimer = 1.4;
-        }
-      }
-      if (simState.planePos.y > 260) {
-        simState.planePos.y = THREE.MathUtils.lerp(simState.planePos.y, 260, 2.5 * dt);
-        simState.planePitch = Math.min(simState.planePitch, -0.05);
+      if (plane.y > 250 && !wrecked) {
+        const thinningAir = THREE.MathUtils.smoothstep(plane.y, 250, 355);
+        simState.planeVel.y -= 16 * thinningAir * dt;
+        simState.planePitch = THREE.MathUtils.damp(simState.planePitch, -0.16, thinningAir * 1.45, dt);
       }
 
       simState.playerPos.copy(simState.planePos);
@@ -2121,7 +2127,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       activeYaw = simState.planeYaw;
     }
 
-    if (simState.vehicleHp < 100 && (simState.mode === 'CAR' || simState.mode === 'PLANE') &&
+    if (simState.vehicleHp < 100 && (simState.mode === 'CAR' || simState.mode === 'PLANE') && speedKmh < 36 &&
         REPAIR_BAY_COORDS.some(([x, z]) => Math.hypot(activePos.x - x, activePos.z - z) < 6.3 &&
           activePos.y < getTerrainHeight(x, z) + 4.2)) {
       repairVehicle();
@@ -2131,10 +2137,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (simState.gameMode === 'GRAND_PRIX' && !simState.startMenuOpen) {
       if (simState.raceCountdown > 0) {
         simState.raceCountdown = Math.max(0, simState.raceCountdown - dt);
-        if (simState.raceCountdown === 0) {
-          simState.stuntText = 'GO';
-          simState.stuntTimer = 1;
-        }
       } else {
         simState.lapTime += dt;
         simState.raceElapsed += dt;
@@ -2142,20 +2144,18 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
     const currentGate = simState.checkpoints[simState.activeCheckpoint];
     if (currentGate && simState.mode === 'CAR' && simState.gameMode === 'GRAND_PRIX' && !simState.startMenuOpen && simState.raceCountdown === 0) {
-      const distToGate = Math.hypot(activePos.x - currentGate.position[0], activePos.z - currentGate.position[2]);
-      const heading = Math.cos(simState.carYaw - currentGate.yaw);
-      if (distToGate < 6.1 && heading > 0.25 && simState.carSpeed > 2) {
-        const passedGate = currentGate;
+      if (simState.carSpeed > 2 && crossesRaceGate(currentGate, simState.carSweep.start, activePos)) {
+        const sector = simState.activeCheckpoint;
+        simState.sectorTimes[sector] = simState.lapTime;
         simState.activeCheckpoint = (simState.activeCheckpoint + 1) % simState.checkpoints.length;
         simState.chips += Math.round(250 * simState.multiplier);
-        simState.stuntText = 'CHECKPOINT // ' + passedGate.name;
-        simState.stuntTimer = 2.0;
         soundEngine.playChipPickup(true);
 
         if (simState.activeCheckpoint === 0) {
           simState.lapCount += 1;
           if (simState.bestLapTime === null || simState.lapTime < simState.bestLapTime) {
             simState.bestLapTime = simState.lapTime;
+            simState.bestSectors = simState.sectorTimes.slice();
           }
           simState.lapTime = 0;
         }
@@ -2178,7 +2178,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     // Sync Active 3D Weapon Visibility & Recoil Kickback (hide weapon in Character Studio closeup so outfit is clear)
     const recoilOffset = -Math.max(0, simState.firingTimer - 0.16) * 1.1;
     if (weaponMountRef.current) {
-      weaponMountRef.current.visible = !isCustomizerOpen && !simState.gliding && !simState.parachuting && (mouseOrbitRef.current !== null || simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
+      weaponMountRef.current.visible = !isCustomizerOpen && !footMotion.current.swim && !simState.gliding && !simState.parachuting && (mouseOrbitRef.current !== null || simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
       weaponMountRef.current.position.set(-0.13, 1.23, 0.42 + recoilOffset);
       weaponMountRef.current.rotation.x = simState.orbitPitch * 0.45;
     }
@@ -2238,7 +2238,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (carRef.current) {
       carRef.current.visible = !isCustomizerOpen;
       carRef.current.position.copy(simState.carPos);
-      carRef.current.rotation.y = simState.carYaw + (isDrifting ? (left - right) * 0.18 : 0);
+      const ride = suspension.current;
+      carRef.current.position.y += ride.offset;
+      carRef.current.rotation.set(ride.pitch, simState.carYaw - ride.slip * 0.52, ride.roll, 'YXZ');
     }
 
     // Active GLB Hero Car Wheel Spin, Front Wheel Steering & Steering Wheel Articulation
@@ -2400,7 +2402,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (planeRef.current) {
       planeRef.current.position.copy(simState.planePos);
       planeRef.current.rotation.order = 'YXZ';
-      planeRef.current.rotation.set(-simState.planePitch, simState.planeYaw, simState.planeRoll);
+      planeRef.current.rotation.set(-simState.planePitch, simState.planeYaw, -simState.planeRoll);
     }
     // Spin helicopter main/tail rotors, fighter propellers, turboprops & airliner turbofans across all 6 Aircraft rigs
     const planeSpinRate = dt * (simState.aircraftDamage.settled ? 0.5 : simState.mode === 'PLANE' ? 8 + simState.aircraftDamage.hull * 0.2 : 8);
@@ -2450,8 +2452,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.ammo = simState.maxAmmo;
         simState.chips += Math.round(250 * simState.multiplier);
         soundEngine.playChipPickup(true);
-        simState.stuntText = 'LOOT CRATE OPENED: FULL SHIELD & AMMO!';
-        simState.stuntTimer = 2.5;
       }
     }
 
@@ -2460,7 +2460,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     // Camera Choreography: Start Menu Panoramic Orbit, Character Studio Camera, OR Snappy Chase Camera
     if (isStartMenuOpen) {
       const raceCar = new THREE.Vector3();
-      const yaw = sampleGrandPrix(t * 27.2 + Math.sin(t * 0.79) * 2 + 14, raceCar, -1.9);
+      const yaw = sampleGrandPrix(previewRaceDistance(t, 0), raceCar, raceRivals[0].lane);
       const shot = Math.floor(t / 8) % 3;
       const side = shot === 1 ? -1 : 1;
       const back = shot === 2 ? 8 : 12;
@@ -2473,6 +2473,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const eyeDir = raceCar.clone().sub(desiredOrbitCam).normalize();
       const focus = raceCar.clone().add(new THREE.Vector3(eyeDir.z, 0, -eyeDir.x).multiplyScalar(wideScreen ? 3.8 : 0));
       focus.y += 1.4;
+      constrainCamera(raceCar.clone().addScaledVector(UP, 1.38), desiredOrbitCam, new THREE.Vector3());
       if (state.camera.position.distanceToSquared(desiredOrbitCam) > 680) {
         state.camera.position.copy(desiredOrbitCam);
         camTarget.current.copy(focus);
@@ -2539,15 +2540,17 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         : simState.mode === 'BOAT'
         ? 4.2
         : 1.95;
-      const lookOffset = isPara ? 0.65 : isCruiseShip ? 2.6 : 1.25;
+      const lookOffset = isPara ? 0.65 : isCruiseShip ? 2.6 :
+        simState.mode === 'FOOT' && footMotion.current.swim ? 1.54 : 1.25;
       const subject = new THREE.Vector3(activePos.x, activePos.y + lookOffset, activePos.z);
       const warped = camTarget.current.distanceToSquared(subject) > 70 * 70;
       const orbit = cameraOrbit.current;
       const yawDelta = Math.atan2(Math.sin(simState.orbitYaw - orbit.yaw), Math.cos(simState.orbitYaw - orbit.yaw));
       orbit.yaw += yawDelta * (warped ? 1 : 1 - Math.exp(-19 * dt));
       orbit.pitch = warped ? simState.orbitPitch : THREE.MathUtils.damp(orbit.pitch, simState.orbitPitch, 19, dt);
-      const yaw = activeYaw + orbit.yaw;
-      const range = camDist * [1, 0.62, 1.53][simState.cameraView];
+      const yaw = activeYaw + orbit.yaw - (simState.mode === 'PLANE' ? simState.planeRoll * 0.27 : 0);
+      const inFlight = simState.mode === 'PLANE';
+      const range = (camDist + (inFlight ? simState.planeSpeed * 0.077 : 0)) * [1, 0.62, 1.53][simState.cameraView];
       const elevation = THREE.MathUtils.clamp(Math.atan2(camHeight, camDist) + orbit.pitch + (simState.cameraView === 2 ? 0.16 : 0), -0.48, 1.32);
       const cameraRay = new THREE.Vector3();
       const projectEye = (heading: number, tilt = elevation) => {
@@ -2590,6 +2593,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         Math.min(1, 15 * camSmooth * dt)
       );
       state.camera.lookAt(camTarget.current);
+      if (inFlight) state.camera.rotateZ(simState.planeRoll * 0.135);
 
       // Speed-reactive dynamic FOV (60° -> 73° at high speed/boost)
       if (state.camera instanceof THREE.PerspectiveCamera) {
@@ -2647,7 +2651,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         bestLapTime: simState.bestLapTime,
         lapCount: simState.lapCount,
         driftScore: simState.driftScore,
-        stuntText: simState.stuntText,
         brActive: simState.brActive,
         parachuting: simState.parachuting,
         activeWeaponIdx: simState.activeWeaponIdx,
@@ -2660,7 +2663,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         eliminations: simState.eliminations,
         aliveCount: simState.aliveCount,
         stormRadius: Math.round(simState.stormRadius),
-        killFeedText: simState.killFeedText,
         customizerOpen: Boolean(s.customizerOpen),
         activeCarName: CAR_NAMES[activeCarIdxRef.current],
         activePlaneName: PLANE_NAMES[activePlaneIdxRef.current],
