@@ -10,14 +10,14 @@ import { useFrame } from '@react-three/fiber';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { simState, GameHudSnapshot, WEAPON_SPECS, freshAircraftDamage, COASTAL_CHARACTERS, type AircraftDamageStage, type CoastalCharacter, type CharacterCustomization } from '../game/store';
-import { getTerrainHeight, getTravelHeight, getWaveHeight, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome } from '../game/worldMath';
+import { getTerrainHeight, getTravelHeight, getWaveHeight, sampleHullBuoyancy, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome } from '../game/worldMath';
 import { fixedWingStep } from '../game/flight';
 import { crossesRaceGate } from '../game/grandPrix';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
 import { REPAIR_BAY_COORDS } from './World';
 import { animateHumanoid, createHumanoidRig, strideDistance, type HumanoidRig } from '../game/humanoid';
-import { rearSlip, shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
+import { computeChassisWeightTransfer, rearSlip, shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
 import { injureBot, injurePlayer } from '../game/combat';
 import { blastWorld, damageWorld, emitEnvironment, traceGround, traceWorld, type WorldHit } from '../game/worldDamage';
 
@@ -1349,12 +1349,17 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           if (!collected.has(finish)) {
             collected.add(finish);
             finish.flatShading = false;
-            finish.roughness = Math.max(finish.roughness, 0.76);
-            finish.metalness = Math.min(finish.metalness, 0.05);
-            finish.envMapIntensity = 0.55;
+            const isCyberArmor = /HighLimbsGeo|Joints_MAT/i.test(finish.name);
+            finish.roughness = isCyberArmor ? 0.28 : Math.max(finish.roughness, 0.72);
+            finish.metalness = isCyberArmor ? 0.62 : Math.min(finish.metalness, 0.05);
+            finish.envMapIntensity = isCyberArmor ? 1.25 : 0.58;
             finish.needsUpdate = true;
-            if (finish.name === 'Outfit Fabric' || finish.name === 'Shirt') materials.fabrics.push(finish);
-            if (finish.name === 'Utility Trousers' || finish.name === 'Pants') materials.trousers.push(finish);
+            if (finish.name === 'Outfit Fabric' || finish.name === 'Shirt' || /HighLimbsGeo/i.test(finish.name)) {
+              materials.fabrics.push(finish);
+            }
+            if (finish.name === 'Utility Trousers' || finish.name === 'Pants' || /Joints_MAT/i.test(finish.name)) {
+              materials.trousers.push(finish);
+            }
             if (/^Hair(?:Base)?$/.test(finish.name)) materials.hair.push(finish);
             if (finish.name === 'Skin') materials.skin.push(finish);
             if (finish.name === 'Shoes') materials.shoes.push(finish);
@@ -2143,13 +2148,18 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         }
       }
       const spring = suspensionStep(ride.offset, ride.velocity, dt);
-      ride.offset = spring.offset;
+      const accelLong = (speed - oldSpeed) / Math.max(dt, 0.001);
+      const chassis = computeChassisWeightTransfer(accelLong, ride.yawRate, speed, ride.slip, step.grounded);
+      ride.offset = spring.offset + chassis.aeroDrop;
       ride.velocity = spring.velocity;
       const gradePitch = Math.atan2(step.velocity, Math.max(8, Math.abs(speed))) * (speed >= 0 ? -1 : 1);
-      const accelerationPitch = THREE.MathUtils.clamp((oldSpeed - speed) * 0.047, -0.12, 0.12);
-      ride.pitch = THREE.MathUtils.damp(ride.pitch, THREE.MathUtils.clamp(gradePitch + accelerationPitch, -0.48, 0.35), 10, dt);
-      ride.roll = THREE.MathUtils.damp(ride.roll, ride.yawRate * (step.grounded ? 0.095 : 0.16) *
-        Math.min(1, Math.abs(speed) / 14), 10.5, dt);
+      ride.pitch = THREE.MathUtils.damp(
+        ride.pitch,
+        THREE.MathUtils.clamp(gradePitch + chassis.squatPitch, -0.48, 0.35),
+        11,
+        dt
+      );
+      ride.roll = THREE.MathUtils.damp(ride.roll, chassis.cornerRoll, 11.5, dt);
 
       if (!isMenuOpen && ride.grounded && !wet && tirePressure > 0.22) {
         const smoke = t >= ride.tireEffectAt;
@@ -2187,7 +2197,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       activeYaw = simState.carYaw;
     }
 
-    // 3. 6-VESSEL MARITIME & CRUISE LINER FLEET (GERSTNER WAVE BUOYANCY + RIGID SHORELINE)
+    // 3. 6-VESSEL MARITIME & CRUISE LINER FLEET (4-POINT ARCHIMEDES GERSTNER WAVE BUOYANCY + PLANING HYDRODYNAMICS)
     if (simState.mode === 'BOAT' && !isStartMenuOpen) {
       previous.copy(simState.boatPos);
       const marineThrottle = Math.max(fwd, touchThrottle) - back;
@@ -2230,7 +2240,17 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
 
       applyWorldCollisions(simState.boatPos, previous, 'BOAT');
-      const waveY = getWaveHeight(simState.boatPos.x, simState.boatPos.z, t) + simState.tideOffset;
+      const isCruise = activeBoatIdxRef.current === 1;
+      const hullWave = sampleHullBuoyancy(
+        simState.boatPos.x,
+        simState.boatPos.z,
+        simState.boatYaw,
+        isCruise ? 9.5 : 3.2,
+        isCruise ? 2.6 : 1.15,
+        t
+      );
+      const planingLift = isCruise ? 0 : Math.min(0.18, Math.max(0, simState.boatSpeed) * 0.006);
+      const waveY = hullWave.heave + simState.tideOffset + planingLift;
       const terrainY = getTerrainHeight(simState.boatPos.x, simState.boatPos.z);
       simState.boatPos.y = Math.max(waveY + 0.15, terrainY + 0.15);
 
@@ -2635,18 +2655,24 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       boatRef.current.scale.setScalar(1);
       boatRef.current.position.copy(simState.boatPos);
       const isCruise = activeBoatIdxRef.current === 1;
-      const pitchWaveAmp = isCruise ? 0.015 : 0.04;
-      const rollWaveAmp = isCruise ? 0.018 : 0.05;
+      const hullWave = sampleHullBuoyancy(
+        simState.boatPos.x,
+        simState.boatPos.z,
+        simState.boatYaw,
+        isCruise ? 9.5 : 3.2,
+        isCruise ? 2.6 : 1.15,
+        t
+      );
       const turnHeel = simState.mode === 'BOAT' && !isCruise
-        ? (left - right) * Math.min(1, Math.abs(simState.boatSpeed) / 14) * 0.14
+        ? (left - right) * Math.min(1, Math.abs(simState.boatSpeed) / 14) * 0.16
         : 0;
       const bowLift = simState.mode === 'BOAT' && !isCruise
-        ? -Math.min(0.09, Math.max(-0.04, simState.boatSpeed * 0.0024))
+        ? -Math.min(0.11, Math.max(-0.04, simState.boatSpeed * 0.0028))
         : 0;
       boatRef.current.rotation.set(
-        Math.sin(t * 2.5) * pitchWaveAmp + bowLift,
+        hullWave.pitch * (isCruise ? 0.55 : 0.92) + bowLift,
         simState.boatYaw,
-        Math.cos(t * 2.1) * rollWaveAmp + turnHeel
+        hullWave.roll * (isCruise ? 0.55 : 0.92) + turnHeel
       );
     }
     // Spin propellers / submarine thrusters across all 6 Boat Fleet rigs

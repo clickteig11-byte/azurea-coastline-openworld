@@ -114,13 +114,13 @@ const SKINS = [
 ] as const;
 
 const ARCHETYPES: { id: CharacterCustomization['archetype']; label: string }[] = [
+  { id: 'RPM_CUSTOM', label: 'City Runner' },
+  { id: 'MICHELLE_VIP', label: 'Michelle' },
+  { id: 'VANGUARD_SOLDIER', label: 'Vanguard' },
   ...Object.entries(COASTAL_CHARACTERS).map(([id, info]) => ({
     id: id as CharacterCustomization['archetype'],
     label: info.label,
   })),
-  { id: 'RPM_CUSTOM', label: 'City Runner' },
-  { id: 'MICHELLE_VIP', label: 'Michelle' },
-  { id: 'VANGUARD_SOLDIER', label: 'Vanguard' },
 ];
 
 const CAR_FLEET = [
@@ -783,8 +783,9 @@ export function Lobby({
       {/* 3. BOTTOM HORIZON COMMAND DOCK (Consistent Core Layout Across All 4 Themes & All 4 Modes) */}
       <footer className="wh-bottom-bar">
         {/* BOTTOM-LEFT: Live 3D Model Pavilion Switcher + Expedition Launch Console */}
-        <div className="wh-bottom-left-stack">
+        <div className="wh-bottom-left-stack" data-drawer-open={tab !== 'PLAY'}>
           {/* Live 3D Pavilion Model Cycle Strip (Directly cycles & focuses our loaded 3D GLB models) */}
+          {tab === 'PLAY' && (
           <div className="wh-model-showcase-bar" aria-label="Live 3D Pavilion Models">
             <div className="wh-model-pill" data-active={focusId === 'CAR'}>
               <button
@@ -898,40 +899,45 @@ export function Lobby({
               </button>
             </div>
           </div>
+          )}
 
           {/* Expedition Launch Card (Identical Structure Across All Modes & Themes) */}
-          <section className="wh-launch-card" aria-label="Launch mode">
-            <div className="wh-launch-meta">
-              <div className="wh-launch-kicker-row">
-                <span className="wh-launch-kicker">
-                  EXPEDITION // {activeModeObj?.title.toUpperCase()}
-                </span>
-                <span className="wh-launch-badge">{MODE_BADGES[mode]}</span>
-              </div>
-              <p className="wh-launch-desc">{activeModeObj?.description}</p>
-            </div>
+          <section className="wh-launch-card" aria-label="Launch mode" data-compact={tab !== 'PLAY'}>
+            {tab === 'PLAY' && (
+              <>
+                <div className="wh-launch-meta">
+                  <div className="wh-launch-kicker-row">
+                    <span className="wh-launch-kicker">
+                      EXPEDITION // {activeModeObj?.title.toUpperCase()}
+                    </span>
+                    <span className="wh-launch-badge">{MODE_BADGES[mode]}</span>
+                  </div>
+                  <p className="wh-launch-desc">{activeModeObj?.description}</p>
+                </div>
 
-            <div className="wh-launch-controls">
-              <label className="wh-launch">
-                Arrival point
-                <select
-                  value={selected}
-                  disabled={mode === 'GRAND_PRIX'}
-                  onChange={(event) => setDestination(event.target.value)}
-                >
-                  {mode === 'GRAND_PRIX' ? (
-                    <option value={selected}>Harbor Blvd — Grand Prix Grid</option>
-                  ) : (
-                    destinations.map((destination) => (
-                      <option value={destination.id} key={destination.id}>
-                        {destination.menuLabel}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </label>
-              {fleet}
-            </div>
+                <div className="wh-launch-controls">
+                  <label className="wh-launch">
+                    Arrival point
+                    <select
+                      value={selected}
+                      disabled={mode === 'GRAND_PRIX'}
+                      onChange={(event) => setDestination(event.target.value)}
+                    >
+                      {mode === 'GRAND_PRIX' ? (
+                        <option value={selected}>Harbor Blvd — Grand Prix Grid</option>
+                      ) : (
+                        destinations.map((destination) => (
+                          <option value={destination.id} key={destination.id}>
+                            {destination.menuLabel}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </label>
+                  {fleet}
+                </div>
+              </>
+            )}
 
             <button
               id="world-start-game"

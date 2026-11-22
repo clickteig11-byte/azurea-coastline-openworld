@@ -343,14 +343,191 @@ export function IslandTerrain() {
   });
 
   return (
-    <mesh geometry={geometry} receiveShadow>
+    <>
+      <mesh geometry={geometry} receiveShadow>
+        <shaderMaterial
+          vertexShader={terrainVertexShader}
+          fragmentShader={terrainFragmentShader}
+          uniforms={uniforms}
+          lights
+        />
+      </mesh>
+      <InstancedGrassMeadows parentUniforms={uniforms} />
+    </>
+  );
+}
+
+const grassVertexShader = /* glsl */ `
+  uniform float uTime;
+  uniform vec3 uCameraPos;
+  varying float vBladeH;
+  varying float vWind;
+  varying vec3 vWorldPos;
+
+  void main() {
+    vBladeH = uv.y;
+    vec4 worldBase = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    float dist = distance(worldBase.xyz, uCameraPos);
+    float lodScale = 1.0 - smoothstep(115.0, 175.0, dist);
+
+    vec3 localPos = position;
+    localPos.y *= lodScale;
+
+    float gustPhase = dot(worldBase.xz, vec2(0.18, 0.13)) - uTime * 2.55;
+    float gust = sin(gustPhase) + 0.45 * cos(gustPhase * 2.1 + worldBase.x * 0.4);
+    vWind = gust * 0.5 + 0.5;
+    float bend = pow(vBladeH, 1.65) * 0.24 * lodScale;
+    localPos.x += gust * bend;
+    localPos.z += cos(gustPhase * 1.3) * bend * 0.7;
+
+    vec4 wp = instanceMatrix * vec4(localPos, 1.0);
+    vWorldPos = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const grassFragmentShader = /* glsl */ `
+  uniform vec3 uSunLightCol;
+  uniform vec3 uAmbientCol;
+  uniform vec3 uHorizonCol;
+  uniform vec3 uCameraPos;
+  varying float vBladeH;
+  varying float vWind;
+  varying vec3 vWorldPos;
+
+  void main() {
+    vec3 rootCol = vec3(0.04, 0.11, 0.035);
+    vec3 midCol = vec3(0.11, 0.29, 0.075);
+    vec3 tipCol = mix(vec3(0.24, 0.48, 0.11), vec3(0.42, 0.62, 0.16), clamp(vWind, 0.0, 1.0));
+    vec3 albedo = mix(rootCol, midCol, smoothstep(0.0, 0.52, vBladeH));
+    albedo = mix(albedo, tipCol, smoothstep(0.42, 1.0, vBladeH));
+
+    // Ambient occlusion near soil root + chlorophyll translucency at blade tips
+    float ao = mix(0.42, 1.15, vBladeH);
+    vec3 light = uAmbientCol * 0.85 + uSunLightCol * (0.62 + 0.55 * vBladeH);
+    vec3 col = albedo * light * ao;
+
+    float camDist = distance(vWorldPos, uCameraPos);
+    float haze = smoothstep(110.0, 175.0, camDist);
+    col = mix(col, uHorizonCol, haze * 0.55);
+
+    gl_FragColor = vec4(col, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
+function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<string, THREE.IUniform> }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  const { bladeGeo, matrices } = useMemo(() => {
+    // 5 intersecting tapered curved blades per tuft (25 vertices total)
+    const positions: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+    const bladeCount = 5;
+    for (let b = 0; b < bladeCount; b++) {
+      const angle = (b * Math.PI) / bladeCount + (b % 2 === 0 ? 0.16 : -0.14);
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const wBase = 0.085;
+      const wMid = 0.055;
+      const hMid = 0.24;
+      const hTop = 0.48 + (b % 2) * 0.08;
+      const lean = (b - 2) * 0.075;
+      const baseIdx = b * 5;
+
+      // 0: bottom-left, 1: bottom-right, 2: mid-left, 3: mid-right, 4: tip
+      positions.push(
+        -wBase * cos, 0, -wBase * sin,
+        wBase * cos, 0, wBase * sin,
+        -wMid * cos + lean * 0.4, hMid, -wMid * sin + lean * 0.4,
+        wMid * cos + lean * 0.4, hMid, wMid * sin + lean * 0.4,
+        lean, hTop, lean
+      );
+      uvs.push(
+        0, 0,
+        1, 0,
+        0, 0.5,
+        1, 0.5,
+        0.5, 1.0
+      );
+      indices.push(
+        baseIdx + 0, baseIdx + 1, baseIdx + 2,
+        baseIdx + 1, baseIdx + 3, baseIdx + 2,
+        baseIdx + 2, baseIdx + 3, baseIdx + 4
+      );
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    // Deterministic placement of 1,450 lush grass tufts across coastal meadows & park lawns
+    const dummy = new THREE.Object3D();
+    const mats: THREE.Matrix4[] = [];
+    let seed = 1337;
+    const rand = () => {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+
+    for (let i = 0; i < 4200 && mats.length < 1450; i++) {
+      const r = 32 + rand() * 195;
+      const theta = rand() * Math.PI * 2;
+      const x = Math.cos(theta) * r;
+      const z = Math.sin(theta) * r;
+
+      // Keep clear of roads, sidewalks, parking bays, transit stops, runway, and canal
+      if (Math.abs(x) < 34.5) continue;
+      if (Math.abs(z) < 22.5 || Math.abs(z + 120) < 22.5 || Math.abs(z - 80) < 22.5) continue;
+      if (x > -215 && x < -40 && z > 125 && z < 185) continue;
+      if (x > 66 && Math.abs(z + 95) < 28) continue;
+      if (Math.abs(coastRoadOffset(x, z)) < 14.5) continue;
+
+      // Avoid city building plots + generous sidewalk apron
+      let insidePlot = false;
+      for (let pIdx = 0; pIdx < cityPlots.length; pIdx++) {
+        const plot = cityPlots[pIdx];
+        if (Math.abs(x - plot.x) < plot.w * 0.56 + 6.5 && Math.abs(z - plot.z) < plot.d * 0.56 + 6.5) {
+          insidePlot = true;
+          break;
+        }
+      }
+      if (insidePlot) continue;
+
+      const y = getTerrainHeight(x, z);
+      if (y < 2.35 || y > 7.4) continue;
+
+      dummy.position.set(x, y - 0.02, z);
+      dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+      const s = 0.78 + rand() * 0.68;
+      dummy.scale.set(s, s * (0.85 + rand() * 0.45), s);
+      dummy.updateMatrix();
+      mats.push(dummy.matrix.clone());
+    }
+
+    return { bladeGeo: geo, matrices: mats };
+  }, []);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    matrices.forEach((mat, i) => mesh.setMatrixAt(i, mat));
+    mesh.instanceMatrix.needsUpdate = true;
+  }, [matrices]);
+
+  return (
+    <instancedMesh ref={meshRef} args={[bladeGeo, undefined, matrices.length]} frustumCulled={false}>
       <shaderMaterial
-        vertexShader={terrainVertexShader}
-        fragmentShader={terrainFragmentShader}
-        uniforms={uniforms}
-        lights
+        vertexShader={grassVertexShader}
+        fragmentShader={grassFragmentShader}
+        uniforms={parentUniforms}
+        side={THREE.DoubleSide}
       />
-    </mesh>
+    </instancedMesh>
   );
 }
 

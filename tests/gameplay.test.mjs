@@ -355,3 +355,35 @@ test('Grand Prix final-sector progress stays bounded and humanoid emote blends s
   }
   assert.ok(rig.emoteBlend < 0.02);
 });
+
+test('4-point hull buoyancy, chassis weight transfer, and welded character normals behave physically', async () => {
+  const { sampleHullBuoyancy, getWaveHeight } = await import('../src/game/worldMath.ts');
+  const { computeChassisWeightTransfer } = await import('../src/game/motion.ts');
+  const { weldSmoothNormals } = await import('../src/game/humanoid.ts');
+  const { BoxGeometry, Mesh } = await import('three');
+
+  // 1. 4-point Archimedes hull buoyancy tracks wave heave and wave slope pitch/roll
+  const b0 = sampleHullBuoyancy(240, -180, 0, 3.2, 1.15, 2.5);
+  const centerWave = getWaveHeight(240, -180, 2.5);
+  assert.ok(Number.isFinite(b0.heave) && Math.abs(b0.heave - centerWave) < 0.35);
+  assert.ok(Number.isFinite(b0.pitch) && Math.abs(b0.pitch) < 0.45);
+  assert.ok(Number.isFinite(b0.roll) && Math.abs(b0.roll) < 0.45);
+
+  // 2. Chassis weight transfer squats under acceleration, dives under braking, and gains aero downforce
+  const accelTransfer = computeChassisWeightTransfer(18, 0.4, 38, -0.18, true);
+  const brakeTransfer = computeChassisWeightTransfer(-24, 0, 38, 0, true);
+  assert.ok(accelTransfer.squatPitch < 0 && brakeTransfer.squatPitch > 0);
+  assert.ok(accelTransfer.aeroDownforce > 1.1 && accelTransfer.aeroDrop < -0.02);
+  assert.ok(Math.abs(accelTransfer.cornerRoll) > 0.01);
+
+  // 3. Position-welded normals smooth split hard-edge vertices without mutating vertex count
+  const box = new BoxGeometry(1, 1, 1).toNonIndexed();
+  const mesh = new Mesh(box);
+  const beforeCount = box.attributes.position.count;
+  weldSmoothNormals(mesh);
+  assert.equal(box.attributes.position.count, beforeCount);
+  assert.equal(box.userData.smoothWelded, true);
+  const n0 = [box.attributes.normal.getX(0), box.attributes.normal.getY(0), box.attributes.normal.getZ(0)];
+  // A welded corner normal on a cube has non-zero components on all 3 axes (~0.577 each)
+  assert.ok(Math.abs(n0[0]) > 0.4 && Math.abs(n0[1]) > 0.4 && Math.abs(n0[2]) > 0.4);
+});

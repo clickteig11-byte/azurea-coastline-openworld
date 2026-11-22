@@ -77,7 +77,34 @@ export function stepTumble(fall: Tumble, y: number, ground: number, dt: number) 
 export function rearSlip(speed: number, sideways: number, yawRate: number, handbrake: boolean, grip: number, grounded: boolean, dt: number) {
   const rotation = yawRate * dt;
   const inertia = sideways * Math.cos(rotation) - speed * Math.sin(rotation);
-  const traction = grounded ? (handbrake ? 1.55 : 6.7) * grip : 0.12;
+  const slipRatio = Math.min(1, Math.abs(inertia) / Math.max(4, Math.abs(speed)));
+  // Pacejka-inspired pneumatic trail self-alignment & progressive drift saturation
+  const selfAlign = !handbrake && grounded ? 1 + (1 - slipRatio) * 0.18 : 1;
+  const traction = grounded ? (handbrake ? 1.55 : 6.7 * selfAlign) * grip : 0.12;
   const lateral = THREE.MathUtils.damp(inertia, 0, traction, dt);
   return { lateral, angle: Math.atan2(lateral, Math.max(1.5, Math.abs(speed))) };
+}
+
+export function computeChassisWeightTransfer(
+  accelLong: number,
+  yawRate: number,
+  speed: number,
+  slipAngle: number,
+  grounded: boolean
+): { squatPitch: number; cornerRoll: number; aeroDownforce: number; aeroDrop: number } {
+  const speedNorm = Math.min(1.4, Math.abs(speed) / 48);
+  const aeroDownforce = grounded ? 1 + 0.22 * speedNorm * speedNorm : 1;
+  const aeroDrop = grounded ? -0.042 * speedNorm * speedNorm : 0;
+  // Longitudinal weight transfer: acceleration squats rear (+pitch), braking dives nose (-pitch)
+  const squatPitch = grounded
+    ? THREE.MathUtils.clamp(-accelLong * 0.0046, -0.14, 0.11)
+    : 0;
+  // Lateral weight transfer: centripetal acceleration v * omega + slip rolls chassis outward
+  const lateralG = speed * yawRate + Math.sin(slipAngle) * Math.abs(speed) * 0.65;
+  const cornerRoll = THREE.MathUtils.clamp(
+    lateralG * (grounded ? 0.0038 : 0.0052),
+    -0.24,
+    0.24
+  );
+  return { squatPitch, cornerRoll, aeroDownforce, aeroDrop };
 }

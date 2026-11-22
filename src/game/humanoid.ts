@@ -72,11 +72,47 @@ function setPose(joint: Joint | undefined, x: number, y: number, z: number, blen
   joint.bone.quaternion.slerp(target, blend);
 }
 
+export function weldSmoothNormals(model: THREE.Object3D) {
+  model.traverse((obj) => {
+    const mesh = obj as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.geometry || mesh.geometry.userData?.smoothWelded) return;
+    const geo = mesh.geometry;
+    const pos = geo.attributes.position;
+    if (!pos) return;
+    geo.userData.smoothWelded = true;
+    if (pos.count > 18000) return;
+    geo.computeVertexNormals();
+    const norm = geo.attributes.normal;
+    if (!norm) return;
+    const sums = new Map<string, [number, number, number]>();
+    const keys = new Array<string>(pos.count);
+    for (let i = 0; i < pos.count; i++) {
+      const k = `${Math.round(pos.getX(i) * 2000)},${Math.round(pos.getY(i) * 2000)},${Math.round(pos.getZ(i) * 2000)}`;
+      keys[i] = k;
+      const cur = sums.get(k);
+      if (cur) {
+        cur[0] += norm.getX(i);
+        cur[1] += norm.getY(i);
+        cur[2] += norm.getZ(i);
+      } else {
+        sums.set(k, [norm.getX(i), norm.getY(i), norm.getZ(i)]);
+      }
+    }
+    for (let i = 0; i < pos.count; i++) {
+      const s = sums.get(keys[i])!;
+      const len = Math.hypot(s[0], s[1], s[2]) || 1;
+      norm.setXYZ(i, s[0] / len, s[1] / len, s[2] / len);
+    }
+    norm.needsUpdate = true;
+  });
+}
+
 export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, animations: THREE.AnimationClip[] = []): HumanoidRig {
   const rig: HumanoidRig = {
     wrapper, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0,
     emoteElapsed: 0, emoteBlend: 0, clips: {}, legs: [],
   };
+  weldSmoothNormals(model);
   wrapper.updateWorldMatrix(true, true);
   const bones: Record<string, THREE.Bone> = {};
   const aliases: Record<string, string> = { Abdomen: 'Spine', Torso: 'Spine1' };
@@ -92,7 +128,14 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
     const name = object.name.replace(/^mixamorig:?/, '').replace(/[.]/g, '');
     bones[aliases[name] ?? name] = object as THREE.Bone;
   });
-  const clip = (name: string) => animations.find((animation) => animation.name === name || animation.name.endsWith('_' + name));
+  const clip = (name: string) => {
+    const lower = name.toLowerCase();
+    return animations.find(
+      (animation) =>
+        animation.name.toLowerCase() === lower ||
+        animation.name.toLowerCase().endsWith('_' + lower)
+    );
+  };
   const walk = clip('Walk'), run = clip('Run'), idle = clip('Idle');
   if (walk && run && idle) {
     rig.mixer = new THREE.AnimationMixer(model);

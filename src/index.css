@@ -407,15 +407,15 @@ canvas {
   left: max(1.15rem, env(safe-area-inset-left));
   width: min(356px, calc(100vw - 2.3rem));
   max-width: 356px;
-  max-height: calc(100dvh - 15.2rem);
+  max-height: calc(100dvh - 10.2rem);
   z-index: 12;
   pointer-events: auto;
   display: flex;
   flex-direction: column;
   border-radius: 16px;
   border: 1px solid rgba(229, 195, 132, 0.24);
-  background: rgba(9, 14, 22, 0.88);
-  backdrop-filter: blur(12px);
+  background: rgba(9, 14, 22, 0.9);
+  backdrop-filter: blur(10px);
   box-shadow: 0 20px 48px rgba(2, 6, 23, 0.56);
   overflow: hidden;
 }
@@ -815,6 +815,9 @@ canvas {
   box-shadow: 0 16px 38px rgba(2, 6, 23, 0.48);
   display: grid;
   gap: 0.52rem;
+}
+.wh-launch-card[data-compact="true"] {
+  padding: 0.42rem;
 }
 
 .wh-launch-meta {

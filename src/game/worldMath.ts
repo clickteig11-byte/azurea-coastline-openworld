@@ -101,11 +101,39 @@ export const LANDMARKS: LandmarkDef[] = [
 ];
 
 export function getWaveHeight(x: number, z: number, t: number): number {
+  const distOrigin = Math.hypot(x, z);
+  const swellAtten = 1 - smoothstep(450, 2200, distOrigin);
   let y = 0;
   y += 0.42 * Math.sin(0.11 * x + 1.25 * t);
   y += 0.24 * Math.sin(0.22 * (0.7 * x + 0.7 * z) + 1.8 * t);
   y += 0.14 * Math.sin(0.41 * (-0.4 * x + 0.9 * z) + 2.3 * t);
-  return y;
+  y += 0.065 * Math.sin(0.68 * (0.85 * x - 0.52 * z) + 3.1 * t);
+  y += 0.032 * Math.sin(1.15 * (-0.6 * x - 0.8 * z) + 3.9 * t);
+  return y * swellAtten;
+}
+
+export function sampleHullBuoyancy(
+  x: number,
+  z: number,
+  yaw: number,
+  halfLength: number,
+  halfBeam: number,
+  t: number
+): { heave: number; pitch: number; roll: number } {
+  const fwdX = Math.sin(yaw);
+  const fwdZ = Math.cos(yaw);
+  const rightX = Math.cos(yaw);
+  const rightZ = -Math.sin(yaw);
+
+  const hBow = getWaveHeight(x + fwdX * halfLength, z + fwdZ * halfLength, t);
+  const hStern = getWaveHeight(x - fwdX * halfLength, z - fwdZ * halfLength, t);
+  const hStarboard = getWaveHeight(x + rightX * halfBeam, z + rightZ * halfBeam, t);
+  const hPort = getWaveHeight(x - rightX * halfBeam, z - rightZ * halfBeam, t);
+
+  const heave = (hBow + hStern + hStarboard + hPort) * 0.25;
+  const pitch = Math.atan2(hStern - hBow, Math.max(1, halfLength * 2));
+  const roll = Math.atan2(hPort - hStarboard, Math.max(0.8, halfBeam * 2));
+  return { heave, pitch, roll };
 }
 
 function smoothstep(edge0: number, edge1: number, x: number): number {

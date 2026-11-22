@@ -10,12 +10,23 @@ export type GamePlayMode = 'FREE_ROAM' | 'BATTLE_ROYALE' | 'GRAND_PRIX' | 'WORLD
 
 export type WeaponId = 'AR' | 'SHOTGUN' | 'SNIPER' | 'MINIGUN' | 'RPG';
 
-export type CharacterArchetype = 'CIVILIAN_MAN' | 'CIVILIAN_WOMAN' | 'COAST_NAVIGATOR' | 'RESCUE_PILOT' | 'RPM_CUSTOM' | 'MICHELLE_VIP' | 'VANGUARD_SOLDIER';
+export type CharacterArchetype =
+  | 'CIVILIAN_MAN'
+  | 'CIVILIAN_WOMAN'
+  | 'COAST_NAVIGATOR'
+  | 'RESCUE_PILOT'
+  | 'XBOT_CYBER'
+  | 'HIGH_ROLLER_VIP'
+  | 'RPM_CUSTOM'
+  | 'MICHELLE_VIP'
+  | 'VANGUARD_SOLDIER';
 export const COASTAL_CHARACTERS = {
+  XBOT_CYBER: { label: 'Apex Android', url: '/models/xbot.glb', height: 1.82 },
+  HIGH_ROLLER_VIP: { label: 'Executive VIP', url: '/models/human_high_roller.glb', height: 1.8 },
+  RESCUE_PILOT: { label: 'Rescue Pilot', url: '/models/characters/coastal-rescue-pilot.glb', height: 1.86 },
+  COAST_NAVIGATOR: { label: 'Harbor Navigator', url: '/models/characters/harbor-navigator.glb', height: 1.76 },
   CIVILIAN_MAN: { label: 'Quay Resident', url: '/models/characters/quaternius-man.glb', height: 1.76 },
   CIVILIAN_WOMAN: { label: 'Harbor Resident', url: '/models/characters/quaternius-woman-casual.glb', height: 1.68 },
-  COAST_NAVIGATOR: { label: 'Harbor Navigator', url: '/models/characters/harbor-navigator.glb', height: 1.76 },
-  RESCUE_PILOT: { label: 'Rescue Pilot', url: '/models/characters/coastal-rescue-pilot.glb', height: 1.86 },
 } as const satisfies Partial<Record<CharacterArchetype, { label: string; url: string; height: number }>>;
 export type CoastalCharacter = keyof typeof COASTAL_CHARACTERS;
 

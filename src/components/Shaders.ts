@@ -175,17 +175,45 @@ export const waterVertexShader = /* glsl */ `
   varying vec3 vWorldPos;
   varying vec3 vNormal;
   varying float vCrest;
+  varying float vFoamCrest;
 
   void main() {
     vec4 wp = modelMatrix * vec4(position, 1.0);
     vec2 p = wp.xz;
+    float distOrigin = length(p);
+    float swellAtten = 1.0 - smoothstep(450.0, 2200.0, distOrigin);
+
+    // 5-Wave Directional Gerstner / Trochoidal Ocean Swell
     float phaseA = 0.11 * p.x + 1.25 * uTime;
     float phaseB = 0.22 * (0.7 * p.x + 0.7 * p.y) + 1.8 * uTime;
     float phaseC = 0.41 * (-0.4 * p.x + 0.9 * p.y) + 2.3 * uTime;
-    vCrest = 0.42 * sin(phaseA) + 0.24 * sin(phaseB) + 0.14 * sin(phaseC);
+    float phaseD = 0.68 * (0.85 * p.x - 0.52 * p.y) + 3.1 * uTime;
+    float phaseE = 1.15 * (-0.6 * p.x - 0.8 * p.y) + 3.9 * uTime;
+
+    float sinA = sin(phaseA), cosA = cos(phaseA);
+    float sinB = sin(phaseB), cosB = cos(phaseB);
+    float sinC = sin(phaseC), cosC = cos(phaseC);
+    float sinD = sin(phaseD), cosD = cos(phaseD);
+    float sinE = sin(phaseE), cosE = cos(phaseE);
+
+    // Trochoidal horizontal crest pinching
+    wp.x -= (0.14 * cosA + 0.06 * cosB - 0.03 * cosC) * swellAtten;
+    wp.z -= (0.06 * cosB + 0.05 * cosC - 0.02 * cosD) * swellAtten;
+
+    vCrest = (0.42 * sinA + 0.24 * sinB + 0.14 * sinC + 0.065 * sinD + 0.032 * sinE) * swellAtten;
     wp.y += vCrest;
-    vec2 slope = vec2(0.0462, 0.0) * cos(phaseA) + vec2(0.037, 0.037) * cos(phaseB) + vec2(-0.023, 0.052) * cos(phaseC);
-    vNormal = vec3(-slope.x, 1.0, -slope.y);
+
+    vec2 slope = (
+      vec2(0.0462, 0.0) * cosA +
+      vec2(0.037, 0.037) * cosB +
+      vec2(-0.023, 0.052) * cosC +
+      vec2(0.037, -0.023) * cosD +
+      vec2(-0.022, -0.029) * cosE
+    ) * swellAtten;
+
+    // Crest steepness / Jacobian compression for whitecap generation
+    vFoamCrest = clamp((0.35 * sinA + 0.28 * sinB + 0.22 * sinC + 0.18 * sinD) * swellAtten, 0.0, 1.0);
+    vNormal = normalize(vec3(-slope.x, 1.0, -slope.y));
     vWorldPos = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
@@ -206,6 +234,7 @@ export const waterFragmentShader = /* glsl */ `
   varying vec3 vWorldPos;
   varying vec3 vNormal;
   varying float vCrest;
+  varying float vFoamCrest;
 
   float waterHash(vec2 p) {
     vec3 h = fract(vec3(p.xyx) * 0.1031);
@@ -224,11 +253,23 @@ export const waterFragmentShader = /* glsl */ `
     vec2 p = vWorldPos.xz;
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
     float cameraDistance = distance(vWorldPos, uCameraPos);
-    float detail = 1.0 - smoothstep(55.0, 860.0, cameraDistance);
-    float wind = waterNoise(p * 0.082 + vec2(uTime * -0.04, uTime * 0.025));
-    float rippleA = cos(dot(p, vec2(0.92, 1.58)) + uTime * 3.3 + wind * 5.9);
-    float rippleB = cos(dot(p, vec2(-1.79, 0.62)) - uTime * 2.7 + wind * 3.4);
-    vec3 n = normalize(vNormal + vec3(rippleA + rippleB * 0.69, 0.0, rippleB - rippleA * 0.46) * 0.042 * detail);
+    float detail = 1.0 - smoothstep(45.0, 880.0, cameraDistance);
+    float microDetail = 1.0 - smoothstep(18.0, 240.0, cameraDistance);
+
+    // Multi-layered capillary wind ripples & cross-swell normal perturbation
+    float wind = waterNoise(p * 0.075 + vec2(uTime * -0.042, uTime * 0.028));
+    float windFine = waterNoise(p * 0.24 + vec2(uTime * 0.065, uTime * -0.05));
+    float rippleA = cos(dot(p, vec2(0.95, 1.62)) + uTime * 3.4 + wind * 6.1);
+    float rippleB = cos(dot(p, vec2(-1.82, 0.64)) - uTime * 2.8 + wind * 3.6);
+    float rippleC = sin(dot(p, vec2(2.85, -2.15)) + uTime * 4.6 + windFine * 4.2) * microDetail;
+    vec3 n = normalize(
+      vNormal +
+      vec3(
+        (rippleA + rippleB * 0.72 + rippleC * 0.45) * 0.048,
+        0.0,
+        (rippleB - rippleA * 0.48 + rippleC * 0.38) * 0.048
+      ) * detail
+    );
 
     float dist = length(p);
     vec2 siteUV = vec2(p.x / 105.0, (p.y + 469.0) / 116.0);
@@ -240,16 +281,27 @@ export const waterFragmentShader = /* glsl */ `
     float roadRadius = 228.0 + 62.0 * exp(-airport * airport) - 23.0 * pow(max(0.0, -cos(angle)), 16.0);
     float beach = 41.0 + 6.0 * cos(angle * 3.0) - 4.0 * sin(angle * 5.0);
     float shore = dist - roadRadius - beach;
-    float deep = canal ? 0.13 : min(smoothstep(-6.0, 52.0, shore), smoothstep(0.84, 1.29, site));
+    float deep = canal ? 0.11 : min(smoothstep(-6.0, 56.0, shore), smoothstep(0.84, 1.29, site));
 
     vec3 sunN = normalize(uSunDir);
     float daySun = 1.0 - smoothstep(0.15, 0.85, uMoonVis);
 
-    vec3 water = mix(uShallow, uDeep, deep);
-    water += (wind - 0.52) * vec3(0.008, 0.025, 0.028) * (1.0 - deep) * mix(0.35, 1.0, daySun);
-    float caustic = pow(max(0.0, cos(p.x * 0.49 + wind * 5.5 + 0.45 * uTime) *
-      sin(p.y * 0.40 + wind * 6.1 - 0.58 * uTime)), 4.0);
-    water += vec3(0.015, 0.048, 0.036) * caustic * (1.0 - deep) * detail * mix(0.28, 1.0, daySun);
+    // Beer-Lambert depth absorption & shallow turquoise shelf transition
+    vec3 water = mix(uShallow, uDeep, pow(deep, 0.85));
+    water += (wind - 0.5) * vec3(0.010, 0.032, 0.035) * (1.0 - deep) * mix(0.35, 1.0, daySun);
+
+    // Dual-octave refracted solar caustics in shallow water & Venice Canal
+    float causticA = pow(max(0.0, cos(p.x * 0.52 + wind * 5.6 + 0.48 * uTime) *
+      sin(p.y * 0.43 + wind * 6.2 - 0.61 * uTime)), 3.6);
+    float causticB = pow(max(0.0, sin((p.x - p.y) * 0.68 + windFine * 4.4 - 0.72 * uTime)), 4.5) * microDetail;
+    water += vec3(0.022, 0.068, 0.056) * (causticA + causticB * 0.65) * (1.0 - deep) * detail * mix(0.3, 1.0, daySun);
+
+    // Physical Subsurface Scattering (SSS) through backlit & cresting emerald wave peaks
+    float backLit = pow(max(0.0, dot(viewDir, -vec3(sunN.x, -sunN.y * 0.4, sunN.z))), 2.4);
+    float crestHeight = smoothstep(-0.08, 0.58, vCrest);
+    float sss = (0.28 + 0.72 * backLit) * crestHeight * (1.0 - max(dot(viewDir, n), 0.0));
+    vec3 sssTint = mix(vec3(0.04, 0.62, 0.56), vec3(0.95, 0.48, 0.18), uSunsetWarmth * 0.65);
+    water += sssTint * sss * (0.36 + 0.28 * (1.0 - deep)) * (0.25 + 0.75 * daySun);
 
     vec3 flatView = normalize(vec3(-viewDir.x, 0.0, -viewDir.z) + vec3(1e-5, 0.0, 0.0));
     vec3 flatSun = normalize(vec3(sunN.x, 0.0, sunN.z) + vec3(1e-5, 0.0, 0.0));
@@ -259,42 +311,51 @@ export const waterFragmentShader = /* glsl */ `
                      * (1.0 - smoothstep(0.35, 0.92, uMoonVis));
     vec3 horizon = uHorizonCol + warmScatter;
 
+    // Schlick Fresnel + Anisotropic Sky Reflection
     float facing = max(dot(viewDir, n), 0.0);
-    float fresnel = 0.024 + 0.976 * pow(1.0 - facing, 5.0);
+    float fresnel = 0.022 + 0.978 * pow(1.0 - facing, 4.8);
     vec3 reflected = reflect(-viewDir, n);
-    vec3 reflectedSky = mix(horizon, uSkyZenith, smoothstep(-0.035, 0.72, reflected.y));
+    vec3 reflectedSky = mix(horizon, uSkyZenith, smoothstep(-0.04, 0.70, reflected.y));
 
-    float solarPath = pow(max(dot(reflected, sunN), 0.0), 25.0);
-    float glitter = pow(max(dot(n, normalize(viewDir + sunN)), 0.0), mix(36.0, 132.0, detail));
+    // GGX Microfacet Solar Specular Path & Dancing Wave Diamond Glitter
+    vec3 halfSun = normalize(viewDir + sunN);
+    float ndh = max(dot(n, halfSun), 0.0);
+    float rough = mix(0.16, 0.048, detail);
+    float a2 = rough * rough * rough * rough;
+    float denom = ndh * ndh * (a2 - 1.0) + 1.0;
+    float ggxSpec = a2 / max(3.14159 * denom * denom, 1e-4);
+    float solarPath = pow(max(dot(reflected, sunN), 0.0), 22.0);
+    float diamondSparkle = smoothstep(0.9965, 0.9996, ndh) * 2.6 * microDetail;
 
     vec2 crossing = p + sunN.xz * 13.0;
     float bridgeShadow = (1.0 - smoothstep(14.0, 23.0, abs(crossing.x))) *
       smoothstep(-399.0, -372.0, crossing.y) * (1.0 - smoothstep(-250.0, -224.0, crossing.y));
-    vec3 col = mix(water * (1.0 - bridgeShadow * mix(0.18, 0.37, daySun)), reflectedSky, fresnel * 0.81);
-    col += uSunColor * (solarPath * 0.22 + glitter * (0.16 + wind * 0.48)) * (0.16 + 0.84 * daySun);
+    vec3 col = mix(water * (1.0 - bridgeShadow * mix(0.18, 0.37, daySun)), reflectedSky, fresnel * 0.82);
+    col += uSunColor * (solarPath * 0.24 + ggxSpec * 0.045 * (0.4 + wind * 0.8) + diamondSparkle) * (0.16 + 0.84 * daySun);
 
-    // Subtle shimmering moonlight glitter path on waves during twilight & midnight
+    // Moonlit silver reflection path on waves during twilight & midnight
     if (uMoonVis > 0.05) {
-      vec3 moonDir = normalize(vec3(-0.36, 0.42, -0.83));
-      float lunarPath = pow(max(dot(reflected, moonDir), 0.0), 30.0);
-      float lunarGlitter = pow(max(dot(n, normalize(viewDir + moonDir)), 0.0), mix(46.0, 156.0, detail));
-      col += vec3(0.68, 0.82, 1.0) * (lunarPath * 0.26 + lunarGlitter * (0.22 + wind * 0.56)) * uMoonVis;
+      vec3 moonDir = normalize(vec3(-0.955, 0.23, -0.19));
+      float lunarPath = pow(max(dot(reflected, moonDir), 0.0), 28.0);
+      float lunarGlitter = pow(max(dot(n, normalize(viewDir + moonDir)), 0.0), mix(44.0, 168.0, detail));
+      col += vec3(0.68, 0.84, 1.0) * (lunarPath * 0.28 + lunarGlitter * (0.26 + wind * 0.58)) * uMoonVis;
     }
 
+    // Shoreline breaking surf & aerated lacy wave-crest foam
     float headland = abs(shore + 3.5 * sin(uTime * 0.43 + wind * 2.4)) / 14.0;
     float landing = abs(site - 0.955) / 0.14;
     float tideLine = min(headland, landing);
     float breakPhase = headland < landing ? shore * 0.68 : site * 58.0;
-    float waveFront = sin(breakPhase + wind * 5.5 + 1.6 * uTime);
-    float shoreFoam = (1.0 - smoothstep(0.32, 1.1, tideLine)) * smoothstep(0.64, 0.97, waveFront);
-    shoreFoam *= mix(0.27, 0.92, smoothstep(0.29, 0.74, wind));
-    float cap = smoothstep(0.38, 0.72, vCrest + (wind - 0.54) * 0.41) * detail * 0.19;
-    col = mix(col, uFoam, clamp(shoreFoam + cap, 0.0, 0.8));
+    float waveFront = sin(breakPhase + wind * 5.5 + 1.65 * uTime);
+    float foamWeb = smoothstep(0.32, 0.78, windFine * 0.65 + wind * 0.35);
+    float shoreFoam = (1.0 - smoothstep(0.28, 1.15, tideLine)) * smoothstep(0.58, 0.96, waveFront) * (0.55 + 0.45 * foamWeb);
+    float whitecap = smoothstep(0.46, 0.82, vFoamCrest + (wind - 0.48) * 0.38) * (0.45 + 0.55 * windFine) * detail * 0.32;
+    col = mix(col, uFoam, clamp(shoreFoam + whitecap, 0.0, 0.84));
 
     float haze = smoothstep(340.0, 1540.0, cameraDistance);
     col = mix(col, horizon, haze);
     float distantFade = 1.0 - smoothstep(1550.0, 2900.0, cameraDistance);
-    gl_FragColor = vec4(col, distantFade * mix(0.78, 0.99, max(deep, max(haze, fresnel))));
+    gl_FragColor = vec4(col, distantFade * mix(0.80, 0.99, max(deep, max(haze, fresnel))));
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
   }
@@ -455,6 +516,8 @@ export const terrainFragmentShader = /* glsl */ `
     vec3 albedo = vec3(0.25);
     float specStrength = 0.0;
     float specPower = 24.0;
+    float grassSheenMask = 0.0;
+    float windGustVal = 0.0;
 
     if (p.y < -330.0) {
       float grain = fbm(p * 1.8);
@@ -616,9 +679,16 @@ export const terrainFragmentShader = /* glsl */ `
       float slope = 1.0 - n.y;
       float macroN = fbm(p * 0.04);
       float medN = fbm(p * 0.18);
-      float bladeN1 = noise(p * 14.0);
-      float bladeN2 = noise(p * 48.0);
-      float microBlades = bladeN1 * 0.65 + bladeN2 * 0.35;
+      float bladeN1 = noise(p * 15.0);
+      float bladeN2 = noise(p * 52.0);
+      float bladeN3 = noise(p * 115.0);
+      float microBlades = bladeN1 * 0.52 + bladeN2 * 0.32 + bladeN3 * 0.16;
+
+      // Rolling wind-gust field across grass lawns & coastal meadows
+      float windPhase = dot(p, vec2(0.16, 0.11)) - uTime * 2.35 + macroN * 3.8;
+      float windWave = sin(windPhase) * 0.5 + 0.5;
+      float windRipple = sin(windPhase * 2.4 + bladeN1 * 2.0) * 0.5 + 0.5;
+      windGustVal = windWave * 0.65 + windRipple * 0.35;
 
       bool inMetropolisBlocks = abs(p.x) < 135.0 && abs(p.y) < 165.0 && !inCanalCut && h > 2.2;
 
@@ -633,13 +703,15 @@ export const terrainFragmentShader = /* glsl */ `
         float tileTone = hash(blockId) * 0.05 - 0.025;
         vec3 plazaStone = mix(vec3(0.42, 0.44, 0.47), vec3(0.66, 0.68, 0.70) + tileTone, tileJoint);
 
-        // Manicured city park turf strips with smooth velvety lawn shading
-        vec3 cityTurfA = vec3(0.15, 0.35, 0.15);
-        vec3 cityTurfB = vec3(0.23, 0.45, 0.19);
-        float mowStripe = smoothstep(0.32, 0.68, fract((p.x + p.y) * 0.16));
-        vec3 manicuredTurf = mix(cityTurfA, cityTurfB, mowStripe * 0.36 + smoothstep(0.25, 0.75, macroN) * 0.64);
-        manicuredTurf = mix(manicuredTurf, vec3(0.28, 0.48, 0.21), smoothstep(0.45, 0.85, medN) * 0.24);
-        manicuredTurf *= 0.92 + 0.16 * microBlades;
+        // Manicured city park turf strips with anisotropic wind sheen & micro-blade root AO
+        vec3 cityTurfA = vec3(0.12, 0.34, 0.13);
+        vec3 cityTurfB = vec3(0.22, 0.47, 0.18);
+        vec3 sunTipTurf = vec3(0.35, 0.58, 0.20);
+        float mowStripe = smoothstep(0.28, 0.72, fract((p.x + p.y) * 0.16));
+        vec3 manicuredTurf = mix(cityTurfA, cityTurfB, mowStripe * 0.38 + smoothstep(0.25, 0.75, macroN) * 0.62);
+        manicuredTurf = mix(manicuredTurf, sunTipTurf, (windGustVal * 0.45 + smoothstep(0.45, 0.85, medN) * 0.55) * 0.32);
+        float rootAO = smoothstep(0.12, 0.42, microBlades);
+        manicuredTurf *= 0.82 + 0.32 * rootAO;
 
         // Blend paved stone plazas near avenues (|x| < 68 or near cross boulevards) with park turf
         float nearAve = max(
@@ -650,9 +722,12 @@ export const terrainFragmentShader = /* glsl */ `
           )
         );
         float plazaMask = clamp(nearAve + smoothstep(0.45, 0.68, macroN) * 0.65, 0.0, 1.0);
+        float turfMask = 1.0 - plazaMask;
         albedo = mix(manicuredTurf, plazaStone, plazaMask);
-        specStrength = mix(0.08, 0.15, plazaMask);
-        specPower = mix(20.0, 32.0, plazaMask);
+        specStrength = mix(0.11, 0.15, plazaMask);
+        specPower = mix(16.0, 32.0, plazaMask);
+        grassSheenMask = turfMask;
+        n = normalize(n + vec3((bladeN2 - 0.5) * 0.18 + windWave * 0.06, 0.0, (bladeN1 - 0.5) * 0.18 + windRipple * 0.05) * turfMask);
       } else {
         // Wet Shoreline Sand (h < 0.85)
         vec3 wetSand = vec3(0.51, 0.39, 0.27) + (bladeN2 - 0.5) * 0.028;
@@ -662,18 +737,18 @@ export const terrainFragmentShader = /* glsl */ `
         float sandSparkle = smoothstep(0.82, 0.98, noise(p * 42.0)) * 0.032;
         vec3 drySand = vec3(0.89, 0.77, 0.56) + (ripple - 0.5) * 0.022 + (bladeN1 - 0.5) * 0.024 + sandSparkle;
 
-        // Lush Coastal Grass & Parkland (h >= 1.85) with smooth sunlit organic shading
-        vec3 meadowFescue = vec3(0.15, 0.33, 0.13);
-        vec3 oliveSage = vec3(0.26, 0.42, 0.17);
-        vec3 dryTufts = vec3(0.40, 0.41, 0.21);
-        vec3 darkLoam = vec3(0.16, 0.14, 0.10);
+        // Lush Coastal Grass & Parkland (h >= 1.85) with wind-bent fescue blades, clover & golden tips
+        vec3 meadowFescue = vec3(0.12, 0.33, 0.11);
+        vec3 oliveSage = vec3(0.24, 0.45, 0.16);
+        vec3 goldenTips = vec3(0.42, 0.55, 0.21);
+        vec3 darkLoam = vec3(0.11, 0.11, 0.07);
 
-        vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.24, 0.76, macroN));
-        float sunCuredMask = smoothstep(0.54, 0.84, medN * 0.72 + (1.0 - macroN) * 0.32);
-        grassCol = mix(grassCol, dryTufts, sunCuredMask * 0.36);
-        float creviceMask = (1.0 - smoothstep(0.16, 0.38, microBlades));
-        grassCol = mix(grassCol, darkLoam, creviceMask * 0.34);
-        grassCol *= 0.90 + 0.20 * microBlades;
+        vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.22, 0.78, macroN));
+        float sunCuredMask = smoothstep(0.48, 0.85, medN * 0.68 + windGustVal * 0.32);
+        grassCol = mix(grassCol, goldenTips, sunCuredMask * 0.42);
+        float creviceMask = 1.0 - smoothstep(0.14, 0.42, microBlades);
+        grassCol = mix(grassCol, darkLoam, creviceMask * 0.42);
+        grassCol *= 0.86 + 0.26 * microBlades;
 
         // Sedimentary Limestone Cliff Rock (steep slopes or high peaks, clear of coastal beaches)
         float strata = sin(vWorldPos.y * 4.2 + noise(p * 0.3) * 2.0) * 0.5 + 0.5;
@@ -689,12 +764,16 @@ export const terrainFragmentShader = /* glsl */ `
         } else if (noisyH < 2.16) {
           float sandToGrass = smoothstep(1.62, 2.14, noisyH);
           albedo = mix(drySand, grassCol, sandToGrass);
-          specStrength = 0.05;
-          n = normalize(n + vec3((bladeN2 - 0.5) * 0.16, 0.0, (bladeN1 - 0.5) * 0.16) * sandToGrass);
+          specStrength = mix(0.05, 0.09, sandToGrass);
+          specPower = 18.0;
+          grassSheenMask = sandToGrass;
+          n = normalize(n + vec3((bladeN2 - 0.5) * 0.20 + windWave * 0.07, 0.0, (bladeN1 - 0.5) * 0.20 + windRipple * 0.06) * sandToGrass);
         } else {
           albedo = grassCol;
-          specStrength = 0.06;
-          n = normalize(n + vec3((bladeN2 - 0.5) * 0.22, 0.0, (bladeN1 - 0.5) * 0.22));
+          specStrength = 0.09;
+          specPower = 16.0;
+          grassSheenMask = 1.0;
+          n = normalize(n + vec3((bladeN2 - 0.5) * 0.25 + windWave * 0.085, 0.0, (bladeN1 - 0.5) * 0.25 + windRipple * 0.075));
         }
 
         float cliffMask = clamp(
@@ -705,6 +784,7 @@ export const terrainFragmentShader = /* glsl */ `
         if (cliffMask > 0.001) {
           albedo = mix(albedo, cliffRock, cliffMask);
           specStrength = mix(specStrength, 0.09, cliffMask);
+          grassSheenMask *= 1.0 - cliffMask;
         }
       }
     }
@@ -725,7 +805,16 @@ export const terrainFragmentShader = /* glsl */ `
     float spec = pow(ndh, specPower) * specStrength * shadow;
     vec3 specCol = uSunLightCol * spec * 0.72;
 
-    vec3 finalCol = albedo * (skyAmb + sunLight) + specCol;
+    // Kajiya-Kay Anisotropic Grazing Velvet Sheen & Chlorophyll Subsurface Backscatter on Grass
+    vec3 grassSSS = vec3(0.0);
+    if (grassSheenMask > 0.01) {
+      float grazing = pow(1.0 - max(dot(n, viewDir), 0.0), 2.6);
+      float sunForward = pow(max(0.0, dot(-viewDir, vec3(sunDir.x, -0.25, sunDir.z))), 2.2);
+      vec3 chlorophyll = vec3(0.24, 0.52, 0.07) * (0.45 + 0.55 * windGustVal);
+      grassSSS = chlorophyll * uSunLightCol * (grazing * 0.32 + sunForward * 0.44) * shadow * grassSheenMask;
+    }
+
+    vec3 finalCol = albedo * (skyAmb + sunLight) + specCol + grassSSS;
 
     vec3 flatView = normalize(vec3(-viewDir.x, 0.0, -viewDir.z) + vec3(1e-5, 0.0, 0.0));
     vec3 flatSun = normalize(vec3(sunDir.x, 0.0, sunDir.z) + vec3(1e-5, 0.0, 0.0));
