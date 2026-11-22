@@ -231,6 +231,7 @@ export const waterFragmentShader = /* glsl */ `
   uniform float uMoonVis;
   uniform float uSunsetWarmth;
   uniform vec3 uCameraPos;
+  uniform vec4 uBoatWake;
   varying vec3 vWorldPos;
   varying vec3 vNormal;
   varying float vCrest;
@@ -341,7 +342,7 @@ export const waterFragmentShader = /* glsl */ `
       col += vec3(0.68, 0.84, 1.0) * (lunarPath * 0.28 + lunarGlitter * (0.26 + wind * 0.58)) * uMoonVis;
     }
 
-    // Shoreline breaking surf & aerated lacy wave-crest foam
+    // Shoreline breaking surf, aerated lacy wave-crest foam & Kelvin V-wake behind active boats
     float headland = abs(shore + 3.5 * sin(uTime * 0.43 + wind * 2.4)) / 14.0;
     float landing = abs(site - 0.955) / 0.14;
     float tideLine = min(headland, landing);
@@ -350,7 +351,27 @@ export const waterFragmentShader = /* glsl */ `
     float foamWeb = smoothstep(0.32, 0.78, windFine * 0.65 + wind * 0.35);
     float shoreFoam = (1.0 - smoothstep(0.28, 1.15, tideLine)) * smoothstep(0.58, 0.96, waveFront) * (0.55 + 0.45 * foamWeb);
     float whitecap = smoothstep(0.46, 0.82, vFoamCrest + (wind - 0.48) * 0.38) * (0.45 + 0.55 * windFine) * detail * 0.32;
-    col = mix(col, uFoam, clamp(shoreFoam + whitecap, 0.0, 0.84));
+
+    float wakeFoam = 0.0;
+    float wakeSpeed = abs(uBoatWake.w);
+    if (wakeSpeed > 1.2) {
+      vec2 boatFwd = vec2(sin(uBoatWake.z), cos(uBoatWake.z));
+      vec2 boatRight = vec2(boatFwd.y, -boatFwd.x);
+      vec2 rel = p - uBoatWake.xy;
+      float behind = -dot(rel, boatFwd);
+      float sideDist = abs(dot(rel, boatRight));
+      if (behind > -1.8 && behind < 42.0) {
+        float wakeLen = clamp(behind / 38.0, 0.0, 1.0);
+        float armOffset = 1.05 + max(0.0, behind) * 0.34;
+        float armMask = exp(-pow((sideDist - armOffset) / (0.65 + wakeLen * 1.45), 2.0));
+        float centerProp = exp(-pow(sideDist / (0.75 + wakeLen * 0.95), 2.0)) * (1.0 - wakeLen * 0.65);
+        float wakeTurb = 0.55 + 0.45 * sin(behind * 2.4 - uTime * 9.5 + windFine * 5.2);
+        float speedFactor = clamp(wakeSpeed / 22.0, 0.0, 1.0);
+        wakeFoam = (armMask * 0.78 + centerProp * 0.88) * (1.0 - wakeLen) * wakeTurb * speedFactor;
+      }
+    }
+
+    col = mix(col, uFoam, clamp(shoreFoam + whitecap + wakeFoam, 0.0, 0.88));
 
     float haze = smoothstep(340.0, 1540.0, cameraDistance);
     col = mix(col, horizon, haze);

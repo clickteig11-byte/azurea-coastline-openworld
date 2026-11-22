@@ -749,10 +749,10 @@ export function HUD({ hud, onSelectMode }: Props) {
         simState.boatPos.set(Math.max(95, x - 28), 0.5, -95);
         simState.boatYaw = Math.PI / 2;
       } else {
-        const angle = Math.atan2(z, x);
-        const waterR = 238;
-        const bx = Math.cos(angle) * waterR;
-        const bz = Math.sin(angle) * waterR;
+        const angle = Math.atan2(x, z);
+        const waterR = coastRoadRadius(angle) + coastBeachWidth(angle) + 24;
+        const bx = Math.sin(angle) * waterR;
+        const bz = Math.cos(angle) * waterR;
         simState.boatPos.set(bx, 0.5, bz);
         simState.boatYaw = Math.atan2(x - bx, z - bz);
       }

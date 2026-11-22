@@ -386,4 +386,24 @@ test('4-point hull buoyancy, chassis weight transfer, and welded character norma
   const n0 = [box.attributes.normal.getX(0), box.attributes.normal.getY(0), box.attributes.normal.getZ(0)];
   // A welded corner normal on a cube has non-zero components on all 3 axes (~0.577 each)
   assert.ok(Math.abs(n0[0]) > 0.4 && Math.abs(n0[1]) > 0.4 && Math.abs(n0[2]) > 0.4);
+
+  // 4. Native SambaDance / agree emote clip binds to HumanoidRig without altering rest pose
+  const { AnimationClip, Bone, Group, QuaternionKeyframeTrack } = await import('three');
+  const { createHumanoidRig } = await import('../src/game/humanoid.ts');
+  const makeClip = (name) =>
+    new AnimationClip(name, 1.0, [
+      new QuaternionKeyframeTrack('mixamorigHips.quaternion', [0, 1], [0, 0, 0, 1, 0, 0.1, 0, 0.995]),
+      new QuaternionKeyframeTrack('mixamorigSpine.quaternion', [0, 1], [0, 0, 0, 1, 0, 0, 0.1, 0.995]),
+    ]);
+  const wrapper = new Group();
+  const model = new Group();
+  const hips = new Bone();
+  hips.name = 'mixamorigHips';
+  const spine = new Bone();
+  spine.name = 'mixamorigSpine';
+  hips.add(spine);
+  model.add(hips);
+  wrapper.add(model);
+  const rig = createHumanoidRig(wrapper, model, [makeClip('idle'), makeClip('walk'), makeClip('run'), makeClip('agree')]);
+  assert.ok(rig.mixer && rig.clips.idle && rig.clips.walk && rig.clips.run && rig.clips.emote);
 });

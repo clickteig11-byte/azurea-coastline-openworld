@@ -33,7 +33,7 @@ export interface HumanoidRig {
   emoteElapsed: number;
   emoteBlend: number;
   mixer?: THREE.AnimationMixer;
-  clips: Partial<Record<'idle' | 'walk' | 'run', THREE.AnimationAction>>;
+  clips: Partial<Record<'idle' | 'walk' | 'run' | 'emote', THREE.AnimationAction>>;
 }
 
 export interface Pose {
@@ -137,13 +137,20 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
     );
   };
   const walk = clip('Walk'), run = clip('Run'), idle = clip('Idle');
+  const emote = clip('SambaDance') ?? clip('agree');
   if (walk && run && idle) {
     rig.mixer = new THREE.AnimationMixer(model);
-    for (const [name, clip] of Object.entries({ idle, walk, run })) {
-      const action = rig.mixer.clipAction(clip).setEffectiveWeight(name === 'idle' ? 1 : 0).play();
-      if (name !== 'idle') action.time = (wrapper.id % 13) / 13 * clip.duration;
+    for (const [name, c] of Object.entries({ idle, walk, run })) {
+      const action = rig.mixer.clipAction(c).setEffectiveWeight(name === 'idle' ? 1 : 0).play();
+      if (name !== 'idle') action.time = ((wrapper.id % 13) / 13) * c.duration;
       rig.clips[name as 'idle' | 'walk' | 'run'] = action;
     }
+    if (emote) {
+      rig.clips.emote = rig.mixer.clipAction(emote).setEffectiveWeight(0).play();
+    }
+  } else if (emote) {
+    rig.mixer = new THREE.AnimationMixer(model);
+    rig.clips.emote = rig.mixer.clipAction(emote).setEffectiveWeight(0).play();
   }
   // Use the same anatomical axes on glTF skeletons whose local bone axes differ.
   wrapper.getWorldQuaternion(root).invert();
@@ -290,10 +297,15 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   const response = 1 - Math.exp(-20 * dt);
 
   if (animated) {
-    rig.clips.idle!.setEffectiveWeight(1 - rig.gait);
+    const emoteClip = rig.clips.emote;
+    const clipEmoteW = emoteClip ? emoteWeight : 0;
+    rig.clips.idle!.setEffectiveWeight((1 - rig.gait) * (1 - clipEmoteW));
     rig.clips.walk!.setEffectiveWeight(rig.gait * (1 - run)).setEffectiveTimeScale(
       (reverse ? -1 : 1) * THREE.MathUtils.clamp(speed / 1.5, 0.56, 1.9));
     rig.clips.run!.setEffectiveWeight(rig.gait * run).setEffectiveTimeScale(THREE.MathUtils.clamp(speed / 5.1, 0.7, 1.4));
+    if (emoteClip) {
+      emoteClip.setEffectiveWeight(clipEmoteW);
+    }
     for (const action of [rig.clips.walk!, rig.clips.run!]) {
       action.paused = Boolean(ground);
       if (ground) {
@@ -302,10 +314,14 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
       }
     }
     rig.mixer!.update(dt);
+  } else if (rig.mixer && rig.clips.emote && emoteWeight > 0.004) {
+    rig.clips.emote.setEffectiveWeight(emoteWeight);
+    rig.mixer.update(dt);
   }
+  const procEmoteWeight = rig.clips.emote ? 0 : emoteWeight;
   const authored = !animated || center > 0.13;
   const baseBlend = authored ? response : 0;
-  const overlay = Math.max(baseBlend, rig.air, landing * 0.85, emoteWeight);
+  const overlay = Math.max(baseBlend, rig.air, landing * 0.85, procEmoteWeight);
   const stride = rig.gait * (0.42 + run * 0.27) * groundBlend;
   const airLean = glide ? 0.76 : chute ? -0.12 : 0.11;
   const lean = (0.02 + run * 0.18) * rig.gait * groundBlend + airLean * rig.air + landing * 0.24;
@@ -314,10 +330,10 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   setPose(joints.Spine, lean + breath * 0.014, -sway * stride * 0.2 - idleStance * 0.04,
     lateral * 0.09 - idleStance * idleSway * 0.015, overlay);
   setPose(joints.Spine1, breath * 0.014 - landing * 0.08 - idleStance * 0.025, rig.aim * lookYaw * 0.22,
-    0, Math.max(baseBlend, rig.aim * 0.5, emoteWeight));
+    0, Math.max(baseBlend, rig.aim * 0.5, procEmoteWeight));
   setPose(joints.Head, -lean * 0.68 + lookPitch * 0.36 + idleStance * breath * 0.012,
     lookYaw * 0.42 - sway * stride * 0.06 + idleStance * idleSway * 0.035,
-    -lateral * 0.05, Math.max(baseBlend, rig.aim, rig.air, emoteWeight));
+    -lateral * 0.05, Math.max(baseBlend, rig.aim, rig.air, procEmoteWeight));
 
   for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
     const cycle = swing * sign;
@@ -333,7 +349,7 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
       lateral * 0.13 + sign * idleStance * 0.05, -strideWidth * 0.45 - sign * idleStance * 0.035, overlay);
     setPose(joints[side + 'ToeBase'], Math.max(0, -cycle) * stride * 0.55, 0, 0, overlay);
 
-    const armWeight = Math.max(baseBlend, rig.aim, rig.air, emoteWeight);
+    const armWeight = Math.max(baseBlend, rig.aim, rig.air, procEmoteWeight);
     const reach = chute ? -1.85 : glide ? -0.53 : -0.37;
     const armSwing = cycle * stride * (0.73 + run * 0.34) - idleStance * 0.04;
     const idleArmOut = (0.075 * groundBlend * (1 - rig.aim)) * sign;
@@ -345,29 +361,29 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   }
 
   let emoteDrop = 0;
-  if (emoteWeight > 0.004) {
+  if (procEmoteWeight > 0.004) {
     const tEmote = rig.emoteElapsed;
     const groove = Math.sin(tEmote * 6.2);
     const bounce = 0.5 - 0.5 * Math.cos(tEmote * 12.4);
     const wave = Math.sin(tEmote * 7.8);
-    emoteDrop = -0.042 * bounce * emoteWeight;
+    emoteDrop = -0.042 * bounce * procEmoteWeight;
 
     // Confident chest lift, rhythmic shoulder groove, subtle knee bounce, and raised right-arm salute/wave
-    setPose(joints.Hips, -0.04 * bounce, groove * 0.12, groove * 0.055, emoteWeight);
-    setPose(joints.Spine, -0.10 - 0.035 * bounce, -groove * 0.11, -groove * 0.05, emoteWeight);
-    setPose(joints.Spine1, -0.075, groove * 0.08, 0, emoteWeight);
-    setPose(joints.Head, -0.055 + 0.04 * bounce, -0.10 + groove * 0.08, groove * 0.05, emoteWeight);
+    setPose(joints.Hips, -0.04 * bounce, groove * 0.12, groove * 0.055, procEmoteWeight);
+    setPose(joints.Spine, -0.10 - 0.035 * bounce, -groove * 0.11, -groove * 0.05, procEmoteWeight);
+    setPose(joints.Spine1, -0.075, groove * 0.08, 0, procEmoteWeight);
+    setPose(joints.Head, -0.055 + 0.04 * bounce, -0.10 + groove * 0.08, groove * 0.05, procEmoteWeight);
 
     for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
-      setPose(joints[side + 'UpLeg'], -0.14 * bounce, sign * 0.05, sign * 0.075, emoteWeight);
-      setPose(joints[side + 'Leg'], 0.28 * bounce, 0, 0, emoteWeight);
-      setPose(joints[side + 'Foot'], -0.14 * bounce, sign * 0.05, -sign * 0.04, emoteWeight);
+      setPose(joints[side + 'UpLeg'], -0.14 * bounce, sign * 0.05, sign * 0.075, procEmoteWeight);
+      setPose(joints[side + 'Leg'], 0.28 * bounce, 0, 0, procEmoteWeight);
+      setPose(joints[side + 'Foot'], -0.14 * bounce, sign * 0.05, -sign * 0.04, procEmoteWeight);
     }
 
-    setPose(joints.RightArm, -2.32 + wave * 0.12, 0.18, -0.56 + wave * 0.22, emoteWeight);
-    setPose(joints.RightForeArm, -0.52 - wave * 0.36, 0, 0.24 * wave, emoteWeight);
-    setPose(joints.LeftArm, -0.22 + groove * 0.12, 0.14, 0.24, emoteWeight);
-    setPose(joints.LeftForeArm, -0.68 - bounce * 0.12, 0.25, 0, emoteWeight);
+    setPose(joints.RightArm, -2.32 + wave * 0.12, 0.18, -0.56 + wave * 0.22, procEmoteWeight);
+    setPose(joints.RightForeArm, -0.52 - wave * 0.36, 0, 0.24 * wave, procEmoteWeight);
+    setPose(joints.LeftArm, -0.22 + groove * 0.12, 0.14, 0.24, procEmoteWeight);
+    setPose(joints.LeftForeArm, -0.68 - bounce * 0.12, 0.25, 0, procEmoteWeight);
   }
 
   rig.swim = THREE.MathUtils.damp(rig.swim, swimming ? 1 : 0, 10, dt);

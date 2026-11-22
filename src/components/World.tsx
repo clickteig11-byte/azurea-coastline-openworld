@@ -240,6 +240,7 @@ export function StylizedOcean() {
       uMoonVis: { value: initialTheme.moonVisibility },
       uSunsetWarmth: { value: initialTheme.sunsetWarmth },
       uCameraPos: { value: new THREE.Vector3() },
+      uBoatWake: { value: new THREE.Vector4(0, 0, 0, 0) },
     }),
     []
   );
@@ -272,6 +273,8 @@ export function StylizedOcean() {
     uniforms.uSkyZenith.value.lerp(target.zenith, damp);
     uniforms.uMoonVis.value = THREE.MathUtils.lerp(uniforms.uMoonVis.value, target.moonVisibility, damp);
     uniforms.uSunsetWarmth.value = THREE.MathUtils.lerp(uniforms.uSunsetWarmth.value, target.sunsetWarmth, damp);
+    const wakeSpd = !simState.startMenuOpen && simState.mode === 'BOAT' ? simState.boatSpeed : 0;
+    uniforms.uBoatWake.value.set(simState.boatPos.x, simState.boatPos.z, simState.boatYaw, wakeSpd);
     if (meshRef.current) {
       meshRef.current.position.y = simState.tideOffset;
     }
@@ -305,6 +308,7 @@ export function IslandTerrain() {
       uSunsetWarmth: { value: initialTheme.sunsetWarmth },
       uMoonVis: { value: initialTheme.moonVisibility },
       uCameraPos: { value: new THREE.Vector3() },
+      uActorPos: { value: new THREE.Vector3() },
       uTime: { value: 0 },
     }]),
     []
@@ -329,6 +333,15 @@ export function IslandTerrain() {
   useFrame((state, dt) => {
     uniforms.uTime.value = state.clock.elapsedTime;
     uniforms.uCameraPos.value.copy(state.camera.position);
+    const activeActor =
+      simState.mode === 'CAR'
+        ? simState.carPos
+        : simState.mode === 'BOAT'
+        ? simState.boatPos
+        : simState.mode === 'PLANE'
+        ? simState.planePos
+        : simState.playerPos;
+    uniforms.uActorPos.value.copy(activeActor);
     resolveAtmosphereTarget(target);
     const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
     tmpSunLight.copy(target.dirColor).multiplyScalar(target.theme.dirIntensity * 0.46);
@@ -360,8 +373,10 @@ export function IslandTerrain() {
 const grassVertexShader = /* glsl */ `
   uniform float uTime;
   uniform vec3 uCameraPos;
+  uniform vec3 uActorPos;
   varying float vBladeH;
   varying float vWind;
+  varying float vFlatten;
   varying vec3 vWorldPos;
 
   void main() {
@@ -381,6 +396,19 @@ const grassVertexShader = /* glsl */ `
     localPos.z += cos(gustPhase * 1.3) * bend * 0.7;
 
     vec4 wp = instanceMatrix * vec4(localPos, 1.0);
+
+    // Physical grass wake displacement around player & vehicle chassis
+    vec2 toBlade = wp.xz - uActorPos.xz;
+    float actorDist = length(toBlade);
+    float wakeRadius = 2.85;
+    float push = (1.0 - smoothstep(0.25, wakeRadius, actorDist)) * pow(vBladeH, 1.35) * lodScale;
+    vFlatten = push;
+    if (push > 0.001) {
+      vec2 pushDir = toBlade / max(actorDist, 0.001);
+      wp.xz += pushDir * push * 0.54;
+      wp.y -= push * 0.26;
+    }
+
     vWorldPos = wp.xyz;
     gl_Position = projectionMatrix * viewMatrix * wp;
   }
@@ -393,12 +421,13 @@ const grassFragmentShader = /* glsl */ `
   uniform vec3 uCameraPos;
   varying float vBladeH;
   varying float vWind;
+  varying float vFlatten;
   varying vec3 vWorldPos;
 
   void main() {
     vec3 rootCol = vec3(0.04, 0.11, 0.035);
     vec3 midCol = vec3(0.11, 0.29, 0.075);
-    vec3 tipCol = mix(vec3(0.24, 0.48, 0.11), vec3(0.42, 0.62, 0.16), clamp(vWind, 0.0, 1.0));
+    vec3 tipCol = mix(vec3(0.24, 0.48, 0.11), vec3(0.45, 0.65, 0.18), clamp(vWind + vFlatten * 0.35, 0.0, 1.0));
     vec3 albedo = mix(rootCol, midCol, smoothstep(0.0, 0.52, vBladeH));
     albedo = mix(albedo, tipCol, smoothstep(0.42, 1.0, vBladeH));
 

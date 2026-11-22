@@ -1451,7 +1451,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         beardMeshes,
         beardMats,
       };
-      rpmRigRef.current = createHumanoidRig(wrapper, model);
+      rpmRigRef.current = createHumanoidRig(wrapper, model, gltf.animations);
 
       applyCharacterCustomization();
     });
@@ -1489,7 +1489,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       soldierMountRef.current.add(wrapper);
 
       michelleBodyMatsRef.current = bodyMats;
-      michelleRigRef.current = createHumanoidRig(wrapper, model);
+      michelleRigRef.current = createHumanoidRig(wrapper, model, gltf.animations);
 
       applyCharacterCustomization();
     });
