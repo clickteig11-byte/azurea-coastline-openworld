@@ -48,6 +48,7 @@ interface Pose {
   landing?: number;
   aim?: number;
   recoil?: number;
+  harvest?: number;
   lookPitch?: number;
   lookYaw?: number;
   ground?: GroundMotion;
@@ -72,12 +73,21 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
   const rig: HumanoidRig = { wrapper, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0, clips: {}, legs: [] };
   wrapper.updateWorldMatrix(true, true);
   const bones: Record<string, THREE.Bone> = {};
+  const aliases: Record<string, string> = { Abdomen: 'Spine', Torso: 'Spine1' };
+  for (const [suffix, side] of [['L', 'Left'], ['R', 'Right']]) {
+    Object.assign(aliases, {
+      ['UpperArm' + suffix]: side + 'Arm', ['LowerArm' + suffix]: side + 'ForeArm',
+      ['UpperLeg' + suffix]: side + 'UpLeg', ['LowerLeg' + suffix]: side + 'Leg',
+      ['Foot' + suffix]: side + 'Foot', ['Palm' + suffix]: side + 'Hand',
+    });
+  }
   model.traverse((object) => {
-    if ((object as THREE.Bone).isBone) bones[object.name.replace(/^mixamorig:?/, '')] = object as THREE.Bone;
+    if (!(object as THREE.Bone).isBone) return;
+    const name = object.name.replace(/^mixamorig:?/, '').replace(/[.]/g, '');
+    bones[aliases[name] ?? name] = object as THREE.Bone;
   });
-  const walk = THREE.AnimationClip.findByName(animations, 'Walk');
-  const run = THREE.AnimationClip.findByName(animations, 'Run');
-  const idle = THREE.AnimationClip.findByName(animations, 'Idle');
+  const clip = (name: string) => animations.find((animation) => animation.name === name || animation.name.endsWith('_' + name));
+  const walk = clip('Walk'), run = clip('Run'), idle = clip('Idle');
   if (walk && run && idle) {
     rig.mixer = new THREE.AnimationMixer(model);
     for (const [name, clip] of Object.entries({ idle, walk, run })) {
@@ -108,7 +118,7 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
     const hip = rig.joints[side + 'UpLeg'];
     const knee = rig.joints[side + 'Leg'];
     const ankle = rig.joints[side + 'Foot'];
-    if (!hip || !knee || !ankle) continue;
+    if (!hip || !knee || !ankle || ankle.bone.parent !== knee.bone) continue;
     const anklePosition = ankle.bone.getWorldPosition(new THREE.Vector3());
     const kneePosition = knee.bone.getWorldPosition(new THREE.Vector3());
     const hipPosition = hip.bone.getWorldPosition(new THREE.Vector3());
@@ -288,6 +298,17 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
     ? (-0.044 - run * 0.093) * rig.gait + Math.abs(sway) * 0.024 * rig.gait + breath * 0.004
     : (animated && !authored ? 0 : Math.abs(sway) * stride * 0.055 + breath * 0.004);
   rig.wrapper.position.y = THREE.MathUtils.damp(rig.wrapper.position.y, bob - landing * 0.10 + freestyle * 0.7, 22, dt);
+  if (motion.harvest !== undefined) {
+    const progress = motion.harvest;
+    const windup = Math.sin(Math.PI * THREE.MathUtils.smoothstep(progress, 0, 0.51) / 2);
+    const follow = THREE.MathUtils.smoothstep(progress, 0.38, 0.64);
+    const blend = (1 - THREE.MathUtils.smoothstep(progress, 0.69, 1)) * windup;
+    setPose(joints.Spine, -0.19 + follow * 0.52, -0.48 + follow * 0.63, 0.055, blend);
+    setPose(joints.RightArm, -2.15 + follow * 1.59, 0.28, -0.26, blend);
+    setPose(joints.LeftArm, -1.48 + follow * 0.94, -0.37, 0.31, blend);
+    setPose(joints.RightForeArm, -1.14 + follow * 0.42, 0, 0, blend);
+    setPose(joints.LeftForeArm, -0.76, 0, 0, blend);
+  }
   if (ground) groundLegs(rig, ground, phase, speed, run, groundBlend ** 2);
 
 }

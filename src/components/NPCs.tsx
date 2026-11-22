@@ -1,3 +1,4 @@
+import { civilianTargets } from '../game/aim';
 import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
@@ -165,6 +166,16 @@ interface BotTactics {
   to: THREE.Vector3;
 }
 
+function hitCivilian(p: PedestrianAgent, damage: number, vx: number, vz: number, strength: number, side: number, y: number) {
+  const remaining = Math.max(0, (p.resilience ?? 100) - damage);
+  p.resilience = remaining;
+  p.impact = {
+    ...launchTumble(vx, vz, strength, side),
+    y, duration: remaining === 0 ? 7.5 : 1.7 + strength * 2,
+  };
+  p.yaw = Math.atan2(vx, vz);
+}
+
 function positionFall(mount: THREE.Group, fall: Tumble, recovery = 1) {
   mount.rotation.set(fall.pitch * recovery, 0, fall.roll * recovery, 'YXZ');
   mount.position.y = (0.13 + Math.min(0.56, Math.abs(Math.sin(fall.pitch)) * 0.42)) * recovery;
@@ -200,6 +211,8 @@ const civilianLooks = ['commuter', 'tourist', 'hotel_guest', 'high_roller', 'ser
 const combatLooks = ['rifleman', 'commander', 'medic', 'police'];
 
 function selectHumanModelUrl(index: number) {
+  if (index === 3) return COASTAL_CHARACTERS.CIVILIAN_MAN.url;
+  if (index === 7) return COASTAL_CHARACTERS.CIVILIAN_WOMAN.url;
   if (index === 8) return COASTAL_CHARACTERS.COAST_NAVIGATOR.url;
   if (index === 12) return COASTAL_CHARACTERS.RESCUE_PILOT.url;
   return '/models/human_' + civilianLooks[index % civilianLooks.length] + '.glb';
@@ -1117,10 +1130,10 @@ export function LivingWorldNPCs() {
         const original = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
         if (!(original as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
         const mat = (original as THREE.MeshStandardMaterial).clone();
-        if (/top|coat/.test(mesh.name)) {
+        if (/top|coat/.test(mesh.name) || mat.name === 'Shirt') {
           mat.color.lerp(new THREE.Color(palette.topColor), 0.24);
           mat.roughness = Math.max(0.52, palette.topRoughness);
-        } else if (/bottom/.test(mesh.name)) {
+        } else if (/bottom/.test(mesh.name) || mat.name === 'Pants') {
           mat.color.lerp(new THREE.Color(palette.bottomColor), 0.18);
           mat.roughness = 0.72;
         } else if (/feet/.test(mesh.name)) {
@@ -1336,6 +1349,7 @@ export function LivingWorldNPCs() {
     // ------------------------------------------------------------------------
     // 1. Update 16 Smooth-Shaded PBR Human Citizens (Skeletal Stride + Sidewalks/Crosswalks/Dodge)
     // ------------------------------------------------------------------------
+    civilianTargets.length = 0;
     for (let i = 0; i < PED_COUNT; i++) {
       const p = pedestrians[i];
       const crossingClosed = (simState.startMenuOpen || simState.gameMode === 'GRAND_PRIX') && p.kind === 'CROSSWALK';
@@ -1346,13 +1360,10 @@ export function LivingWorldNPCs() {
       const contact = canStrike && !p.impact &&
         pedestrianContact(sweep, p.x, getTerrainHeight(p.x, p.z), p.z);
       if (contact) {
-        const remaining = Math.max(0, (p.resilience ?? 100) - contact.damage);
-        p.resilience = remaining;
-        p.impact = {
-          ...launchTumble(contact.travelX, contact.travelZ, contact.severity, contact.side),
-          y: getTravelHeight(p.x, p.z), duration: remaining === 0 ? 7.5 : 2 + contact.severity * 2,
-        };
-        p.yaw = Math.atan2(contact.travelX, contact.travelZ);
+        hitCivilian(p, contact.damage, contact.travelX, contact.travelZ, contact.severity, contact.side, getTravelHeight(p.x, p.z));
+        if (contact.severity > 0.47 && simState.controlSettings.blood) {
+          emitEnvironment('blood', _vecA.set(p.x, getTravelHeight(p.x, p.z) + 1.0, p.z), contact.severity, contact.travelX, contact.travelZ);
+        }
         applyBump(contact.severity);
       }
       if (p.impact) {
@@ -1449,6 +1460,16 @@ export function LivingWorldNPCs() {
       p.z = baseZ + p.dodgeZ;
 
       const groundY = getTerrainHeight(p.x, p.z);
+      if (!simState.startMenuOpen) civilianTargets.push({
+        x: p.x, y: groundY, z: p.z,
+        impact(damage, direction, point) {
+          if (p.impact) return;
+          const impulse = Math.min(0.8, damage / 130);
+          hitCivilian(p, damage, direction.x * (2.4 + impulse), direction.z * (2.4 + impulse), impulse,
+            i % 2 ? 1 : -1, groundY);
+          emitEnvironment(simState.controlSettings.blood ? 'blood' : 'impact', point, 0.36 + impulse, direction.x, direction.z);
+        },
+      });
       const citizenGroup = citizenGroupRefs.current[i];
       if (citizenGroup) {
         citizenGroup.position.set(p.x, groundY, p.z);

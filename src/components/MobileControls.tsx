@@ -1,6 +1,8 @@
+import { aiming } from '../game/aim';
+import { construction } from '../game/building';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ArrowDown, ArrowUp, Camera, ChevronUp, Crosshair, Footprints, Move, Repeat, Umbrella, Wrench, Zap,
+  ArrowDown, ArrowUp, Camera, ChevronUp, Crosshair, Footprints, Move, Repeat, Pickaxe, Boxes, Wrench, Zap,
 } from 'lucide-react';
 import { simState, WEAPON_SPECS } from '../game/store';
 import type { VehicleMode } from '../game/worldMath';
@@ -126,7 +128,7 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
 
   const resetCamera = () => {
     simState.orbitYaw = simState.orbitPitch = 0;
-    simState.cameraView = (simState.cameraView + 1) % 3;
+    simState.cameraView = (simState.cameraView + 1) % 2;
   };
 
   if (!visible) return null;
@@ -146,9 +148,9 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
         onPointerMove={(event) => {
           const last = orbitPointer.current;
           if (last?.id !== event.pointerId) return;
-          const scale = 0.008 * clamp(420 / Math.min(window.innerWidth, window.innerHeight), 0.68, 1.32);
+          const scale = 0.008 * simState.controlSettings.mouseSensitivity * (aiming.ads ? 0.53 : 1) * clamp(420 / Math.min(window.innerWidth, window.innerHeight), 0.68, 1.32);
           simState.orbitYaw -= (event.clientX - last.x) * scale;
-          simState.orbitPitch = clamp(simState.orbitPitch - (event.clientY - last.y) * scale, -0.92, 0.96);
+          simState.orbitPitch = clamp(simState.orbitPitch + (event.clientY - last.y) * scale, -0.92, 0.96);
           last.x = event.clientX;
           last.y = event.clientY;
         }}
@@ -179,10 +181,14 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
         <div className="touch-utilities">
           {!foot && vehicleHp < 100 && <button type="button" aria-label="Repair vehicle" className="touch-action-button touch-repair"
             onClick={() => emit('repair-vehicle')}><Wrench size={15} /><span>Repair</span></button>}
-          {foot && <button type="button" aria-label="Skydive" className="touch-action-button"
-            onClick={() => emit('br-drop')}><Umbrella size={16} /><span>Drop</span></button>}
+          {foot && <>
+            <button type="button" aria-label="Equip pickaxe" className="touch-action-button" data-held={construction.pickaxe && !construction.active}
+              onClick={() => { construction.pickaxe = !construction.pickaxe; construction.active = false; }}><Pickaxe size={16} /><span>Pickaxe</span></button>
+            <button type="button" aria-label="Toggle build mode" className="touch-action-button" data-held={construction.active}
+              onClick={() => { construction.active = !construction.active; }}><Boxes size={16} /><span>Build</span></button>
+          </>}
           <button type="button" aria-label="Next vehicle or weapon" className="touch-action-button" onClick={() => {
-            if (mode === 'FOOT') window.dispatchEvent(new CustomEvent('select-weapon', { detail: (simState.activeWeaponIdx + 1) % WEAPON_SPECS.length }));
+            if (mode === 'FOOT') { construction.active = false; construction.pickaxe = false; window.dispatchEvent(new CustomEvent('select-weapon', { detail: (simState.activeWeaponIdx + 1) % WEAPON_SPECS.length })); }
             else emit(nextModel[mode]);
           }}><Repeat size={16} /><span>{foot ? 'Gear' : 'Model'}</span></button>
           <button type="button" aria-label="Switch travel mode" className="touch-action-button"
@@ -191,7 +197,8 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
             onClick={resetCamera}><Camera size={16} /><span>View</span></button>
         </div>
         <div className="touch-primary">
-          {foot ? <HoldButton label="Fire" icon={Crosshair} accent="touch-fire" onHold={(held) => {
+          {foot && !construction.active && !construction.pickaxe && <HoldButton label="ADS" icon={Crosshair} onHold={(held) => { aiming.ads = held; }} />}
+          {foot ? <HoldButton label={construction.active ? 'Place' : construction.pickaxe ? 'Swing' : 'Fire'} icon={Crosshair} accent="touch-fire" onHold={(held) => {
             setTouchKey('KeyF', held);
             if (held) emit('fire-weapon');
           }} /> : <HoldButton label={flying ? simState.activePlaneIdx === 1 ? 'Down' : 'Airbrake' : 'Brake'} icon={ArrowDown} onHold={(held) => { simState.touchBrake = held; }} />}

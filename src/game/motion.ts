@@ -73,3 +73,11 @@ export function stepTumble(fall: Tumble, y: number, ground: number, dt: number) 
   }
   return { y: nextY, impulse };
 }
+
+export function rearSlip(speed: number, sideways: number, yawRate: number, handbrake: boolean, grip: number, grounded: boolean, dt: number) {
+  const rotation = yawRate * dt;
+  const inertia = sideways * Math.cos(rotation) - speed * Math.sin(rotation);
+  const traction = grounded ? (handbrake ? 1.55 : 6.7) * grip : 0.12;
+  const lateral = THREE.MathUtils.damp(inertia, 0, traction, dt);
+  return { lateral, angle: Math.atan2(lateral, Math.max(1.5, Math.abs(speed))) };
+}

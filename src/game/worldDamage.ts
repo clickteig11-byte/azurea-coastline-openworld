@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { OBB } from 'three/addons/math/OBB.js';
 import { getTravelHeight } from './worldMath';
 
 export type WorldMaterial = 'glass' | 'masonry' | 'metal' | 'wood' | 'road';
@@ -15,6 +16,7 @@ export interface WorldSection {
   permanent?: boolean;
   solid?: boolean;
   mesh?: THREE.Mesh;
+  meshSweep?: boolean;
   onDamage?: (integrity: number, destroyed: boolean, hit: WorldHit, energy: number) => void;
 }
 
@@ -86,12 +88,36 @@ function findSections(minX: number, minZ: number, maxX: number, maxZ: number) {
   return candidates;
 }
 
+export function worldBoxOccupied(center: THREE.Vector3, half: THREE.Vector3, rotation: THREE.Quaternion) {
+  const extent = half.length();
+  const matrix = new THREE.Matrix4();
+  const basis = new THREE.Matrix3();
+  const candidate = new OBB(center, half.clone().addScalar(-0.046),
+    new THREE.Matrix3().setFromMatrix4(matrix.makeRotationFromQuaternion(rotation)));
+  const other = new OBB();
+  for (const section of findSections(center.x - extent, center.z - extent, center.x + extent, center.z + extent)) {
+    if (section.solid === false || section.hp <= 0 && !section.permanent) continue;
+    if (section.rotation) basis.setFromMatrix4(matrix.makeRotationFromQuaternion(section.rotation));
+    else basis.identity();
+    other.set(section.center, section.halfSize, basis);
+    if (candidate.intersectsOBB(other)) return true;
+  }
+  return false;
+}
+
 const localOrigin = new THREE.Vector3();
 const localDirection = new THREE.Vector3();
 const localPoint = new THREE.Vector3();
 const localNormal = new THREE.Vector3();
 const negativeHalf = new THREE.Vector3();
 const meshRaycaster = new THREE.Raycaster();
+const meshNormalMatrix = new THREE.Matrix3();
+const meshSide = new THREE.Vector3();
+const meshUp = new THREE.Vector3();
+const meshOrigin = new THREE.Vector3();
+const meshWorldY = new THREE.Vector3(0, 1, 0);
+const meshWorldX = new THREE.Vector3(1, 0, 0);
+const probeOffsets = [[0, 0], [0.8, 0], [-0.8, 0], [0, 0.8], [0, -0.8], [0.56, 0.56], [0.56, -0.56], [-0.56, 0.56], [-0.56, -0.56]];
 const localBox = new THREE.Box3();
 const ray = new THREE.Ray();
 const axes = ['x', 'y', 'z'] as const;
@@ -139,15 +165,28 @@ export function traceWorld(origin: THREE.Vector3, direction: THREE.Vector3, rang
   for (const section of candidates) {
     if ((!section.permanent && section.hp <= 0) || (padding && section.solid === false)) continue;
     let hit = intersectSection(section, origin, direction, padding, closest?.distance ?? range);
-    if (hit && section.mesh && padding === 0) {
-      meshRaycaster.set(origin, direction);
-      meshRaycaster.far = closest?.distance ?? range;
-      const exact = meshRaycaster.intersectObject(section.mesh, false)[0];
+    if (hit && section.mesh && (padding === 0 || section.meshSweep)) {
+      const mesh = section.mesh;
+      let exact: THREE.Intersection<THREE.Object3D> | undefined;
+      const limit = (closest?.distance ?? range) + Math.max(0, padding);
+      const sweepOffsets = padding === 0 ? probeOffsets.slice(0, 1) : probeOffsets;
+      meshSide.crossVectors(direction, Math.abs(direction.y) > 0.91 ? meshWorldX : meshWorldY).normalize();
+      meshUp.crossVectors(meshSide, direction).normalize();
+      for (const [x, y] of sweepOffsets) {
+        meshOrigin.copy(origin).addScaledVector(meshSide, x * padding).addScaledVector(meshUp, y * padding);
+        meshRaycaster.set(meshOrigin, direction);
+        meshRaycaster.far = exact?.distance ?? limit;
+        const candidate = meshRaycaster.intersectObject(mesh, false)[0];
+        if (candidate?.face && (!exact || candidate.distance < exact.distance)) exact = candidate;
+      }
       if (!exact?.face) hit = undefined;
       else {
         hit.point.copy(exact.point);
-        hit.normal.copy(exact.face.normal).transformDirection(section.mesh.matrixWorld);
-        hit.distance = exact.distance;
+        hit.normal.copy(exact.face.normal).applyNormalMatrix(meshNormalMatrix.getNormalMatrix(mesh.matrixWorld));
+        if (hit.normal.dot(direction) > 0) hit.normal.negate();
+        hit.distance = Math.max(0, exact.distance - padding * 0.38);
+        hit.depth = 0;
+        if (hit.distance > (closest?.distance ?? range)) hit = undefined;
       }
     }
     if (hit && (!accept || accept(hit)) && (!closest || hit.distance < closest.distance)) closest = hit;
@@ -240,7 +279,7 @@ export function blastWorld(point: THREE.Vector3, radius: number, energy: number,
   emitEnvironment('gravel', point, 1.85);
 }
 
-export type EnvironmentEffect = 'water' | 'dust' | 'gravel' | 'repair' | 'impact';
+export type EnvironmentEffect = 'water' | 'dust' | 'gravel' | 'repair' | 'impact' | 'blood' | 'tire';
 export const environmentEffects: {
   kind: EnvironmentEffect;
   point: THREE.Vector3;

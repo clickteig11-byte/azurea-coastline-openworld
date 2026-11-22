@@ -209,8 +209,8 @@ function makeCity() {
     let offsetX = 0;
     let offsetZ = 0;
     let bend = 0;
-    add('Stone forecourt', 'stone', '#d6c7af', [x, y - 0.45, z], [baseW + 4.6, 1.08, baseD + 4.6], 420, 0, false);
-    add('Foundation', 'stone', '#abb0a8', [x, base - 0.42, z], [baseW, 0.8, baseD], 360, 0, false);
+    add('Stone forecourt', 'stone', '#d6c7af', [x, y - 0.45, z], [baseW + 4.6, 1.08, baseD + 4.6], 420);
+    add('Foundation', 'stone', '#abb0a8', [x, base - 0.42, z], [baseW, 0.8, baseD], 360);
 
     const level = (levelY: number, w: number, d: number, height: number, ground: boolean, floorNo: number) => {
       add('Floor slab', 'concrete', p.frame, [x + offsetX, levelY + height - 0.13, z + offsetZ], [w + 0.14, 0.26, d + 0.14], 190, bend);

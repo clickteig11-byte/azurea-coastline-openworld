@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { AIM_MODES, RETICLES, type AimMode, type Reticle } from './aim';
 import { RouletteOutcome, VehicleMode } from './worldMath';
 import type { Tumble } from './motion';
 import { grandPrixGates } from './grandPrix';
@@ -8,8 +9,10 @@ export type GamePlayMode = 'FREE_ROAM' | 'BATTLE_ROYALE' | 'GRAND_PRIX' | 'WORLD
 
 export type WeaponId = 'AR' | 'SHOTGUN' | 'SNIPER' | 'MINIGUN' | 'RPG';
 
-export type CharacterArchetype = 'COAST_NAVIGATOR' | 'RESCUE_PILOT' | 'RPM_CUSTOM' | 'MICHELLE_VIP' | 'VANGUARD_SOLDIER';
+export type CharacterArchetype = 'CIVILIAN_MAN' | 'CIVILIAN_WOMAN' | 'COAST_NAVIGATOR' | 'RESCUE_PILOT' | 'RPM_CUSTOM' | 'MICHELLE_VIP' | 'VANGUARD_SOLDIER';
 export const COASTAL_CHARACTERS = {
+  CIVILIAN_MAN: { label: 'Quay Resident', url: '/models/characters/quaternius-man.glb', height: 1.76 },
+  CIVILIAN_WOMAN: { label: 'Harbor Resident', url: '/models/characters/quaternius-woman-casual.glb', height: 1.68 },
   COAST_NAVIGATOR: { label: 'Harbor Navigator', url: '/models/characters/harbor-navigator.glb', height: 1.76 },
   RESCUE_PILOT: { label: 'Rescue Pilot', url: '/models/characters/coastal-rescue-pilot.glb', height: 1.86 },
 } as const satisfies Partial<Record<CharacterArchetype, { label: string; url: string; height: number }>>;
@@ -21,6 +24,7 @@ export interface CharacterCustomization {
   archetype: CharacterArchetype;
   presetName: string;
   skinColor: string;
+  hairColor?: string;
   topColor: string;
   topRoughness: number;
   topMetalness: number;
@@ -657,6 +661,14 @@ export const INITIAL_CHIPS: ChipNode[] = [
 ];
 
 export interface ControlSettings {
+  aimAssist: AimMode;
+  reticle: Reticle;
+  reticleColor: string;
+  reticleSize: number;
+  mouseSensitivity: number;
+  blood: boolean;
+  graphics: 'Performance' | 'Balanced' | 'High';
+  audioMuted: boolean;
   steeringSensitivity: number; // 0.4 .. 2.0 (default 1.0)
   throttleSensitivity: number; // 0.5 .. 1.8 (default 1.0)
   cameraSmoothness: number; // 0.4 .. 2.0 (default 1.0)
@@ -666,6 +678,8 @@ export interface ControlSettings {
 }
 
 export const DEFAULT_CONTROL_SETTINGS: ControlSettings = {
+  aimAssist: 'Off', reticle: 'Classic Cross', reticleColor: '#e9f8fd', reticleSize: 18,
+  mouseSensitivity: 1, blood: false, graphics: 'Balanced', audioMuted: false,
   steeringSensitivity: 1.0,
   throttleSensitivity: 1.0,
   cameraSmoothness: 1.0,
@@ -681,6 +695,15 @@ function loadControlSettings(): ControlSettings {
     if (!raw) return { ...DEFAULT_CONTROL_SETTINGS };
     const parsed = JSON.parse(raw) as Partial<ControlSettings>;
     return {
+      ...DEFAULT_CONTROL_SETTINGS,
+      aimAssist: parsed.aimAssist && AIM_MODES.includes(parsed.aimAssist) ? parsed.aimAssist : 'Off',
+      reticle: parsed.reticle && RETICLES.includes(parsed.reticle) ? parsed.reticle : 'Classic Cross',
+      reticleColor: /^#[a-f0-9]{6}$/i.test(parsed.reticleColor ?? '') ? parsed.reticleColor! : '#e9f8fd',
+      reticleSize: typeof parsed.reticleSize === 'number' ? THREE.MathUtils.clamp(parsed.reticleSize, 10, 30) : 18,
+      mouseSensitivity: typeof parsed.mouseSensitivity === 'number' ? THREE.MathUtils.clamp(parsed.mouseSensitivity, 0.3, 2.3) : 1,
+      blood: parsed.blood === true,
+      graphics: parsed.graphics === 'High' || parsed.graphics === 'Performance' ? parsed.graphics : 'Balanced',
+      audioMuted: parsed.audioMuted === true,
       steeringSensitivity:
         typeof parsed.steeringSensitivity === 'number'
           ? Math.max(0.4, Math.min(2.0, parsed.steeringSensitivity))
@@ -742,6 +765,7 @@ export const simState = {
   orbitYaw: 0,
   orbitPitch: 0,
   cameraView: 0,
+  lobbyYaw: 0,
   touchControlsEnabled: false,
   tourVisitedIds: [] as string[],
   gliding: false,
@@ -804,7 +828,9 @@ export const simState = {
   shotCooldown: 0,
   lastShotFrom: [0, 0, 0] as [number, number, number],
   lastShotTo: [0, 0, 0] as [number, number, number],
-  botTargets: INITIAL_BOT_TARGETS.map((b) => ({ ...b })),
+  botTargets: INITIAL_BOT_TARGETS.map((b, i) => ({ ...b,
+    modelUrl: i === 2 ? COASTAL_CHARACTERS.CIVILIAN_MAN.url : i === 6 ? COASTAL_CHARACTERS.CIVILIAN_WOMAN.url : b.modelUrl,
+  })),
   lootCrates: INITIAL_LOOT_CRATES.map((l) => ({ ...l })),
 
   playerPos: new THREE.Vector3(-8.0, 3.3, 28),

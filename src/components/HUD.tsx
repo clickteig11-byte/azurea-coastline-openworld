@@ -1,3 +1,8 @@
+import { Lobby, persistChips, restoreChips } from './Lobby';
+import { PlaySettings } from './PlaySettings';
+import { Reticle } from './Reticle';
+import { BUILD_COST, BUILD_MATERIALS, BUILD_TYPES, construction } from '../game/building';
+import { aiming } from '../game/aim';
 import React, { useEffect, useState } from 'react';
 import {
   Car,
@@ -150,7 +155,7 @@ const GAME_MODE_OPTIONS: Array<{
   {
     id: 'GRAND_PRIX',
     title: 'Grand Prix',
-    description: 'Race eight gates on a closed street circuit with three rivals.',
+    description: 'Race the coastal circuit against three rivals.',
     badge: 'Circuit',
   },
   {
@@ -187,34 +192,7 @@ const PLANE_FLEET_MENU = [
   { idx: 5, label: 'Heavy Cargo Jet', codeName: 'HEAVY STRATEGIC CARGO JET' },
 ];
 
-const MENU_CHARACTER_PRESETS: Array<{
-  label: string;
-  presetIdx: number;
-  patch?: Partial<CharacterCustomization>;
-}> = [
-  {
-    label: 'City Executive',
-    presetIdx: 0,
-    patch: { presetName: 'City Executive', topColor: '#1e293b', bottomColor: '#0f172a' },
-  },
-  {
-    label: 'Spec-Ops',
-    presetIdx: 5,
-    patch: { presetName: 'Spec-Ops' },
-  },
-  {
-    label: 'Street Racer',
-    presetIdx: 1,
-    patch: { presetName: 'Street Racer' },
-  },
-  {
-    label: 'Modern Casual',
-    presetIdx: 3,
-    patch: { presetName: 'Modern Casual' },
-  },
-];
-
-export interface LandmarkDestination {
+interface LandmarkDestination {
   id: string;
   shortLabel: string;
   menuLabel: string;
@@ -464,16 +442,27 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
 const WORLD_TOUR_STOPS = WORLD_LANDMARK_DESTINATIONS.filter((d) => d.isWorldWonder);
 
 export function HUD({ hud, onSelectMode }: Props) {
-  const [muted, setMuted] = useState(soundEngine.isMuted());
+  const [muted, setMuted] = useState(simState.controlSettings.audioMuted);
   const [, setUiTick] = useState(0);
   const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('empire');
   const [mobileTeleportOpen, setMobileTeleportOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [worldIntro, setWorldIntro] = useState(false);
   const controlSettings = simState.controlSettings;
+
+  useEffect(() => {
+    restoreChips();
+    soundEngine.setMuted(simState.controlSettings.audioMuted);
+  }, []);
+  useEffect(() => { persistChips(); }, [hud.chips]);
 
   const updateControls = (patch: Partial<ControlSettings>) => {
     saveControlSettings(patch);
+    if (patch.audioMuted !== undefined) {
+      soundEngine.setMuted(patch.audioMuted);
+      setMuted(patch.audioMuted);
+    }
     setUiTick((t) => t + 1);
   };
 
@@ -542,8 +531,7 @@ export function HUD({ hud, onSelectMode }: Props) {
   const activeGameMode: GamePlayMode = (s.gameMode as GamePlayMode) || 'FREE_ROAM';
 
   const handleToggleMute = () => {
-    soundEngine.toggleMute();
-    setMuted(soundEngine.isMuted());
+    updateControls({ audioMuted: !muted });
   };
 
   const handleToggleStartMenu = (forceState?: boolean) => {
@@ -791,6 +779,7 @@ export function HUD({ hud, onSelectMode }: Props) {
   };
 
   const handleStartGame = () => {
+    setWorldIntro(true);
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -949,247 +938,37 @@ export function HUD({ hud, onSelectMode }: Props) {
   // =========================================================================
   // FULL-SCREEN CLEAN START SCREEN (Renders ALONE over live 3D city skyline)
   // =========================================================================
-  if (isStartMenuOpen) {
-    return (
-      <div className="world-start-screen pointer-events-auto fixed inset-0 z-50 flex select-none font-sans text-white">
-        <div className="world-start-live"><span /> Live Grand Prix</div>
-        <div className="world-start-panel flex h-full w-full max-w-md flex-col justify-between overflow-y-auto px-6 py-6 sm:max-w-lg sm:px-8 sm:py-8">
-          <div className="space-y-6">
-            {/* Brand Title */}
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-                World Horizon
-              </h1>
-              <p className="mt-2 text-sm text-slate-300">Azurea Coast</p>
-            </div>
-
-            {/* Section 1 — Game Mode (4 Clearly Defined Game Modes) */}
-            <div>
-              <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
-                Game Mode
-              </div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {GAME_MODE_OPTIONS.map((gm) => {
-                  const selected = activeGameMode === gm.id;
-                  return (
-                    <button
-                      key={gm.id}
-                      onClick={() => handleSelectGameMode(gm.id)}
-                      className={`group flex flex-col items-start rounded-xl border p-3 text-left transition ${
-                        selected
-                          ? 'border-white bg-white/15 text-white shadow-sm'
-                          : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:border-white/25 hover:bg-white/[0.08] hover:text-white'
-                      }`}
-                    >
-                      <div className="flex w-full items-center justify-between gap-2">
-                        <span className="text-sm font-semibold text-white">{gm.title}</span>
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                            selected
-                              ? 'bg-white text-neutral-950'
-                              : 'bg-white/10 text-neutral-300'
-                          }`}
-                        >
-                          {gm.badge}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-[11px] leading-snug text-neutral-400 group-hover:text-neutral-300">
-                        {gm.description}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Section 2 — Traversal & Vehicle / Character */}
-            <div>
-              <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
-                Traversal &amp;{' '}
-                {hud.mode === 'CAR'
-                  ? 'Vehicle'
-                  : hud.mode === 'BOAT'
-                  ? 'Vessel'
-                  : hud.mode === 'PLANE'
-                  ? 'Aircraft'
-                  : 'Character'}
-              </div>
-
-              <div className="mb-2.5 grid grid-cols-4 gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] p-1">
-                {(
-                  [
-                    { id: 'FOOT', label: 'Walk', Icon: Footprints },
-                    { id: 'CAR', label: 'Drive', Icon: Car },
-                    { id: 'BOAT', label: 'Boats', Icon: Ship },
-                    { id: 'PLANE', label: 'Fly', Icon: Plane },
-                  ] as const
-                ).map(({ id, label, Icon }) => {
-                  const active = hud.mode === id;
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => onSelectMode(id)}
-                      className={`flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium transition ${
-                        active
-                          ? 'bg-white text-neutral-950 shadow-sm'
-                          : 'text-neutral-300 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                      <span>{label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {hud.mode === 'CAR' && (
-                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                  {CAR_FLEET_MENU.map((car) => {
-                    const isSelected = activeCarIdx === car.idx;
-                    return (
-                      <button
-                        key={car.idx}
-                        onClick={() => selectSpecificCar(car.idx)}
-                        className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
-                          isSelected
-                            ? 'border-white bg-white/15 text-white'
-                            : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
-                        }`}
-                      >
-                        {car.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {hud.mode === 'BOAT' && (
-                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                  {BOAT_FLEET_MENU.map((boat) => {
-                    const isSelected = activeBoatIdx === boat.idx;
-                    return (
-                      <button
-                        key={boat.idx}
-                        onClick={() => selectSpecificBoat(boat.idx)}
-                        className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
-                          isSelected
-                            ? 'border-white bg-white/15 text-white'
-                            : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
-                        }`}
-                      >
-                        {boat.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {hud.mode === 'PLANE' && (
-                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-                  {PLANE_FLEET_MENU.map((plane) => {
-                    const isSelected = activePlaneIdx === plane.idx;
-                    return (
-                      <button
-                        key={plane.idx}
-                        onClick={() => selectSpecificPlane(plane.idx)}
-                        className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
-                          isSelected
-                            ? 'border-white bg-white/15 text-white'
-                            : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
-                        }`}
-                      >
-                        {plane.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {hud.mode === 'FOOT' && (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {MENU_CHARACTER_PRESETS.map((item) => {
-                      const basePreset =
-                        CHARACTER_PRESETS[item.presetIdx] ?? CHARACTER_PRESETS[0];
-                      const isSelected = custom.presetName === item.label;
-                      return (
-                        <button
-                          key={item.label}
-                          onClick={() => {
-                            onSelectMode('FOOT');
-                            applyOutfitPreset(basePreset, item.patch);
-                          }}
-                          className={`rounded-xl border px-3 py-2 text-left text-xs font-medium transition ${
-                            isSelected
-                              ? 'border-white bg-white/15 text-white'
-                              : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
-                          }`}
-                        >
-                          {item.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <button
-                    onClick={() => {
-                      onSelectMode('FOOT');
-                      handleToggleCustomizer();
-                    }}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] py-2 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-                  >
-                    <Shirt className="h-3.5 w-3.5" />
-                    <span>Customize Outfit</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Section 3 — Starting Location */}
-            <div>
-              <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-neutral-400">
-                Starting Location
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
-                  const isSelected = selectedLandmarkId === lm.id;
-                  return (
-                    <button
-                      key={lm.id}
-                      onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
-                      className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-                        isSelected
-                          ? 'border-white bg-white text-neutral-950'
-                          : 'border-white/10 bg-white/[0.04] text-neutral-300 hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      {lm.menuLabel}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {/* Bottom CTA */}
-          <div className="world-start-cta mt-6 pt-4">
-            <button
-              id="world-start-game"
-              onClick={handleStartGame}
-              className="w-full rounded-xl bg-white py-3 text-sm font-semibold text-neutral-950 shadow-lg transition hover:bg-neutral-200 active:scale-[0.99]"
-            >
-              {activeGameMode === 'GRAND_PRIX' ? 'Start Race' : 'Start Game'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const forcedTravel = WORLD_LANDMARK_DESTINATIONS.find(({ id }) => id === selectedLandmarkId)?.forceMode;
+  const launchMode = activeGameMode === 'GRAND_PRIX' ? 'CAR' : forcedTravel ?? simState.mode;
+  const launchFleet = launchMode === 'CAR' ? CAR_FLEET_MENU : launchMode === 'BOAT' ? BOAT_FLEET_MENU :
+    launchMode === 'PLANE' ? PLANE_FLEET_MENU : [];
+  const launchModel = launchMode === 'CAR' ? activeCarIdx : launchMode === 'BOAT' ? activeBoatIdx : activePlaneIdx;
+  const pickLaunchModel = launchMode === 'CAR' ? selectSpecificCar : launchMode === 'BOAT' ? selectSpecificBoat : selectSpecificPlane;
+  if (isStartMenuOpen) return (
+    <Lobby mode={activeGameMode} modes={GAME_MODE_OPTIONS} onMode={handleSelectGameMode}
+      start={handleStartGame} destinations={WORLD_LANDMARK_DESTINATIONS} setDestination={setSelectedLandmarkId}
+      selected={selectedLandmarkId} update={updateCustomization} onStyle={updateControls} settings={controlSettings}
+      fleet={(activeGameMode === 'FREE_ROAM' || activeGameMode === 'GRAND_PRIX') && <>
+        {activeGameMode === 'FREE_ROAM' && !forcedTravel && <label className="wh-launch">Travel
+          <select value={simState.mode} onChange={(e) => { onSelectMode(e.target.value as VehicleMode); setUiTick((n) => n + 1); }}>
+            <option value="FOOT">On foot</option><option value="CAR">Drive</option>
+            <option value="BOAT">Sail</option><option value="PLANE">Fly</option>
+          </select>
+        </label>}
+        {launchFleet.length > 0 && <label className="wh-launch">Vehicle
+          <select value={launchModel} onChange={(e) => pickLaunchModel(Number(e.target.value))}>
+            {launchFleet.map(({ idx, label }) => <option key={idx} value={idx}>{label}</option>)}
+          </select>
+        </label>}
+      </>} />
+  );
 
   // =========================================================================
   // IN-GAME HUD (Mode-Specific & Mobile-Friendly)
   // =========================================================================
   return (
     <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans">
+      {worldIntro && <div className="wh-world-fade" onAnimationEnd={() => setWorldIntro(false)} />}
       {/* 0. IMPACT VIGNETTE FLASH */}
       {crashFlashTimer > 0 && (
         <div
@@ -1198,18 +977,22 @@ export function HUD({ hud, onSelectMode }: Props) {
         />
       )}
 
-      {/* 1. CENTER CROSSHAIR (Battle Royale on foot / driving) */}
-      {activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
-        <div className="pointer-events-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
-          <div
-            className="relative h-5 w-5"
-          >
-            <span className="absolute left-1/2 top-0 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/80" />
-            <span className="absolute bottom-0 left-1/2 h-1.5 w-[1.5px] -translate-x-1/2 rounded-full bg-white/80" />
-            <span className="absolute left-0 top-1/2 h-[1.5px] w-1.5 -translate-y-1/2 rounded-full bg-white/80" />
-            <span className="absolute right-0 top-1/2 h-[1.5px] w-1.5 -translate-y-1/2 rounded-full bg-white/80" />
-            <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white" />
-          </div>
+      {!controlsOpen && !isCustomizerOpen && (hud.mode === 'FOOT' || simState.cameraView === 1 || aiming.ads || activeGameMode === 'BATTLE_ROYALE') && <Reticle />}
+      {hud.mode === 'FOOT' && !controlsOpen && !isCustomizerOpen && !simState.parachuting && (construction.active || construction.pickaxe) && (
+        <div className={`wh-build-hud ${touchUi ? 'wh-build-touch' : ''}`}>
+          <div className="wh-materials">{BUILD_MATERIALS.map((material) => (
+            <button key={material} type="button" aria-pressed={construction.material === material} onClick={() => {
+              construction.material = material; setUiTick((n) => n + 1);
+            }}><span>{material}</span><strong>{construction.resources[material]}</strong></button>
+          ))}</div>
+          {construction.active && <div className="wh-build-options">
+            {BUILD_TYPES.map((type, index) => <button type="button" key={type} aria-pressed={construction.type === type}
+              onClick={() => { construction.type = type; setUiTick((n) => n + 1); }}>
+              {!touchUi && <kbd>{5 + index}</kbd>} {type}
+            </button>)}
+            <button type="button" onClick={() => { construction.turn = (construction.turn + 1) % 4; setUiTick((n) => n + 1); }}>Rotate</button>
+            <span>{BUILD_COST}</span>
+          </div>}
         </div>
       )}
 
@@ -1238,6 +1021,10 @@ export function HUD({ hud, onSelectMode }: Props) {
           <SlidersHorizontal className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Controls</span>
         </button>
+
+        <button type="button" className="rounded-full px-2.5 py-1 text-xs text-neutral-200 hover:bg-white/10"
+          onClick={() => { simState.cameraView = 1 - simState.cameraView; simState.orbitYaw = simState.orbitPitch = 0; setUiTick((n) => n + 1); }}
+          aria-label="Toggle first-person camera">{simState.cameraView === 1 ? '1st' : '3rd'}</button>
 
         <button
           onClick={handleToggleCustomizer}
@@ -1482,10 +1269,11 @@ export function HUD({ hud, onSelectMode }: Props) {
             </button>
           </div>
 
+          <PlaySettings settings={controlSettings} update={updateControls} />
           <p className="mb-3 text-[11px] leading-relaxed text-neutral-300">
             {touchUi
-              ? 'Drag the right side to orbit. Tap View to change camera distance. Hold Gas and steer with the joystick.'
-              : 'WASD moves or steers. Right-drag orbits and X changes the view. Aircraft use I/K for power, Space to climb and Ctrl to brake or descend.'}
+              ? 'Drag the right side to orbit. Tap View to switch between first and third person. Hold Gas and steer with the joystick.'
+              : 'WASD moves or steers. Right mouse aims and X switches first or third person. Aircraft use I/K for power, Space to climb and Ctrl to brake or descend.'}
           </p>
           {/* One-Tap Handling Presets */}
           <div className="mb-4">

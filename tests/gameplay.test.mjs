@@ -205,3 +205,84 @@ test('world hits scar and breach only the sections reached by the hit or blast',
     unregister.forEach((remove) => remove());
   }
 });
+
+test('screen-center rays hit only actors that overlap the actual aim direction', async () => {
+  const { PerspectiveCamera, Raycaster, Vector2 } = await import('three');
+  const { targetDistance } = await import('../src/game/aim.ts');
+  const camera = new PerspectiveCamera(65, 16 / 9, 0.04, 500);
+  camera.position.set(0, 1.25, -4);
+  camera.lookAt(0, 1.25, 8);
+  camera.updateMatrixWorld();
+  const aim = new Raycaster();
+  aim.setFromCamera(new Vector2(), camera);
+  assert.ok(Math.abs(targetDistance(aim.ray.origin, aim.ray.direction, 0, 0, 8) - 11.66) < 0.04);
+  assert.equal(targetDistance(aim.ray.origin, aim.ray.direction, 0.68, 0, 8), Infinity);
+  assert.equal(targetDistance(aim.ray.origin, aim.ray.direction, 0, 0, -8), Infinity);
+});
+
+test('placed structures share live travel support, rotated collisions, and destructibility', async () => {
+  const { construction, planBuild, placeBuild, placedPieces, BUILD_COST } = await import('../src/game/building.ts');
+  const old = { type: construction.type, turn: construction.turn, Wood: construction.resources.Wood };
+  construction.type = 'Ramp';
+  construction.turn = 0;
+  const player = new Vector3(34, 3.25, 23);
+  const aim = new Vector3(36, 3.2, 28);
+  const plan = planBuild(aim, player);
+  assert.ok(plan.valid);
+  assert.equal(plan.origin.x % 4, 0);
+  assert.ok(placeBuild(aim, player));
+  try {
+    assert.equal(construction.resources.Wood, old.Wood - BUILD_COST);
+    assert.equal(placedPieces().length, 1);
+    assert.equal(planBuild(aim, player).valid, false);
+    const high = getTravelHeight(36, 29.2, 5.9);
+    const low = getTravelHeight(36, 26.6, 3.8);
+    assert.ok(high - low > 1.2);
+    assert.equal(getTravelHeight(36, 29.2, 3.25), getTerrainHeight(36, 29.2));
+    const hit = traceWorld(new Vector3(36, 8, 28), new Vector3(0, -1, 0), 8);
+    assert.ok(hit?.section && hit.normal.y > 0.8 && hit.normal.z < -0.35);
+    damageWorld(hit, 500);
+    assert.equal(placedPieces().length, 0);
+    assert.equal(getTravelHeight(36, 29.2, 5.9), getTerrainHeight(36, 29.2));
+  } finally {
+    construction.type = old.type;
+    construction.turn = old.turn;
+    construction.resources.Wood = old.Wood;
+  }
+});
+
+test('handbrake retains rear slip and counter-steer settles it progressively', async () => {
+  const { rearSlip } = await import('../src/game/motion.ts');
+  let grip = { lateral: 0, angle: 0 };
+  let drift = { lateral: 0, angle: 0 };
+  for (let i = 0; i < 56; i++) {
+    grip = rearSlip(24, grip.lateral, 0.83, false, 1, true, 1 / 60);
+    drift = rearSlip(24, drift.lateral, 0.83, true, 1, true, 1 / 60);
+  }
+  assert.ok(drift.angle < -0.29 && Math.abs(grip.angle) < 0.14);
+  const before = Math.abs(drift.angle);
+  for (let i = 0; i < 18; i++) drift = rearSlip(24, drift.lateral, -0.45, false, 1, true, 1 / 60);
+  assert.ok(Math.abs(drift.angle) < before * 0.19);
+});
+
+test('both sourced characters contain binary GLB geometry, materials, skeletons, and usable motion clips', async () => {
+  const { readFile } = await import('node:fs/promises');
+  for (const file of ['quaternius-man.glb', 'quaternius-woman-casual.glb']) {
+    const buffer = await readFile(new URL('../public/models/characters/' + file, import.meta.url));
+    assert.equal(buffer.toString('ascii', 0, 4), 'glTF');
+    assert.equal(buffer.readUInt32LE(4), 2);
+    assert.equal(buffer.readUInt32LE(8), buffer.length);
+    const end = 20 + buffer.readUInt32LE(12);
+    const gltf = JSON.parse(buffer.toString('utf8', 20, end));
+    assert.equal(gltf.skins[0].joints.length, 31);
+    assert.ok(gltf.materials.every((material) => material.name && material.pbrMetallicRoughness));
+    for (const motion of ['Idle', 'Walk', 'Run', 'Death', 'Jump']) {
+      const clip = gltf.animations.find((animation) => animation.name.endsWith('_' + motion));
+      const skeletonChannels = clip.channels.filter((channel) => gltf.skins[0].joints.includes(channel.target.node));
+      assert.ok(skeletonChannels.length >= (motion === 'Idle' ? 8 : 16));
+      assert.ok(clip.samplers.some(({ input }) => gltf.accessors[input].count > 4));
+    }
+    assert.ok(gltf.meshes.some((mesh) => mesh.primitives.some((primitive) =>
+      primitive.attributes.JOINTS_0 !== undefined && primitive.attributes.WEIGHTS_0 !== undefined)));
+  }
+});

@@ -207,7 +207,7 @@ export const sphereFragmentShader = /* glsl */ `
     vec2 grid = vec2(280.0, 140.0);
     vec2 ipos = floor(vUv * grid);
     vec2 fpos = fract(vUv * grid);
-    float dotMask = smoothstep(0.45, 0.28, distance(fpos, vec2(0.5)));
+    float dotMask = (1.0 - smoothstep(0.28, 0.45, distance(fpos, vec2(0.5))));
 
     vec3 col = vec3(0.05, 0.12, 0.24);
     if (uMode == 0) {
@@ -551,7 +551,7 @@ export const terrainFragmentShader = /* glsl */ `
         vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.24, 0.76, macroN));
         float sunCuredMask = smoothstep(0.54, 0.84, medN * 0.72 + (1.0 - macroN) * 0.32);
         grassCol = mix(grassCol, dryTufts, sunCuredMask * 0.36);
-        float creviceMask = smoothstep(0.38, 0.16, microBlades);
+        float creviceMask = (1.0 - smoothstep(0.16, 0.38, microBlades));
         grassCol = mix(grassCol, darkLoam, creviceMask * 0.34);
         grassCol *= 0.90 + 0.20 * microBlades;
 

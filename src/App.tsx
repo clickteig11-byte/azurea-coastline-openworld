@@ -1,3 +1,7 @@
+import { SkidMarks } from './components/SkidMarks';
+import { construction } from './game/building';
+import { LobbyStage } from './components/LobbyStage';
+import { Construction } from './components/Construction';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
@@ -30,6 +34,12 @@ function PerformanceGovernor() {
   const dpr = useRef(viewport.dpr);
 
   useFrame((_, delta) => {
+    const quality = simState.controlSettings.graphics;
+    const maximum = quality === 'Performance' ? 0.85 : quality === 'High' ? 1.35 : 1.12;
+    if (dpr.current > maximum) {
+      dpr.current = maximum;
+      setDpr(maximum);
+    }
     times.current.push(delta);
     if (times.current.length > 30) times.current.shift();
     if (Date.now() - lastCheck.current > 2000) {
@@ -37,8 +47,8 @@ function PerformanceGovernor() {
       if (avg > 0.024 && dpr.current > 0.8) {
         dpr.current = Math.max(0.8, dpr.current - 0.1);
         setDpr(dpr.current);
-      } else if (avg < 0.017 && dpr.current < 1.2) {
-        dpr.current = Math.min(1.2, dpr.current + 0.1);
+      } else if (avg < 0.017 && dpr.current < maximum) {
+        dpr.current = Math.min(maximum, dpr.current + 0.1);
         setDpr(dpr.current);
       }
       lastCheck.current = Date.now();
@@ -115,6 +125,9 @@ const GameWorld = React.memo(function GameWorld({ onHudUpdate }: { onHudUpdate: 
       <CoastalCity />
       <GrandPrixCourse />
       <WorldEffects />
+      <SkidMarks />
+      <Construction />
+      <LobbyStage />
       <VegasStripDetails />
       <InstancedFoliage />
       <VegasLandmarks />
@@ -235,6 +248,8 @@ export function App() {
     }
 
     const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable)) return;
       const code = e.code;
       const lowerKey = e.key?.toLowerCase?.() ?? '';
       if (
@@ -286,10 +301,10 @@ export function App() {
       if (code === 'Digit3') switchMode('BOAT');
       if (code === 'Digit4') switchMode('PLANE');
       if (code === 'KeyX' && !e.repeat) {
-        simState.cameraView = (simState.cameraView + 1) % 3;
+        simState.cameraView = (simState.cameraView + 1) % 2;
         simState.orbitYaw = simState.orbitPitch = 0;
       }
-      if (code === 'KeyR') triggerRouletteSpin();
+      if (code === 'KeyR' && !e.repeat && !s.startMenuOpen && !(simState.mode === 'FOOT' && construction.active)) triggerRouletteSpin();
       if (code === 'KeyE') {
         if (simState.mode !== 'FOOT') {
           switchMode('FOOT');

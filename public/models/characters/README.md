@@ -13,3 +13,10 @@ The source characters are distributed under [CC BY 4.0](https://creativecommons.
 - [Field Medic](https://polyfork.dev/asset/field-medic-fd8919)
 
 Run `node scripts/build-characters.mjs` from the repository root to regenerate the assets.
+
+## Contemporary residents
+
+- `quaternius-man.glb` is [Man by Quaternius](https://poly.pizza/m/HMnuH5geEG).
+- `quaternius-woman-casual.glb` is [Woman Casual by Quaternius](https://poly.pizza/m/jpKRgGDxhk).
+
+Both models are distributed as [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/). The original GLB 2.0 downloads each contain a skin, 31 skeleton joints, named materials, and 11 animation clips. The game normalizes scale, maps the skeleton to its pose system, and uses the embedded idle, walk, and run clips.

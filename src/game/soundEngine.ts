@@ -12,6 +12,9 @@ class SoundEngine {
   private engineOsc: OscillatorNode | null = null;
   private engineGain: GainNode | null = null;
   private engineFilter: BiquadFilterNode | null = null;
+  private tireOsc: OscillatorNode | null = null;
+  private tireGain: GainNode | null = null;
+  private tireFilter: BiquadFilterNode | null = null;
   private waveNoise: AudioBuffer | null = null;
   private muted = false;
   private userUnlocked = false;
@@ -50,6 +53,7 @@ class SoundEngine {
   public toggleMute(): boolean {
     this.muted = !this.muted;
     if (this.muted && this.engineGain && this.ctx) this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+    if (this.muted && this.ctx && this.tireGain) this.tireGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.04);
     return this.muted;
   }
 
@@ -166,6 +170,47 @@ class SoundEngine {
     source.start(now);
     source.stop(now + duration);
     if (kind === 'landing') this.tone(ctx, 58, 'sine', 0, 0.16, Math.min(0.16, energy * 0.095));
+  }
+
+  public setMuted(muted: boolean) {
+    if (this.isMuted() !== muted) this.toggleMute();
+  }
+
+  public playSwing() {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    this.tone(ctx, 185, 'triangle', 0, 0.09, 0.027);
+    this.tone(ctx, 104, 'triangle', 0.035, 0.09, 0.045);
+  }
+
+  public updateTires(pressure: number, speed: number) {
+    if (!this.tireOsc && pressure <= 0) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (!this.tireOsc || !this.tireGain || !this.tireFilter) {
+      this.tireOsc = ctx.createOscillator();
+      this.tireOsc.type = 'sawtooth';
+      this.tireGain = ctx.createGain();
+      this.tireGain.gain.value = 0;
+      this.tireFilter = ctx.createBiquadFilter();
+      this.tireFilter.type = 'bandpass';
+      this.tireFilter.Q.value = 0.76;
+      this.tireOsc.connect(this.tireFilter).connect(this.tireGain).connect(ctx.destination);
+      this.tireOsc.start();
+    }
+    const now = ctx.currentTime;
+    this.tireOsc.frequency.setTargetAtTime(470 + speed * 6.4 + pressure * 250, now, 0.065);
+    this.tireFilter.frequency.setTargetAtTime(900 + pressure * 1200, now, 0.065);
+    this.tireGain.gain.setTargetAtTime(Math.min(0.056, pressure * 0.057), now, 0.055);
+  }
+
+  public playConstruction(material: 'Wood' | 'Stone' | 'Metal') {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const pitch = material === 'Wood' ? 171 : material === 'Stone' ? 129 : 411;
+    this.tone(ctx, pitch, 'triangle', 0, 0.13, 0.095);
+    this.tone(ctx, pitch * 0.48, 'sine', 0.035, 0.16, 0.06);
+    if (material === 'Metal') this.tone(ctx, 887, 'triangle', 0.018, 0.2, 0.045);
   }
 
   public playRepair(): void {

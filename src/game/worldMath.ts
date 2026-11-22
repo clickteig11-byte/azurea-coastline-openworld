@@ -247,6 +247,12 @@ export function getBridgeHeight(z: number): number {
   return THREE.MathUtils.lerp(9.4, grade, smoothstep(352, -NORTH_BAY_BRIDGE.landing, -z));
 }
 
+const travelSurfaces = new Set<(x: number, z: number, feetY: number) => number>();
+export function registerTravelSurface(sample: (x: number, z: number, feetY: number) => number) {
+  travelSurfaces.add(sample);
+  return () => travelSurfaces.delete(sample);
+}
+
 export function getTravelHeight(x: number, z: number, feetY = Infinity): number {
   let surface = getTerrainHeight(x, z);
   const ramp = stuntRampHeight(x, z, feetY);
@@ -267,6 +273,7 @@ export function getTravelHeight(x: number, z: number, feetY = Infinity): number 
       if (feetY >= deck - 1.1) surface = Math.max(surface, deck);
     }
   }
+  for (const sample of travelSurfaces) surface = Math.max(surface, sample(x, z, feetY));
   return surface;
 }
 

@@ -7,6 +7,9 @@ import { getTravelHeight } from '../game/worldMath';
 
 const poolSize = 900;
 const scarCount = 68;
+const shardCount = 112;
+const matrix = new THREE.Object3D();
+const shardShape = new THREE.DodecahedronGeometry(1, 0);
 const up = new THREE.Vector3(0, 0, 1);
 const smokeColors = { glass: '#657f8b', metal: '#5e5955', masonry: '#817463', wood: '#7f684e', road: '#524b43' };
 const fragments = { glass: '#a6dfec', metal: '#c3b7aa', masonry: '#b4a592', wood: '#997448', road: '#746d63' };
@@ -83,6 +86,14 @@ const fragmentShader = `
 export function WorldEffects() {
   const decals = useRef<(THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> | null)[]>([]);
   const nextScar = useRef(0);
+  const bloodDecals = useRef<(THREE.Mesh | null)[]>([]);
+  const nextBlood = useRef(0);
+  const shardMesh = useRef<THREE.InstancedMesh>(null);
+  const shards = useMemo(() => Array.from({ length: shardCount }, () => ({
+    position: new THREE.Vector3(), velocity: new THREE.Vector3(), spin: new THREE.Vector3(),
+    euler: new THREE.Euler(), size: 0.1, life: 0, live: false,
+  })), []);
+  const nextShard = useRef(0);
   const scarSections = useRef<(WorldSection | undefined)[]>([]);
   const emission = useRef(0);
   const plumes = useRef<{ point: THREE.Vector3; life: number; nextPuff: number }[]>([]);
@@ -153,6 +164,23 @@ export function WorldEffects() {
       if (impact.destroyed && impact.material !== 'glass' && impact.energy > 56 && plumes.current.length < 11) {
         plumes.current.push({ point: impact.point.clone().addScaledVector(impact.normal, 0.32), life: 8.5, nextPuff: 0.24 });
       }
+      if (impact.destroyed && shardMesh.current) {
+        const quantity = Math.min(12, Math.round(5 + impact.energy / 18));
+        for (let i = 0; i < quantity; i++) {
+          const index = nextShard.current++ % shardCount;
+          const shard = shards[index];
+          shard.position.copy(impact.point).addScaledVector(impact.normal, 0.105);
+          shard.velocity.set((Math.random() - 0.5) * 6.8, 1.9 + Math.random() * 3.2, (Math.random() - 0.5) * 6.5)
+            .addScaledVector(impact.normal, 1.3 + Math.random() * 2.9);
+          shard.spin.set(Math.random() * 8, Math.random() * 4.6, Math.random() * 7.2);
+          shard.euler.set(i * 0.53, i * 1.1, i * 0.385);
+          shard.size = 0.065 + Math.random() * (impact.material === 'glass' ? 0.13 : 0.27);
+          shard.life = 3.6 + Math.random() * 3;
+          shard.live = true;
+          shardMesh.current.setColorAt(index, color.set(fragments[impact.material]));
+        }
+        if (shardMesh.current.instanceColor) shardMesh.current.instanceColor.needsUpdate = true;
+      }
       const magnitude = Math.min(1.75, impact.energy / 75);
       for (let i = 0; i < 5 + magnitude * 8 + (impact.destroyed ? 10 : 0); i++) {
         const spark = i % 3 === 0 || impact.material === 'metal';
@@ -180,7 +208,30 @@ export function WorldEffects() {
       }
     }
 
+    if (!simState.controlSettings.blood) {
+      bloodDecals.current.forEach((item) => { if (item) item.visible = false; });
+      for (let i = 0; i < poolSize; i++) if (pool.kind[i] === 4) pool.values[i].life = 0;
+    }
     for (const { kind, point, energy, motionX, motionZ } of environmentEffects.splice(0)) {
+      if (kind === 'blood' && !simState.controlSettings.blood) continue;
+      if (kind === 'blood') {
+        const mark = bloodDecals.current[nextBlood.current++ % 24];
+        const floor = getTravelHeight(point.x, point.z, point.y);
+        if (mark && floor > simState.tideOffset && point.y - floor < 2.8) {
+          mark.position.set(point.x + motionX * 0.055, floor + 0.102, point.z + motionZ * 0.055);
+          mark.scale.setScalar(0.39 + 0.39 * energy);
+          mark.rotation.z += 0.78;
+          mark.visible = true;
+        }
+      }
+      if (kind === 'tire') {
+        for (let i = 0; i < 4; i++) {
+          velocity.set(motionX * 0.08 + Math.random() * 0.7 - 0.32, 0.34 + Math.random() * 0.5,
+            motionZ * 0.08 + Math.random() * 0.7 - 0.32);
+          spawn(point, velocity, 0, i % 2 ? '#d3d7d5' : '#aab0ad', 0.8 + i * 0.19, (0.29 + Math.random() * 0.34) * energy, 0.74);
+        }
+        continue;
+      }
       const count = Math.round(3 + 12 * energy);
       const dust = kind === 'dust' || kind === 'gravel';
       const water = kind === 'water';
@@ -190,8 +241,8 @@ export function WorldEffects() {
         velocity.set(Math.cos(angle) * speed + motionX * 0.2,
           0.32 + Math.random() * (water ? 3.4 : 1.5) * energy,
           Math.sin(angle) * speed + motionZ * 0.2);
-        const particle = water ? (i % 3 === 0 ? 0 : 3) : dust ? (i % 4 === 0 && kind === 'gravel' ? 2 : 0) : 1;
-        const tint = water ? '#c4e5e1' : dust ? '#af9a80' : kind === 'repair' ? '#99f4dc' : '#ffcf8d';
+        const particle = kind === 'blood' ? 4 : water ? (i % 3 === 0 ? 0 : 3) : dust ? (i % 4 === 0 && kind === 'gravel' ? 2 : 0) : 1;
+        const tint = kind === 'blood' ? '#952c33' : water ? '#c4e5e1' : dust ? '#af9a80' : kind === 'repair' ? '#99f4dc' : '#ffcf8d';
         spawn(point, velocity, particle, tint, 0.22 + Math.random() * (dust ? 0.89 : 0.52),
           0.065 + Math.random() * (particle === 0 ? 0.33 : 0.19), water && particle === 0 ? 0.57 : 0.85);
       }
@@ -255,6 +306,38 @@ export function WorldEffects() {
       pool.radius[i] = p.size * (type === 0 ? 0.55 + fraction * 2.2 : 1);
       pool.opacity[i] = p.fade * (type === 0 ? Math.min(1, fraction * 9 + 0.28) * (1 - fraction) : Math.min(1, 2 * (1 - fraction)));
     }
+    const debris = shardMesh.current;
+    if (debris && nextShard.current > 0) {
+      debris.count = Math.min(shardCount, nextShard.current);
+      let edited = false;
+      for (let index = 0; index < debris.count; index++) {
+        const shard = shards[index];
+        if (!shard.live) continue;
+        edited = true;
+        shard.life -= dt;
+        shard.velocity.y -= 16 * dt;
+        shard.position.addScaledVector(shard.velocity, dt);
+        const floor = getTravelHeight(shard.position.x, shard.position.z, shard.position.y) + shard.size * 0.36;
+        if (shard.position.y < floor) {
+          shard.position.y = floor;
+          shard.velocity.y = Math.max(0, -shard.velocity.y * 0.28 - 0.4);
+          shard.velocity.x *= Math.exp(-dt * 7);
+          shard.velocity.z *= Math.exp(-dt * 7);
+          shard.spin.multiplyScalar(Math.exp(-dt * 5));
+        }
+        shard.euler.x += shard.spin.x * dt;
+        shard.euler.y += shard.spin.y * dt;
+        shard.euler.z += shard.spin.z * dt;
+        const scale = shard.size * THREE.MathUtils.clamp(shard.life * 1.5, 0, 1);
+        matrix.position.copy(shard.position);
+        matrix.rotation.copy(shard.euler);
+        matrix.scale.set(scale, scale * 0.52, scale * 0.68);
+        matrix.updateMatrix();
+        debris.setMatrixAt(index, matrix.matrix);
+        if (shard.life <= 0) shard.live = false;
+      }
+      if (edited) debris.instanceMatrix.needsUpdate = true;
+    }
     if (dirty) for (const attribute of Object.values(pool.geometry.attributes)) attribute.needsUpdate = true;
   });
 
@@ -266,6 +349,14 @@ export function WorldEffects() {
           <meshBasicMaterial map={stone} transparent depthWrite={false} polygonOffset polygonOffsetFactor={-2} />
         </mesh>
       ))}
+      {Array.from({ length: 24 }, (_, i) => <mesh key={'blood-' + i} rotation={[-Math.PI / 2, 0, 0]} renderOrder={3}
+        visible={false} ref={(item) => { bloodDecals.current[i] = item; }}>
+        <planeGeometry args={[1, 0.72]} /><meshBasicMaterial color="#852a30" map={glass} transparent opacity={0.59} depthWrite={false}
+          polygonOffset polygonOffsetFactor={-2} />
+      </mesh>)}
+      <instancedMesh ref={shardMesh} args={[shardShape, undefined, shardCount]} count={0} frustumCulled={false}>
+        <meshStandardMaterial roughness={0.73} metalness={0.12} />
+      </instancedMesh>
       <points geometry={pool.geometry} frustumCulled={false} renderOrder={3}>
         <shaderMaterial transparent depthWrite={false} vertexShader={vertexShader} fragmentShader={fragmentShader} />
       </points>

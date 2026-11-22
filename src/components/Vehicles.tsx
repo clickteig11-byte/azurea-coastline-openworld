@@ -1,3 +1,9 @@
+import { queueSkid } from './SkidMarks';
+import { aiming, civilianTargets, targetDistance } from '../game/aim';
+import { BUILD_MATERIALS, BUILD_TYPES, construction, harvestResource, placeBuild, planBuild } from '../game/building';
+import { Pickaxe } from './Pickaxe';
+import { Cockpit } from './Cockpit';
+import { lobbyStage } from './LobbyStage';
 import React, { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
@@ -6,12 +12,12 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { simState, GameHudSnapshot, WEAPON_SPECS, freshAircraftDamage, COASTAL_CHARACTERS, type AircraftDamageStage, type CoastalCharacter, type CharacterCustomization } from '../game/store';
 import { getTerrainHeight, getTravelHeight, getWaveHeight, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome } from '../game/worldMath';
 import { fixedWingStep } from '../game/flight';
-import { crossesRaceGate, previewRaceDistance, raceRivals, sampleGrandPrix } from '../game/grandPrix';
+import { crossesRaceGate } from '../game/grandPrix';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
 import { REPAIR_BAY_COORDS } from './World';
 import { animateHumanoid, createHumanoidRig, strideDistance, type HumanoidRig } from '../game/humanoid';
-import { shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
+import { rearSlip, shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
 import { injureBot, injurePlayer } from '../game/combat';
 import { blastWorld, damageWorld, emitEnvironment, traceGround, traceWorld, type WorldHit } from '../game/worldDamage';
 
@@ -113,6 +119,7 @@ const DEFAULT_CUSTOMIZATION: CharacterCustomization = {
   backpackOn: true,
 };
 
+const AIM_CENTER = new THREE.Vector2();
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
@@ -386,7 +393,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const michelleRigRef = useRef<HumanoidRig | null>(null);
   const soldierRigRef = useRef<HumanoidRig | null>(null);
   const coastalRigs = useRef(new Map<CoastalCharacter, HumanoidRig>());
-  const coastalMaterials = useRef(new Map<CoastalCharacter, { fabrics: THREE.MeshStandardMaterial[]; trousers: THREE.MeshStandardMaterial[] }>());
+  type AvatarFinish = { fabrics: THREE.MeshStandardMaterial[]; trousers: THREE.MeshStandardMaterial[];
+    hair: THREE.MeshStandardMaterial[]; skin: THREE.MeshStandardMaterial[]; shoes: THREE.MeshStandardMaterial[];
+    hat: THREE.Mesh[]; pack: THREE.Mesh[]; accents: THREE.MeshStandardMaterial[] };
+  const coastalMaterials = useRef(new Map<CoastalCharacter, AvatarFinish>());
   const soldierWrapperRef = useRef<THREE.Group | null>(null);
   const rpmMatRefs = useRef<RpmMaterialRefs>({
     skinMats: [],
@@ -410,6 +420,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const impactMeshRef = useRef<THREE.Mesh>(null);
   const impactMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const mouseDownRef = useRef(false);
+  const cockpit = useRef<THREE.Group>(null);
+  const viewModel = useRef<THREE.Group>(null);
+  const viewWeapon = useRef<THREE.Group>(null);
+  const viewPick = useRef<THREE.Group>(null);
+  const worldPick = useRef<THREE.Group>(null);
+  const clonedWeapon = useRef<THREE.Object3D | null>(null);
+  const cameraBlend = useRef(0);
+  const adsBlend = useRef(0);
+  const reticleRay = useRef(new THREE.Raycaster());
   const mouseOrbitRef = useRef<{ x: number; y: number } | null>(null);
 
   // Switchable 5-Car Hero Fleet, 6-Plane Fleet & 6-Boat Fleet state & rigs
@@ -448,7 +467,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     phase: 0, landing: 0, airborne: false, jumpHeld: false, speed: 0, directionX: 0, directionZ: 1,
     swim: false, splash: 0, stepTime: 0, coyote: 0, jumpBuffer: 0, airtime: 0,
   });
-  const suspension = useRef({ support: NaN, offset: 0, velocity: 0, yawRate: 0, pitch: 0, roll: 0,
+  const rearTracks = useRef([new THREE.Vector3(), new THREE.Vector3()]);
+  const suspension = useRef({ lateral: 0, driftHeld: false, driftCharge: 0, tireEffectAt: 0,
+    support: NaN, offset: 0, velocity: 0, yawRate: 0, pitch: 0, roll: 0,
     grounded: true, wet: false, splash: 0, slip: 0, boost: 0, x: NaN, z: NaN });
   const footStart = useRef(new THREE.Vector3());
   const camTarget = useRef(new THREE.Vector3());
@@ -485,6 +506,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           material.metalness = cust.topMetalness;
         }
         for (const material of finishes.trousers) material.color.set(cust.bottomColor);
+        for (const material of finishes.skin) material.color.set(cust.skinColor);
+        for (const material of finishes.shoes) material.color.set(cust.footwearColor);
+        for (const material of finishes.hair) material.color.set(cust.hairColor ?? '#372a23');
+        for (const material of finishes.accents) material.color.set(cust.headwearColor);
+        for (const mesh of finishes.hat) mesh.visible = cust.headwearOn;
+        for (const mesh of finishes.pack) mesh.visible = cust.backpackOn;
       }
     }
 
@@ -543,93 +570,138 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     });
   };
 
+  const aimAt = (limit: number) => {
+    const from = aiming.origin;
+    const direction = aiming.direction;
+    const structure = traceWorld(from, direction, limit);
+    const ground = traceGround(from, direction, limit);
+    return ground && (!structure || ground.distance < structure.distance) ? ground : structure;
+  };
+
+  const buildPoint = () => {
+    const foot = simState.playerPos;
+    const target = aimAt(18)?.point ?? aiming.origin.clone().addScaledVector(aiming.direction, 10);
+    const distance = Math.hypot(target.x - foot.x, target.z - foot.z);
+    if (distance > 12) {
+      target.x = foot.x + (target.x - foot.x) * 11.9 / distance;
+      target.z = foot.z + (target.z - foot.z) * 11.9 / distance;
+      target.y = getTravelHeight(target.x, target.z, foot.y + 1.2);
+    }
+    return target;
+  };
+
   const fireActiveWeapon = () => {
-    if (simState.shotCooldown > 0 || simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen ||
-        simState.gameMode === 'BATTLE_ROYALE' && simState.brResult !== null ||
-        simState.mode === 'FOOT' && footMotion.current.swim) return;
+    const foot = simState.mode === 'FOOT';
+    if (!aiming.ready || simState.shotCooldown > 0 || simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen ||
+        foot && (footMotion.current.swim || simState.parachuting || simState.gliding) ||
+        simState.gameMode === 'BATTLE_ROYALE' && simState.brResult !== null) return;
+    if (foot && construction.active) {
+      if (placeBuild(buildPoint(), simState.playerPos)) {
+        const point = construction.preview?.origin ?? simState.playerPos;
+        emitEnvironment('dust', point, 0.5);
+        soundEngine.playConstruction(construction.material);
+      }
+      simState.shotCooldown = 0.26;
+      return;
+    }
+    if (foot && construction.pickaxe) {
+      simState.shotCooldown = 0.53;
+      aiming.pickSwing = 0.5;
+      soundEngine.playSwing();
+      return;
+    }
     const spec = WEAPON_SPECS[simState.activeWeaponIdx] ?? WEAPON_SPECS[0];
     simState.shotCooldown = spec.fireRate;
-    simState.firingTimer = 0.24;
-    simState.ammo -= 1;
-    if (simState.ammo <= 0) {
-      simState.ammo = spec.clipSize;
-    }
+    simState.firingTimer = 0.13;
+    simState.ammo = simState.ammo > 1 ? simState.ammo - 1 : spec.clipSize;
     soundEngine.playGunshot(spec.id);
-
-    const activePos =
-      simState.mode === 'CAR'
-        ? simState.carPos
-        : simState.mode === 'BOAT'
-        ? simState.boatPos
-        : simState.mode === 'PLANE'
-        ? simState.planePos
-        : simState.playerPos;
-    const activeYaw =
-      simState.mode === 'CAR'
-        ? simState.carYaw
-        : simState.mode === 'BOAT'
-        ? simState.boatYaw
-        : simState.mode === 'PLANE'
-        ? simState.planeYaw
-        : simState.playerYaw;
-
-    const azimuth = activeYaw + simState.orbitYaw;
-    const elevation = THREE.MathUtils.clamp(-simState.orbitPitch + (simState.mode === 'PLANE' ? simState.planePitch : 0), -0.72, 0.65);
-    const fwdX = Math.sin(azimuth);
-    const fwdZ = Math.cos(azimuth);
-
-    const from = new THREE.Vector3(
-      activePos.x + fwdX * 1.2 + (simState.mode === 'FOOT' ? Math.cos(activeYaw) * 0.28 : 0),
-      activePos.y + 1.35,
-      activePos.z + fwdZ * 1.2 - (simState.mode === 'FOOT' ? Math.sin(activeYaw) * 0.28 : 0)
-    );
-
-    const direction = new THREE.Vector3(fwdX * Math.cos(elevation), Math.sin(elevation), fwdZ * Math.cos(elevation));
-
-    // Find best alive BotTarget in simState.botTargets within spec.range and generous forward aim cone
-    let bestBot = null as (typeof simState.botTargets)[0] | null;
-    let bestScore = -Infinity;
-
-    for (const bot of simState.botTargets) {
-      if (!simState.brActive || !bot.alive) continue;
-      const dx = bot.x - from.x;
-      const dz = bot.z - from.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > spec.range || dist < 0.05) continue;
-      const delta = new THREE.Vector3(dx, bot.y + 1.1 - from.y, dz);
-      const distance = delta.length();
-      const dot = delta.normalize().dot(direction);
-      const inCone = dot > 0.96 || (distance < 14 && dot > 0.87);
-      if (inCone) {
-        const score = dot * 120 - dist * 0.45;
-        if (score > bestScore) {
-          bestScore = score;
-          bestBot = bot;
+    const muzzle = (foot ? simState.playerPos : simState.mode === 'CAR' ? simState.carPos :
+      simState.mode === 'BOAT' ? simState.boatPos : simState.planePos).clone().addScaledVector(UP, foot ? 1.32 : 1.4);
+    const origin = aiming.origin;
+    const direction = aiming.direction.clone();
+    let bestBot: (typeof simState.botTargets)[number] | undefined;
+    let civilian: (typeof civilianTargets)[number] | undefined;
+    const assist = simState.controlSettings.aimAssist;
+    if (simState.brActive && assist !== 'Off') {
+      let score = assist === 'Light Assist' ? 0.997 : 0.977;
+      for (const bot of simState.botTargets) {
+        if (!bot.alive || bot.fall) continue;
+        const toward = new THREE.Vector3(bot.x, bot.y + 1.22, bot.z).sub(origin);
+        const range = toward.length();
+        if (range > spec.range || range < 0.2) continue;
+        const dot = toward.divideScalar(range).dot(aiming.direction);
+        if (dot > score && !traceWorld(origin, toward, range)) {
+          score = dot;
+          direction.copy(toward);
         }
       }
     }
 
-    const botPoint = bestBot ? new THREE.Vector3(bestBot.x, bestBot.y + 1.1, bestBot.z) : null;
-    if (botPoint) direction.copy(botPoint).sub(from).normalize();
-    const rayRange = botPoint ? from.distanceTo(botPoint) : spec.range;
-    const sectionHit = traceWorld(from, direction, rayRange);
-    const groundHit = traceGround(from, direction, rayRange);
-    const worldHit = groundHit && (!sectionHit || groundHit.distance < sectionHit.distance) ? groundHit : sectionHit;
-    let to: THREE.Vector3;
-    if (worldHit) {
-      to = worldHit.point;
-      damageWorld(worldHit, spec.damage);
-      if (spec.id === 'RPG') blastWorld(to, 6.2, spec.damage * 0.8, worldHit.section);
-    } else if (bestBot && botPoint) {
-      to = botPoint;
-      const eliminated = injureBot(bestBot, spec.damage, direction.x * 3.9, direction.z * 3.9);
-      soundEngine.playHitMarker(eliminated);
-    } else {
-      to = from.clone().addScaledVector(direction, Math.min(160, spec.range));
+    const structure = traceWorld(origin, direction, spec.range);
+    const ground = traceGround(origin, direction, spec.range);
+    let hit: WorldHit | undefined = ground && (!structure || ground.distance < structure.distance) ? ground : structure;
+    let range = hit?.distance ?? spec.range;
+    if (simState.brActive) for (const bot of simState.botTargets) {
+      if (!bot.alive || bot.fall) continue;
+      const distance = targetDistance(origin, direction, bot.x, bot.y, bot.z);
+      if (distance < range) {
+        range = distance;
+        bestBot = bot;
+        hit = undefined;
+      }
     }
+    for (const actor of civilianTargets) {
+      const distance = targetDistance(origin, direction, actor.x, actor.y, actor.z);
+      if (distance < range) {
+        range = distance;
+        civilian = actor;
+        bestBot = undefined;
+        hit = undefined;
+      }
+    }
+    let to = origin.clone().addScaledVector(direction, range);
+    const muzzleDirection = to.clone().sub(muzzle);
+    const length = muzzleDirection.length();
+    if (length > 0.3) {
+      const obstruction = traceWorld(muzzle, muzzleDirection.divideScalar(length), Math.max(0, length - 0.14));
+      if (obstruction?.section && obstruction.section !== hit?.section && obstruction.distance < length - 0.15) {
+        hit = obstruction;
+        bestBot = undefined;
+        civilian = undefined;
+        to = obstruction.point;
+      }
+    }
+    if (hit) {
+      damageWorld(hit, spec.damage);
+      if (spec.id === 'RPG') blastWorld(to, 6.2, spec.damage * 0.8, hit.section);
+    } else if (bestBot) {
+      const eliminated = injureBot(bestBot, spec.damage, direction.x * 3.9, direction.z * 3.9);
+      aiming.feedback = 0.24;
+      soundEngine.playHitMarker(eliminated);
+    } else if (civilian) {
+      civilian.impact(spec.damage, direction, to);
+      aiming.feedback = 0.19;
+      soundEngine.playHitMarker(false);
+    }
+    aiming.impact = Boolean(bestBot || civilian || hit);
+    simState.lastShotFrom = muzzle.toArray();
+    simState.lastShotTo = to.toArray();
+  };
 
-    simState.lastShotFrom = [from.x, from.y, from.z];
-    simState.lastShotTo = [to.x, to.y, to.z];
+  const connectPickaxe = () => {
+    if (!construction.pickaxe || construction.active || simState.mode !== 'FOOT' ||
+        simState.startMenuOpen || simState.controlsOpen || footMotion.current.swim) return;
+    const hit = aimAt(10);
+    if (!hit?.section || hit.point.distanceTo(simState.playerPos.clone().addScaledVector(UP, 1.2)) > 3.7) return;
+    const section = hit.section;
+    if (section.permanent || section.hp <= 0) return;
+    const resource = harvestResource(section.material);
+    const result = damageWorld(hit, 32);
+    if (!section.owner.startsWith('Build ')) construction.resources[resource] += result?.destroyed ? 12 : 5;
+    aiming.feedback = 0.15;
+    aiming.harvestPause = 0.065;
+    simState.cameraShake = Math.max(simState.cameraShake, 0.12);
+    soundEngine.playConstruction(resource);
   };
 
   const repairVehicle = () => {
@@ -790,6 +862,17 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         selectWeaponSlot(simState.activeWeaponIdx + 1);
       } else if (e.code === 'KeyH' && !e.repeat) {
         repairVehicle();
+      } else if (e.code === 'KeyT' && !e.repeat && simState.mode === 'FOOT') {
+        construction.pickaxe = !construction.pickaxe;
+        construction.active = false;
+      } else if (e.code === 'KeyG' && !e.repeat && simState.mode === 'FOOT') {
+        construction.active = !construction.active;
+      } else if (construction.active && simState.mode === 'FOOT' && !e.repeat) {
+        const piece = ['Digit5', 'Digit6', 'Digit7', 'Digit8'].indexOf(e.code);
+        if (piece >= 0) construction.type = BUILD_TYPES[piece];
+        else if (e.code === 'KeyR') construction.turn = (construction.turn + 1) % 4;
+        else if (e.code === 'KeyY') construction.material = BUILD_MATERIALS[(BUILD_MATERIALS.indexOf(construction.material) + 1) % 3];
+        else if (e.code === 'KeyF') fireActiveWeapon();
       } else if (e.code === 'KeyF') {
         fireActiveWeapon();
       }
@@ -816,23 +899,34 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (s.startMenuOpen || s.customizerOpen || s.controlsOpen || e.pointerType !== 'mouse' ||
           (e.target as HTMLElement | null)?.tagName !== 'CANVAS') return;
       if (e.button === 0) {
+        const canvas = e.target as HTMLCanvasElement;
+        if (simState.cameraView === 1 && !document.pointerLockElement && canvas.requestPointerLock) {
+          try { void Promise.resolve(canvas.requestPointerLock()).catch(() => {}); } catch { /* drag remains available */ }
+        }
         mouseDownRef.current = true;
         fireActiveWeapon();
       } else if (e.button === 2) {
+        aiming.ads = true;
         mouseOrbitRef.current = { x: e.clientX, y: e.clientY };
       }
     };
     const onPointerMove = (e: PointerEvent) => {
       const drag = mouseOrbitRef.current;
-      if (!drag) return;
-      simState.orbitYaw -= (e.clientX - drag.x) * 0.006;
-      simState.orbitPitch = THREE.MathUtils.clamp(simState.orbitPitch - (e.clientY - drag.y) * 0.006, -0.92, 0.96);
-      drag.x = e.clientX;
-      drag.y = e.clientY;
+      if (s.startMenuOpen || s.customizerOpen || s.controlsOpen || e.pointerType !== 'mouse') return;
+      if (!drag && (simState.cameraView !== 1 || (!document.pointerLockElement && (e.target as HTMLElement | null)?.tagName !== 'CANVAS'))) return;
+      const sensitivity = 0.0042 * simState.controlSettings.mouseSensitivity * (aiming.ads ? 0.49 : 1);
+      const dx = drag ? e.clientX - drag.x : e.movementX;
+      const dy = drag ? e.clientY - drag.y : e.movementY;
+      simState.orbitYaw -= dx * sensitivity;
+      simState.orbitPitch = THREE.MathUtils.clamp(simState.orbitPitch + dy * sensitivity, -1.1, 1.02);
+      if (drag) { drag.x = e.clientX; drag.y = e.clientY; }
     };
     const onPointerUp = (e?: PointerEvent) => {
       if (!e || e.button === 0 || e.type === 'pointercancel') mouseDownRef.current = false;
-      if (!e || e.button === 2 || e.type === 'pointercancel') mouseOrbitRef.current = null;
+      if (!e || e.button === 2 || e.type === 'pointercancel') {
+        aiming.ads = false;
+        mouseOrbitRef.current = null;
+      }
     };
     const onBlur = () => onPointerUp();
     const onContextMenu = (e: MouseEvent) => {
@@ -1153,7 +1247,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       gltfLoader.load(spec.url, (gltf) => {
         if (disposed || !soldierMountRef.current) return;
         const model = gltf.scene;
-        const materials = { fabrics: [] as THREE.MeshStandardMaterial[], trousers: [] as THREE.MeshStandardMaterial[] };
+        const materials: AvatarFinish = { fabrics: [], trousers: [], hair: [], skin: [], shoes: [], hat: [], pack: [], accents: [] };
         const collected = new Set<THREE.MeshStandardMaterial>();
         model.traverse((object) => {
           const mesh = object as THREE.Mesh;
@@ -1161,12 +1255,18 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           mesh.castShadow = true;
           mesh.receiveShadow = true;
           mesh.frustumCulled = false;
+          if (/hat|(?:shell|trim|accent|hardware|visor)[_ ]?Head$/i.test(mesh.name)) materials.hat.push(mesh);
+          if (/attach-back-mesh|shellSpine2|hardwareSpine2/i.test(mesh.name)) materials.pack.push(mesh);
           if (Array.isArray(mesh.material) || !(mesh.material as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
           const finish = mesh.material as THREE.MeshStandardMaterial;
           if (collected.has(finish)) return;
           collected.add(finish);
-          if (finish.name === 'Outfit Fabric') materials.fabrics.push(finish);
-          if (finish.name === 'Utility Trousers') materials.trousers.push(finish);
+          if (finish.name === 'Outfit Fabric' || finish.name === 'Shirt') materials.fabrics.push(finish);
+          if (finish.name === 'Utility Trousers' || finish.name === 'Pants') materials.trousers.push(finish);
+          if (/^Hair(?:Base)?$/.test(finish.name)) materials.hair.push(finish);
+          if (finish.name === 'Skin') materials.skin.push(finish);
+          if (finish.name === 'Shoes') materials.shoes.push(finish);
+          if (finish.name === 'Reflective Safety Trim') materials.accents.push(finish);
         });
         const bounds = new THREE.Box3().setFromObject(model);
         const height = bounds.max.y - bounds.min.y;
@@ -1558,6 +1658,13 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     simState.tideOffset = THREE.MathUtils.damp(simState.tideOffset, simState.roulette === 'BLACK' ? -0.35 : 0, 0.76, dt);
 
     // Battle Royale timers, Damage/Shake decays & Storm ring shrink
+    aiming.feedback = Math.max(0, aiming.feedback - dt);
+    aiming.harvestPause = Math.max(0, aiming.harvestPause - dt);
+    if (aiming.pickSwing > 0) {
+      const before = aiming.pickSwing;
+      if (aiming.harvestPause <= 0) aiming.pickSwing = Math.max(0, before - dt);
+      if (before > 0.28 && aiming.pickSwing <= 0.28) connectPickaxe();
+    }
     if (simState.shotCooldown > 0) {
       simState.shotCooldown = Math.max(0, simState.shotCooldown - dt);
     }
@@ -1622,14 +1729,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     let activePos = simState.playerPos;
     let activeYaw = simState.playerYaw;
     let isDrifting = false;
+    let tirePressure = 0;
     simState.carSweep.speed = 0;
 
     // 1. ON-FOOT + BATTLE ROYALE PARACHUTE SKY-DROP + FORTNITE GLIDER + CUSTOMIZER TURNTABLE
-    if (simState.mode === 'FOOT') {
+    if (simState.mode === 'FOOT' && !isStartMenuOpen) {
       const player = simState.playerPos;
       previous.copy(player);
       footStart.current.copy(player);
-      const aim = !isCustomizerOpen && (mouseOrbitRef.current !== null || simState.firingTimer > 0 ||
+      const aim = !isCustomizerOpen && (simState.cameraView === 1 || aiming.ads || construction.pickaxe || construction.active || simState.firingTimer > 0 ||
         simState.gameMode === 'BATTLE_ROYALE' && !simState.gliding && !simState.parachuting);
       const motion = footMotion.current;
       const velocity = simState.playerVel;
@@ -1826,7 +1934,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         airborne: isCustomizerOpen || motion.swim ? undefined : simState.parachuting ? 'parachute' as const :
           simState.gliding ? 'glide' as const : motion.airborne ? 'jump' as const : undefined,
         fallSpeed: simState.playerVel.y, landing: motion.landing, aim: aim && groundedNow ? 1 : 0,
-        recoil: Math.max(0, (simState.firingTimer - 0.15) / 0.09),
+        recoil: simState.firingTimer / 0.13,
+        harvest: aiming.pickSwing > 0 ? (1 - aiming.pickSwing / 0.5) : undefined,
         lookPitch: simState.orbitPitch, lookYaw: THREE.MathUtils.clamp(simState.orbitYaw, -0.8, 0.8),
         ground: !isCustomizerOpen && groundedNow ? {
           x: motion.directionX, z: motion.directionZ,
@@ -1853,7 +1962,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const warped = Math.hypot(car.x - ride.x, car.z - ride.z) > 12 || !Number.isFinite(ride.support);
       if (gridLocked || warped) {
         Object.assign(ride, { support: supportBefore, offset: 0, velocity: 0, yawRate: 0,
-          grounded: true, wet: false, slip: 0, boost: 0 });
+          grounded: true, wet: false, slip: 0, boost: 0, lateral: 0, driftHeld: false, driftCharge: 0 });
         simState.carVel.y = 0;
       }
       const oldSpeed = simState.carSpeed;
@@ -1861,18 +1970,29 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const grip = THREE.MathUtils.lerp(1, 0.22, THREE.MathUtils.smoothstep(depth, 0.13, 1.42));
       const integrity = 0.49 + simState.carDamage.hp * 0.0051;
       const throttleInput = gridLocked ? 0 : Math.max(fwd, touchThrottle) - back;
-      const drifting = !gridLocked && !simState.vehicleWrecked && ride.grounded && grip > 0.78 && space &&
-        Math.abs(left - right) > 0.1 && Math.abs(oldSpeed) > 9;
-      isDrifting = drifting;
+      const inputSteer = left - right;
+      const launchDrift = !gridLocked && !isMenuOpen && !simState.vehicleWrecked && ride.grounded &&
+        grip > 0.78 && oldSpeed > 11 && (space && (Math.abs(inputSteer) > 0.12 || Math.abs(ride.slip) > 0.12) ||
+        oldSpeed > 22 && Math.abs(inputSteer) > 0.91 && (brake || Math.abs(ride.slip) > 0.11));
       const steerScale = Math.min(1, Math.abs(oldSpeed) / 6.9) *
         THREE.MathUtils.lerp(1, steerAssist ? 0.39 : 0.54, Math.min(1, Math.abs(oldSpeed) / 49));
-      const steer = gridLocked ? 0 : (left - right) * 2.55 * steerSens * steerScale *
-        (drifting ? 1.48 : 1) * (oldSpeed >= 0 ? 1 : -1) * grip * (ride.grounded ? 1 : 0.21);
-      ride.yawRate = THREE.MathUtils.damp(ride.yawRate, steer, drifting ? 8.5 : 13, dt);
+      const slipSteer = THREE.MathUtils.clamp(ride.slip * 0.69, -0.28, 0.28);
+      const steer = gridLocked ? 0 : (inputSteer * (launchDrift ? 1.35 : 1) + slipSteer) *
+        2.55 * steerSens * steerScale * (oldSpeed >= 0 ? 1 : -1) * grip * (ride.grounded ? 1 : 0.21);
+      ride.yawRate = THREE.MathUtils.damp(ride.yawRate, steer, launchDrift ? 8.3 : 13, dt);
       simState.carYaw += ride.yawRate * dt;
-      ride.slip = THREE.MathUtils.damp(ride.slip, drifting ? (right - left) * 0.36 : -ride.yawRate * 0.045, drifting ? 8 : 12, dt);
-
-      if (drifting) simState.driftScore = Math.min(100, simState.driftScore + Math.abs(oldSpeed) * dt * 1.3);
+      const slip = rearSlip(oldSpeed, ride.lateral, ride.yawRate, launchDrift, grip, ride.grounded, dt);
+      ride.lateral = slip.lateral;
+      ride.slip = slip.angle;
+      const drifting = ride.grounded && oldSpeed > 10 && (launchDrift || Math.abs(ride.slip) > 0.155);
+      isDrifting = drifting;
+      tirePressure = drifting ? THREE.MathUtils.clamp((Math.abs(ride.slip) - 0.065) * 3.7, 0, 1) : 0;
+      if (launchDrift) ride.driftCharge = Math.min(100, ride.driftCharge + tirePressure * oldSpeed * dt * 1.6);
+      if (ride.driftHeld && !launchDrift) {
+        simState.driftScore = Math.min(100, simState.driftScore + ride.driftCharge);
+        ride.driftCharge = 0;
+      }
+      ride.driftHeld = launchDrift;
       if (boost && !drifting && simState.driftScore >= 26 && ride.boost <= 0) {
         ride.boost = 0.45 + simState.driftScore * 0.012;
         simState.driftScore = 0;
@@ -1888,10 +2008,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       simState.carSpeed = gridLocked ? 0 : THREE.MathUtils.clamp(speed, -13,
         simState.vehicleWrecked ? 6.8 : (ride.boost > 0 ? 69 : boost ? 56 : 47) * (0.68 + integrity * 0.32));
       const impactSpeed = simState.carSpeed;
-      const yaw = simState.carYaw + ride.slip;
+      const yaw = simState.carYaw;
       const flow = shoreReturn(car.x, car.z, yaw, 590, 870);
-      car.x += (Math.sin(yaw) * impactSpeed + flow.x * (1 - grip) * 6.5) * dt;
-      car.z += (Math.cos(yaw) * impactSpeed + flow.z * (1 - grip) * 6.5) * dt;
+      car.x += (Math.sin(yaw) * impactSpeed + Math.cos(yaw) * ride.lateral + flow.x * (1 - grip) * 6.5) * dt;
+      car.z += (Math.cos(yaw) * impactSpeed - Math.sin(yaw) * ride.lateral + flow.z * (1 - grip) * 6.5) * dt;
       applyWorldCollisions(car, previous, 'CAR');
 
       const ground = walkingSurface(car, 0.49) + 0.085;
@@ -1932,6 +2052,24 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       ride.pitch = THREE.MathUtils.damp(ride.pitch, THREE.MathUtils.clamp(gradePitch + accelerationPitch, -0.48, 0.35), 10, dt);
       ride.roll = THREE.MathUtils.damp(ride.roll, ride.yawRate * (step.grounded ? 0.095 : 0.16) *
         Math.min(1, Math.abs(speed) / 14), 10.5, dt);
+
+      if (!isMenuOpen && ride.grounded && !wet && tirePressure > 0.22) {
+        const smoke = t >= ride.tireEffectAt;
+        if (smoke) ride.tireEffectAt = t + 0.051;
+        for (const [index, side] of [-1, 1].entries()) {
+          const x = car.x - Math.sin(yaw) * 1.42 + Math.cos(yaw) * side * 0.88;
+          const z = car.z - Math.cos(yaw) * 1.42 - Math.sin(yaw) * side * 0.88;
+          const patch = new THREE.Vector3(x, getTravelHeight(x, z, car.y + 0.3), z);
+          const previousMark = rearTracks.current[index];
+          if (previousMark.y > 0.1) queueSkid(previousMark, patch);
+          previousMark.copy(patch);
+          if (smoke) {
+            patch.y += 0.18;
+            emitEnvironment('tire', patch, 0.46 + tirePressure, -Math.sin(yaw) * 10, -Math.cos(yaw) * 10);
+            if (tirePressure > 0.82 && brake && index === 1) emitEnvironment('impact', patch, 0.18);
+          }
+        }
+      } else rearTracks.current.forEach((track) => { track.y = -20; });
 
       const sweep = simState.carSweep;
       sweep.start.copy(previous);
@@ -2164,9 +2302,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     // Sync Meshes & Vehicle Articulation
     if (playerRef.current) {
-      playerRef.current.visible = simState.mode === 'FOOT';
-      playerRef.current.position.copy(simState.playerPos);
-      playerRef.current.rotation.y = simState.playerYaw;
+      playerRef.current.visible = isStartMenuOpen || simState.mode === 'FOOT' && simState.cameraView !== 1;
+      if (!isStartMenuOpen) {
+        playerRef.current.position.copy(simState.playerPos);
+        playerRef.current.rotation.y = simState.playerYaw;
+      }
     }
     if (gliderRef.current) {
       gliderRef.current.visible = simState.mode === 'FOOT' && simState.gliding && !simState.parachuting;
@@ -2178,7 +2318,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     // Sync Active 3D Weapon Visibility & Recoil Kickback (hide weapon in Character Studio closeup so outfit is clear)
     const recoilOffset = -Math.max(0, simState.firingTimer - 0.16) * 1.1;
     if (weaponMountRef.current) {
-      weaponMountRef.current.visible = !isCustomizerOpen && !footMotion.current.swim && !simState.gliding && !simState.parachuting && (mouseOrbitRef.current !== null || simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
+      weaponMountRef.current.visible = !isStartMenuOpen && !construction.pickaxe && !construction.active && !isCustomizerOpen && !footMotion.current.swim && !simState.gliding && !simState.parachuting && (mouseOrbitRef.current !== null || simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
       weaponMountRef.current.position.set(-0.13, 1.23, 0.42 + recoilOffset);
       weaponMountRef.current.rotation.x = simState.orbitPitch * 0.45;
     }
@@ -2194,12 +2334,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     });
 
     // Ballistic Laser/Tracer Bolt, Muzzle Flash Star & Impact Blast Sphere
-    const isFiringNow = simState.firingTimer > 0;
+    const isFiringNow = simState.firingTimer > 0 && !isStartMenuOpen;
     const activeWeaponSpec = WEAPON_SPECS[simState.activeWeaponIdx] ?? WEAPON_SPECS[0];
     if (tracerMeshRef.current && muzzleFlashRef.current && impactMeshRef.current) {
       tracerMeshRef.current.visible = isFiringNow;
       muzzleFlashRef.current.visible = isFiringNow;
-      impactMeshRef.current.visible = isFiringNow;
+      impactMeshRef.current.visible = isFiringNow && aiming.impact;
 
       if (isFiringNow) {
         const fromV = new THREE.Vector3(...simState.lastShotFrom);
@@ -2215,11 +2355,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
         muzzleFlashRef.current.position.copy(fromV);
         muzzleFlashRef.current.rotation.z = t * 42;
-        const flashScale = 0.8 + (simState.firingTimer / 0.11) * 0.7;
+        const flashScale = 0.8 + (simState.firingTimer / 0.13) * 0.7;
         muzzleFlashRef.current.scale.setScalar(flashScale);
 
         impactMeshRef.current.position.copy(toV);
-        impactMeshRef.current.scale.setScalar(0.65 + (1 - simState.firingTimer / 0.11) * 1.35);
+        impactMeshRef.current.scale.setScalar(0.65 + (1 - simState.firingTimer / 0.13) * 1.35);
 
         if (tracerMatRef.current) {
           tracerMatRef.current.color.set(activeWeaponSpec.color);
@@ -2236,15 +2376,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
 
     if (carRef.current) {
-      carRef.current.visible = !isCustomizerOpen;
+      carRef.current.visible = !isCustomizerOpen && (simState.mode !== 'CAR' || simState.cameraView !== 1 || isStartMenuOpen);
       carRef.current.position.copy(simState.carPos);
       const ride = suspension.current;
       carRef.current.position.y += ride.offset;
-      carRef.current.rotation.set(ride.pitch, simState.carYaw - ride.slip * 0.52, ride.roll, 'YXZ');
+      carRef.current.rotation.set(ride.pitch, simState.carYaw, ride.roll, 'YXZ');
     }
 
     // Active GLB Hero Car Wheel Spin, Front Wheel Steering & Steering Wheel Articulation
-    const targetWheelSteer = simState.mode === 'CAR' ? (left - right) * 0.38 : 0;
+    const targetWheelSteer = simState.mode === 'CAR' ? (left - right) * 0.38 + (isDrifting ? suspension.current.slip * 0.57 : 0) : 0;
     const activeRig = carRigsRef.current[activeCarIdxRef.current];
     if (activeRig) {
       for (const sNode of activeRig.steerNodes) {
@@ -2455,39 +2595,36 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     }
 
-    soundEngine.updateEngine(simState.mode, speedKmh);
+    soundEngine.updateTires(isMenuOpen ? 0 : tirePressure, Math.abs(simState.carSpeed));
+    soundEngine.updateEngine(isStartMenuOpen ? 'FOOT' : simState.mode, speedKmh);
 
     // Camera Choreography: Start Menu Panoramic Orbit, Character Studio Camera, OR Snappy Chase Camera
     if (isStartMenuOpen) {
-      const raceCar = new THREE.Vector3();
-      const yaw = sampleGrandPrix(previewRaceDistance(t, 0), raceCar, raceRivals[0].lane);
-      const shot = Math.floor(t / 8) % 3;
-      const side = shot === 1 ? -1 : 1;
-      const back = shot === 2 ? 8 : 12;
-      const desiredOrbitCam = raceCar.clone().add(new THREE.Vector3(
-        -Math.sin(yaw) * back + Math.cos(yaw) * side * (shot === 2 ? 6 : 10),
-        shot === 2 ? 17 : 7,
-        -Math.cos(yaw) * back - Math.sin(yaw) * side * (shot === 2 ? 6 : 10),
-      ));
-      const wideScreen = state.size.width >= 650;
-      const eyeDir = raceCar.clone().sub(desiredOrbitCam).normalize();
-      const focus = raceCar.clone().add(new THREE.Vector3(eyeDir.z, 0, -eyeDir.x).multiplyScalar(wideScreen ? 3.8 : 0));
-      focus.y += 1.4;
-      constrainCamera(raceCar.clone().addScaledVector(UP, 1.38), desiredOrbitCam, new THREE.Vector3());
-      if (state.camera.position.distanceToSquared(desiredOrbitCam) > 680) {
-        state.camera.position.copy(desiredOrbitCam);
-        camTarget.current.copy(focus);
-      } else {
-        state.camera.position.lerp(desiredOrbitCam, 1 - Math.exp(-8.5 * dt));
-        camTarget.current.lerp(focus, 1 - Math.exp(-10.5 * dt));
-      }
-      state.camera.lookAt(camTarget.current);
-
+      const stage = new THREE.Vector3(lobbyStage.x, lobbyStage.y + 0.067, lobbyStage.z);
+      const heading = lobbyStage.yaw;
+      const forward = new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading));
+      const side = new THREE.Vector3(Math.cos(heading), 0, -Math.sin(heading));
+      const wide = state.size.width >= 720;
+      const eye = stage.clone().addScaledVector(forward, wide ? 4.95 : 5.6).addScaledVector(side, 0.34);
+      eye.y += wide ? 1.66 : 1.92;
+      const focus = stage.clone().addScaledVector(side, wide ? -1.36 : 0);
+      focus.y += wide ? 1.04 : 0.42;
+      if (state.camera.position.distanceToSquared(eye) > 100) state.camera.position.copy(eye);
+      else state.camera.position.lerp(eye, 1 - Math.exp(-7 * dt));
+      state.camera.lookAt(focus);
       if (state.camera instanceof THREE.PerspectiveCamera) {
-        if (Math.abs(state.camera.fov - 56) > 0.05) {
-          state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, 56, Math.min(1, 5 * dt));
-          state.camera.updateProjectionMatrix();
-        }
+        state.camera.near = 0.12;
+        state.camera.fov = THREE.MathUtils.damp(state.camera.fov, wide ? 43 : 52, 9, dt);
+        state.camera.updateProjectionMatrix();
+      }
+      if (playerRef.current) {
+        playerRef.current.position.copy(stage);
+        const yaw = heading + simState.lobbyYaw;
+        playerRef.current.rotation.y += Math.atan2(Math.sin(yaw - playerRef.current.rotation.y),
+          Math.cos(yaw - playerRef.current.rotation.y)) * (1 - Math.exp(-16 * dt));
+        const rig = [rpmRigRef.current, michelleRigRef.current, soldierRigRef.current, ...coastalRigs.current.values()]
+          .find((candidate) => candidate?.wrapper.visible);
+        if (rig) animateHumanoid(rig, { dt, time: t, phase: t * 0.5, speed: 0 });
       }
     } else if (isCustomizerOpen) {
       const studioDist = 2.55;
@@ -2550,7 +2687,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       orbit.pitch = warped ? simState.orbitPitch : THREE.MathUtils.damp(orbit.pitch, simState.orbitPitch, 19, dt);
       const yaw = activeYaw + orbit.yaw - (simState.mode === 'PLANE' ? simState.planeRoll * 0.27 : 0);
       const inFlight = simState.mode === 'PLANE';
-      const range = (camDist + (inFlight ? simState.planeSpeed * 0.077 : 0)) * [1, 0.62, 1.53][simState.cameraView];
+      const first = simState.cameraView === 1;
+      const aim = aiming.ads && !construction.active && !construction.pickaxe;
+      cameraBlend.current = THREE.MathUtils.damp(cameraBlend.current, first ? 1 : 0, 15, dt);
+      adsBlend.current = THREE.MathUtils.damp(adsBlend.current, aim ? 1 : 0, 14, dt);
+      state.camera.near = first ? 0.035 : 0.22;
+      const range = (camDist + (inFlight ? simState.planeSpeed * 0.077 : 0)) * (1 - adsBlend.current * 0.31);
       const elevation = THREE.MathUtils.clamp(Math.atan2(camHeight, camDist) + orbit.pitch + (simState.cameraView === 2 ? 0.16 : 0), -0.48, 1.32);
       const cameraRay = new THREE.Vector3();
       const projectEye = (heading: number, tilt = elevation) => {
@@ -2593,15 +2735,95 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         Math.min(1, 15 * camSmooth * dt)
       );
       state.camera.lookAt(camTarget.current);
-      if (inFlight) state.camera.rotateZ(simState.planeRoll * 0.135);
+      const forward = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+      const right = new THREE.Vector3(forward.z, 0, -forward.x);
+      const close = cameraBlend.current;
+      const shoulder = adsBlend.current * (1 - close) * (simState.mode === 'FOOT' ? 0.57 : 0);
+      if (shoulder > 0.01) {
+        const shifted = state.camera.position.clone().addScaledVector(right, shoulder);
+        constrainCamera(subject, shifted, cameraRay);
+        state.camera.position.copy(shifted);
+        state.camera.lookAt(camTarget.current.clone().addScaledVector(right, shoulder));
+      }
+      if (close > 0.005) {
+        const travelForward = new THREE.Vector3(Math.sin(activeYaw), 0, Math.cos(activeYaw));
+        const eyeHeight = simState.mode === 'FOOT' ? (footMotion.current.swim ? 1.44 : 1.64) :
+          inFlight ? (simState.activePlaneIdx === 1 ? 1.78 : 1.69) : isCruiseShip ? 7 : simState.mode === 'BOAT' ? 1.75 : 1.21;
+        const cameraLead = simState.mode === 'FOOT' ? 0.07 : inFlight ? 1.15 : simState.mode === 'BOAT' ? 0.68 : 0.62;
+        const verticalBob = simState.mode === 'FOOT' ? Math.sin(footMotion.current.phase * 2) * Math.min(0.033, speedKmh * 0.002) : 0;
+        const pilot = activePos.clone().addScaledVector(travelForward, cameraLead);
+        pilot.y += eyeHeight + verticalBob;
+        const pitch = THREE.MathUtils.clamp(-orbit.pitch + (inFlight ? simState.planePitch : 0), -1.22, 1.22);
+        const look = forward.clone().multiplyScalar(Math.cos(pitch)).setY(Math.sin(pitch));
+        const farLook = pilot.clone().addScaledVector(look, 85);
+        const chaseLook = state.camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(85).add(state.camera.position);
+        state.camera.position.lerp(pilot, close);
+        state.camera.lookAt(chaseLook.lerp(farLook, close));
+      }
+      if (inFlight) state.camera.rotateZ(simState.planeRoll * THREE.MathUtils.lerp(0.135, 0.69, close));
 
       // Speed-reactive dynamic FOV (60° -> 73° at high speed/boost)
       if (state.camera instanceof THREE.PerspectiveCamera) {
-        const targetFov = 60 + Math.min(13, (speedKmh / 160) * 13);
+        const targetFov = 60 + close * 3 + Math.min(13, (speedKmh / 160) * 13) - adsBlend.current * 20;
         if (Math.abs(state.camera.fov - targetFov) > 0.05) {
           state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, targetFov, Math.min(1, 8 * dt));
-          state.camera.updateProjectionMatrix();
         }
+        state.camera.updateProjectionMatrix();
+      }
+    }
+
+    const firstVehicle = !isMenuOpen && simState.cameraView === 1 && simState.mode !== 'FOOT';
+    if (boatRef.current) boatRef.current.visible = !firstVehicle || simState.mode !== 'BOAT';
+    if (planeRef.current) planeRef.current.visible = !firstVehicle || simState.mode !== 'PLANE';
+    if (document.pointerLockElement && (simState.cameraView !== 1 || isMenuOpen)) document.exitPointerLock();
+    if (cockpit.current) {
+      cockpit.current.visible = firstVehicle;
+      cockpit.current.position.copy(state.camera.position);
+      cockpit.current.quaternion.copy(state.camera.quaternion);
+      cockpit.current.children.forEach((item) => { item.visible = item.name === simState.mode; });
+    }
+    state.camera.updateMatrixWorld();
+    reticleRay.current.setFromCamera(AIM_CENTER, state.camera);
+    aiming.origin.copy(reticleRay.current.ray.origin);
+    aiming.direction.copy(reticleRay.current.ray.direction);
+    aiming.ready = !isMenuOpen;
+    aiming.thirdPerson = simState.cameraView !== 1;
+    aiming.spread = THREE.MathUtils.damp(aiming.spread, Math.min(13, speedKmh * 0.19 + simState.firingTimer * 30) *
+      (aiming.ads ? 0.36 : 1), 14, dt);
+    construction.preview = !isMenuOpen && simState.mode === 'FOOT' && construction.active ? planBuild(buildPoint(), simState.playerPos) : null;
+    const swing = aiming.pickSwing > 0 ? Math.sin((1 - aiming.pickSwing / 0.5) * Math.PI) : 0;
+    if (worldPick.current) {
+      worldPick.current.visible = !isMenuOpen && simState.cameraView !== 1 && construction.pickaxe && !construction.active &&
+        !footMotion.current.swim && !simState.parachuting && !simState.gliding;
+      worldPick.current.rotation.set(-0.93 + 1.85 * swing, 0.08, -0.54 + 0.43 * swing);
+    }
+    const viewRoot = viewModel.current;
+    if (viewRoot) {
+      viewRoot.visible = !isMenuOpen && simState.cameraView === 1 && simState.mode === 'FOOT' &&
+        !footMotion.current.swim && !simState.parachuting && !simState.gliding && !construction.active;
+      if (viewRoot.visible) {
+        const weapon = weaponMeshesRef.current[simState.activeWeaponIdx];
+        if (viewWeapon.current && weapon !== clonedWeapon.current) {
+          clonedWeapon.current = weapon ?? null;
+          viewWeapon.current.clear();
+          if (weapon) {
+            const clone = weapon.clone(true);
+            clone.visible = true;
+            viewWeapon.current.add(clone);
+          }
+        }
+        const aim = adsBlend.current;
+        const stride = footMotion.current.phase;
+        const bob = Math.min(1, speedKmh / 19) * (1 - aim * 0.75);
+        const recoil = simState.firingTimer / 0.13;
+        viewRoot.position.set(0.25 * (1 - aim) + Math.sin(stride * 0.5) * 0.014 * bob,
+          -0.21 + aim * 0.132 - Math.abs(Math.cos(stride)) * 0.018 * bob, -0.54 + recoil * 0.045);
+        viewRoot.position.applyQuaternion(state.camera.quaternion).add(state.camera.position);
+        viewRoot.quaternion.copy(state.camera.quaternion);
+        viewRoot.rotateX(recoil * 0.058 - swing * 0.63);
+        viewRoot.rotateZ(Math.sin(stride * 0.5) * bob * 0.021 + swing * 0.14);
+        if (viewWeapon.current) viewWeapon.current.visible = !construction.pickaxe;
+        if (viewPick.current) viewPick.current.visible = construction.pickaxe;
       }
     }
 
@@ -2680,8 +2902,24 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
   return (
     <group>
+      <group ref={cockpit} visible={false}>
+        <group name="CAR"><Cockpit mode="CAR" style={simState.activeCarIdx} /></group>
+        <group name="BOAT"><Cockpit mode="BOAT" style={simState.activeBoatIdx} /></group>
+        <group name="PLANE"><Cockpit mode="PLANE" style={simState.activePlaneIdx} /></group>
+      </group>
+      <group ref={viewModel} visible={false} scale={0.72}>
+        <group ref={viewWeapon} rotation={[0, Math.PI, 0]} />
+        <group ref={viewPick} rotation={[0.46, 0.2, -0.54]} scale={0.62}><Pickaxe /></group>
+        <mesh position={[0.065, -0.09, 0.19]} rotation={[1.1, 0, -0.2]}>
+          <capsuleGeometry args={[0.047, 0.2, 4, 8]} /><meshStandardMaterial color="#254140" roughness={0.83} />
+        </mesh>
+        <mesh position={[-0.085, -0.078, -0.09]} rotation={[1.3, 0, 0.43]}>
+          <capsuleGeometry args={[0.041, 0.18, 4, 8]} /><meshStandardMaterial color="#294649" roughness={0.82} />
+        </mesh>
+      </group>
       {/* CUSTOMIZABLE HIGH-RES HUMAN PLAYER (READY PLAYER ME + MICHELLE VIP + VANGUARD SOLDIER) + 3D ACCESSORIES */}
       <group ref={playerRef}>
+        <group ref={worldPick} position={[0.29, 1.19, 0.36]} scale={0.89} visible={false}><Pickaxe /></group>
         <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[1.6, 1.6]} />
           <meshBasicMaterial map={shadowTex} transparent depthWrite={false} />

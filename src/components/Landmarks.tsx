@@ -420,7 +420,7 @@ export function VegasLandmarks() {
           mesh.material.roughness < 0.35 ? 'glass' : 'masonry';
         const volume = size.x * size.y * size.z;
         const hp = Math.round(THREE.MathUtils.clamp(43 + Math.cbrt(volume) * 19, 48, 320));
-        const simple = /^(Box|Cylinder|Sphere|Cone|Dodecahedron)Geometry$/.test(mesh.geometry.type);
+        const box = mesh.geometry.type === 'BoxGeometry';
         const lowPlaza = size.y < 0.65 && center.y <= getTerrainHeight(center.x, center.z) + 0.85;
         const original = mesh.material;
         const initialColor = original.color.clone();
@@ -428,7 +428,7 @@ export function VegasLandmarks() {
         let ownMaterial: THREE.MeshStandardMaterial | null = null;
         const unregister = registerWorldSection({
           owner, label: owner, material, center, rotation, halfSize: size.multiplyScalar(0.5).max(new THREE.Vector3(0.03, 0.03, 0.03)),
-          hp, maxHp: hp, mesh, solid: simple && !lowPlaza,
+          hp, maxHp: hp, mesh, solid: !lowPlaza, meshSweep: !box,
           onDamage: (integrity, destroyed) => {
             if (destroyed) {
               mesh.visible = false;
