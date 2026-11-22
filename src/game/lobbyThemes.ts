@@ -4,7 +4,9 @@ export type LobbyThemeId =
   | 'TACTICAL_OVERLOOK'
   | 'MIDNIGHT_HARBOR';
 
-export type LobbyTabId = 'PLAY' | 'LOCKER' | 'VEHICLES' | 'SHOP' | 'SETTINGS';
+export type LobbyTabId = 'PLAY' | 'LOCKER' | 'VEHICLES' | 'ARSENAL' | 'SHOP' | 'SETTINGS';
+
+export type LobbyFocusId = 'OVERVIEW' | 'CHARACTER' | 'CAR' | 'AIRCRAFT' | 'BOAT' | 'ARSENAL';
 
 export interface LobbyThemeConfig {
   id: LobbyThemeId;

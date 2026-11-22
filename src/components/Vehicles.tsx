@@ -2046,7 +2046,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
 
     // 2. HERO SUPERCAR FLEET (FERRARI 458 / GT3 / WEDGE / MUSCLE / VIP LIMO + DRIFT + SNAPPY PHYSICS)
-    if (simState.mode === 'CAR') {
+    if (simState.mode === 'CAR' && !isStartMenuOpen) {
       previous.copy(simState.carPos);
       const car = simState.carPos;
       const ride = suspension.current;
@@ -2188,7 +2188,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
 
     // 3. 6-VESSEL MARITIME & CRUISE LINER FLEET (GERSTNER WAVE BUOYANCY + RIGID SHORELINE)
-    if (simState.mode === 'BOAT') {
+    if (simState.mode === 'BOAT' && !isStartMenuOpen) {
       previous.copy(simState.boatPos);
       const marineThrottle = Math.max(fwd, touchThrottle) - back;
       const accel = marineThrottle * (simState.vehicleWrecked ? 14 : boost ? 68 : 44) * throttleSens;
@@ -2414,15 +2414,35 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       parachuteRef.current.visible = simState.mode === 'FOOT' && simState.parachuting;
     }
 
-    // Sync Active 3D Weapon Visibility & Recoil Kickback (hide weapon in Character Studio closeup so outfit is clear)
+    // Sync Active 3D Weapon Visibility & Recoil Kickback (also show in Lobby when inspecting Arsenal or Battle Royale)
     const recoilOffset = -Math.max(0, simState.firingTimer - 0.16) * 1.1;
+    const showLobbyWeapon =
+      isStartMenuOpen &&
+      (simState.gameMode === 'BATTLE_ROYALE' ||
+        simState.lobbyFocus === 'ARSENAL' ||
+        simState.lobbyTab === 'ARSENAL');
     if (weaponMountRef.current) {
-      weaponMountRef.current.visible = !isStartMenuOpen && !construction.pickaxe && !construction.active && !isCustomizerOpen && !footMotion.current.swim && !simState.gliding && !simState.parachuting && (aiming.ads || mouseOrbitRef.current !== null || simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
-      weaponMountRef.current.position.set(-0.13, 1.23, 0.42 + recoilOffset);
-      weaponMountRef.current.rotation.x = simState.orbitPitch * 0.45;
+      weaponMountRef.current.visible =
+        showLobbyWeapon ||
+        (!isStartMenuOpen &&
+          !construction.pickaxe &&
+          !construction.active &&
+          !isCustomizerOpen &&
+          !footMotion.current.swim &&
+          !simState.gliding &&
+          !simState.parachuting &&
+          (aiming.ads ||
+            mouseOrbitRef.current !== null ||
+            simState.firingTimer > 0 ||
+            simState.gameMode === 'BATTLE_ROYALE'));
+      weaponMountRef.current.position.set(-0.13, 1.23, 0.42 + (isStartMenuOpen ? 0 : recoilOffset));
+      weaponMountRef.current.rotation.x = isStartMenuOpen ? 0 : simState.orbitPitch * 0.45;
     }
     if (carWeaponMountRef.current) {
-      carWeaponMountRef.current.visible = simState.mode === 'CAR' && (simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
+      carWeaponMountRef.current.visible =
+        !isStartMenuOpen &&
+        simState.mode === 'CAR' &&
+        (simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
       carWeaponMountRef.current.position.set(0, 1.38, 0.15 + recoilOffset);
     }
     weaponMeshesRef.current.forEach((m, idx) => {
@@ -2474,8 +2494,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     }
 
-    if (carRef.current) {
-      carRef.current.visible = !isCustomizerOpen && (simState.mode !== 'CAR' || simState.cameraView !== 1 || isStartMenuOpen);
+    if (carRef.current && !isStartMenuOpen) {
+      carRef.current.visible = !isCustomizerOpen && (simState.mode !== 'CAR' || simState.cameraView !== 1);
       carRef.current.position.copy(simState.carPos);
       const ride = suspension.current;
       carRef.current.position.y += ride.offset;
@@ -2483,14 +2503,16 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
 
     // Active GLB Hero Car Wheel Spin, Front Wheel Steering & Steering Wheel Articulation
-    const targetWheelSteer = simState.mode === 'CAR' ? (left - right) * 0.38 + (isDrifting ? suspension.current.slip * 0.57 : 0) : 0;
+    const targetWheelSteer = !isStartMenuOpen && simState.mode === 'CAR' ? (left - right) * 0.38 + (isDrifting ? suspension.current.slip * 0.57 : 0) : 0;
     const activeRig = carRigsRef.current[activeCarIdxRef.current];
     if (activeRig) {
       for (const sNode of activeRig.steerNodes) {
         sNode.rotation.y = THREE.MathUtils.lerp(sNode.rotation.y, targetWheelSteer, Math.min(1, 14 * dt));
       }
-      for (const wNode of activeRig.wheels) {
-        wNode.rotation.x += simState.carSpeed * dt * 2.6 * activeRig.spinSign;
+      if (!isStartMenuOpen) {
+        for (const wNode of activeRig.wheels) {
+          wNode.rotation.x += simState.carSpeed * dt * 2.6 * activeRig.spinSign;
+        }
       }
       if (activeRig.steeringWheel) {
         activeRig.steeringWheel.rotation.z = THREE.MathUtils.lerp(
@@ -2500,15 +2522,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         );
       }
       if (activeRig.brakeMat) {
-        activeRig.brakeMat.emissiveIntensity = simState.mode === 'CAR' && back > 0 ? 4.8 : 1.8;
+        activeRig.brakeMat.emissiveIntensity = !isStartMenuOpen && simState.mode === 'CAR' && back > 0 ? 4.8 : 1.8;
       }
     }
 
     // Supercar Brake Lights & Dual Nitrous Boost Flames
     if (taillightMatRef.current) {
-      taillightMatRef.current.emissiveIntensity = simState.mode === 'CAR' && back > 0 ? 4.8 : 1.8;
+      taillightMatRef.current.emissiveIntensity = !isStartMenuOpen && simState.mode === 'CAR' && back > 0 ? 4.8 : 1.8;
     }
-    const showBoostFlames = simState.mode === 'CAR' && (boost || suspension.current.boost > 0 || simState.roulette === 'RED');
+    const showBoostFlames = !isStartMenuOpen && simState.mode === 'CAR' && (boost || suspension.current.boost > 0 || simState.roulette === 'RED');
     const flamePulse = 0.85 + Math.sin(t * 48) * 0.35;
     if (boostFlameLeftRef.current) {
       boostFlameLeftRef.current.visible = showBoostFlames;
@@ -2520,7 +2542,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
 
     // Pooled Tire Smoke Puffs (6 meshes behind rear wheels when drifting or boosting)
-    const showTireSmoke = simState.mode === 'CAR' && (isDrifting || (boost && Math.abs(simState.carSpeed) > 10));
+    const showTireSmoke = !isStartMenuOpen && simState.mode === 'CAR' && (isDrifting || (boost && Math.abs(simState.carSpeed) > 10));
     for (let i = 0; i < 6; i++) {
       const puff = smokeMeshRefs.current[i];
       if (!puff) continue;
@@ -2544,7 +2566,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     }
 
     // 3D Engine Hood Damage Smoke & Fire Plume on carRef
-    const showHoodSmoke = simState.carDamage.hp < 65;
+    const showHoodSmoke = !isStartMenuOpen && simState.carDamage.hp < 65;
     const damageRatio = Math.max(0, Math.min(1, (65 - simState.carDamage.hp) / 65));
     for (let i = 0; i < 4; i++) {
       const puff = damageSmokeRefs.current[i];
@@ -2568,7 +2590,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       mat.opacity = (1 - phase) * (0.38 + damageRatio * 0.42);
     }
 
-    const showHoodFire = simState.carDamage.hp < 32;
+    const showHoodFire = !isStartMenuOpen && simState.carDamage.hp < 32;
     for (let i = 0; i < 2; i++) {
       const flame = damageFireRefs.current[i];
       if (!flame) continue;
@@ -2609,7 +2631,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     }
 
-    if (boatRef.current) {
+    if (boatRef.current && !isStartMenuOpen) {
+      boatRef.current.scale.setScalar(1);
       boatRef.current.position.copy(simState.boatPos);
       const isCruise = activeBoatIdxRef.current === 1;
       const pitchWaveAmp = isCruise ? 0.015 : 0.04;
@@ -2627,7 +2650,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       );
     }
     // Spin propellers / submarine thrusters across all 6 Boat Fleet rigs
-    const boatSpinRate = dt * (4.0 + Math.abs(simState.boatSpeed) * 1.6);
+    const boatSpinRate = dt * (isStartMenuOpen ? 1.8 : 4.0 + Math.abs(simState.boatSpeed) * 1.6);
     boatRigsRef.current.forEach((rig) => {
       if (!rig) return;
       for (const node of rig.spinNodesZ) {
@@ -2636,7 +2659,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     });
 
     if (boatSprayRef.current) {
-      const boatSpdRatio = Math.min(1.4, Math.abs(simState.boatSpeed) / 22);
+      const boatSpdRatio = isStartMenuOpen ? 0 : Math.min(1.4, Math.abs(simState.boatSpeed) / 22);
       boatSprayRef.current.visible = boatSpdRatio > 0.08;
       boatSprayRef.current.scale.set(
         0.8 + boatSpdRatio * 0.55,
@@ -2645,13 +2668,14 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       );
     }
 
-    if (planeRef.current) {
+    if (planeRef.current && !isStartMenuOpen) {
+      planeRef.current.scale.setScalar(1);
       planeRef.current.position.copy(simState.planePos);
       planeRef.current.rotation.order = 'YXZ';
       planeRef.current.rotation.set(-simState.planePitch, simState.planeYaw, -simState.planeRoll);
     }
     // Spin helicopter main/tail rotors, fighter propellers, turboprops & airliner turbofans across all 6 Aircraft rigs
-    const planeSpinRate = dt * (simState.aircraftDamage.settled ? 0.5 : simState.mode === 'PLANE' ? 8 + simState.aircraftDamage.hull * 0.2 : 8);
+    const planeSpinRate = dt * (isStartMenuOpen ? 4.2 : simState.aircraftDamage.settled ? 0.5 : simState.mode === 'PLANE' ? 8 + simState.aircraftDamage.hull * 0.2 : 8);
     planeRigsRef.current.forEach((rig) => {
       if (!rig) return;
       if (rig.rotorMain) rig.rotorMain.rotation.y += planeSpinRate;
@@ -2662,69 +2686,151 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     });
 
     if (propRef.current) {
-      propRef.current.rotation.z += dt * (simState.mode === 'PLANE' ? 35 : 4);
-      const jetBoostScale = simState.mode === 'PLANE' ? 0.9 + Math.sin(t * 42) * 0.25 : 0.4;
+      propRef.current.rotation.z += dt * (!isStartMenuOpen && simState.mode === 'PLANE' ? 35 : 4);
+      const jetBoostScale = !isStartMenuOpen && simState.mode === 'PLANE' ? 0.9 + Math.sin(t * 42) * 0.25 : 0.4;
       propRef.current.scale.set(1, jetBoostScale, 1);
     }
     const contrailScale = simState.mode === 'PLANE' ? Math.max(0.3, simState.planeSpeed / 36) : 0.15;
     if (contrailLeftRef.current) {
-      contrailLeftRef.current.visible = simState.mode === 'PLANE' && simState.aircraftDamage.state === 'sound';
+      contrailLeftRef.current.visible = !isStartMenuOpen && simState.mode === 'PLANE' && simState.aircraftDamage.state === 'sound';
       contrailLeftRef.current.scale.set(1, 1, contrailScale * (1 + Math.sin(t * 24) * 0.08));
     }
     if (contrailRightRef.current) {
-      contrailRightRef.current.visible = simState.mode === 'PLANE' && simState.aircraftDamage.state === 'sound';
+      contrailRightRef.current.visible = !isStartMenuOpen && simState.mode === 'PLANE' && simState.aircraftDamage.state === 'sound';
       contrailRightRef.current.scale.set(1, 1, contrailScale * (1 + Math.cos(t * 24) * 0.08));
     }
 
-    // Chip & Aerial Ring Collection
-    for (const c of simState.chipNodes) {
-      if (c.collected) continue;
-      const d = activePos.distanceTo(new THREE.Vector3(...c.position));
-      if (d < (c.isAerial ? 9.5 : 5.0)) {
-        c.collected = true;
-        simState.chips += Math.round(c.value * simState.multiplier);
-        soundEngine.playChipPickup(c.isAerial);
+    // Chip & Aerial Ring Collection (skip while on Lobby start menu)
+    if (!isStartMenuOpen) {
+      for (const c of simState.chipNodes) {
+        if (c.collected) continue;
+        const d = activePos.distanceTo(new THREE.Vector3(...c.position));
+        if (d < (c.isAerial ? 9.5 : 5.0)) {
+          c.collected = true;
+          simState.chips += Math.round(c.value * simState.multiplier);
+          soundEngine.playChipPickup(c.isAerial);
+        }
       }
-    }
 
-    // Battle Royale Loot Crate & Ammo Box Pickup
-    for (const crate of simState.lootCrates) {
-      if (crate.opened) continue;
-      const distCrate = Math.hypot(activePos.x - crate.position[0], activePos.z - crate.position[2]);
-      if (distCrate < 4.2 && activePos.y < 14) {
-        crate.opened = true;
-        simState.playerShield = 100;
-        simState.playerHp = 100;
-        simState.ammo = simState.maxAmmo;
-        simState.chips += Math.round(250 * simState.multiplier);
-        soundEngine.playChipPickup(true);
+      // Battle Royale Loot Crate & Ammo Box Pickup
+      for (const crate of simState.lootCrates) {
+        if (crate.opened) continue;
+        const distCrate = Math.hypot(activePos.x - crate.position[0], activePos.z - crate.position[2]);
+        if (distCrate < 4.2 && activePos.y < 14) {
+          crate.opened = true;
+          simState.playerShield = 100;
+          simState.playerHp = 100;
+          simState.ammo = simState.maxAmmo;
+          simState.chips += Math.round(250 * simState.multiplier);
+          soundEngine.playChipPickup(true);
+        }
       }
     }
 
     soundEngine.updateTires(isMenuOpen ? 0 : tirePressure, Math.abs(simState.carSpeed));
     soundEngine.updateEngine(isStartMenuOpen ? 'FOOT' : simState.mode, speedKmh);
 
-    // Camera Choreography: Start Menu Panoramic Orbit, Character Studio Camera, OR Snappy Chase Camera
+    // Camera Choreography: Azurea Marina, Helipad & Concours Pavilion Showcase OR Snappy Chase Camera
     if (isStartMenuOpen) {
       if (simState.lobbyEmoteTimer > 0) {
         simState.lobbyEmoteTimer = Math.max(0, simState.lobbyEmoteTimer - dt);
       }
-      const stage = new THREE.Vector3(lobbyStage.x, lobbyStage.y + 0.067, lobbyStage.z);
+      const stage = new THREE.Vector3(lobbyStage.x, lobbyStage.y + 0.06, lobbyStage.z);
       const heading = lobbyStage.yaw;
       const forward = new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading));
       const side = new THREE.Vector3(Math.cos(heading), 0, -Math.sin(heading));
       const wide = state.size.width >= 720;
       const tabIsPlay = simState.lobbyTab === 'PLAY';
-      const breathX = Math.sin(t * 0.45) * 0.06;
-      const breathY = Math.cos(t * 0.36) * 0.025;
-      const eyeSideOffset = !tabIsPlay && wide ? -0.32 : 0;
-      const eye = stage.clone()
-        .addScaledVector(forward, wide ? 5.25 : 5.45)
-        .addScaledVector(side, eyeSideOffset + breathX);
-      eye.y += (wide ? 1.54 : 1.74) + breathY;
+      const drawerOffset = !tabIsPlay && wide ? -0.95 : 0;
+      const breathX = Math.sin(t * 0.42) * 0.045;
+      const breathY = Math.cos(t * 0.34) * 0.02;
 
-      const focus = stage.clone().addScaledVector(side, !tabIsPlay && wide ? -1.1 : 0);
-      focus.y += wide ? 0.98 : (tabIsPlay ? 0.72 : 0.58);
+      // Position our live 3D Supercar on the Obsidian & Brass Concours Turntable
+      if (carRef.current) {
+        carRef.current.visible = true;
+        carRef.current.position
+          .copy(stage)
+          .addScaledVector(side, 2.95)
+          .addScaledVector(forward, -3.15);
+        carRef.current.position.y = lobbyStage.y + 0.055;
+        carRef.current.rotation.set(0, heading - 2.26 + Math.sin(t * 0.32) * 0.05, 0, 'YXZ');
+      }
+
+      // Position our live 3D Aircraft / Helicopter on the Cantilevered Helipad Apron ('H')
+      if (planeRef.current) {
+        planeRef.current.visible = true;
+        const planeLobbyScale = [0.56, 0.76, 0.68, 0.52, 0.4, 0.4][activePlaneIdxRef.current] ?? 0.56;
+        planeRef.current.scale.setScalar(planeLobbyScale);
+        planeRef.current.position
+          .copy(stage)
+          .addScaledVector(side, -3.85)
+          .addScaledVector(forward, -5.65);
+        planeRef.current.position.y = lobbyStage.y + 0.24;
+        planeRef.current.rotation.order = 'YXZ';
+        planeRef.current.rotation.set(0, heading + 2.38, 0);
+      }
+
+      // Position our live 3D Boat / Yacht / Submarine floating in the Marina Slip
+      if (boatRef.current) {
+        boatRef.current.visible = true;
+        const boatLobbyScale = [0.74, 0.32, 0.48, 0.66, 0.7, 0.56][activeBoatIdxRef.current] ?? 0.6;
+        boatRef.current.scale.setScalar(boatLobbyScale);
+        boatRef.current.position
+          .copy(stage)
+          .addScaledVector(side, 5.15)
+          .addScaledVector(forward, -7.85);
+        boatRef.current.position.y = 0.28 + Math.sin(t * 1.6) * 0.055;
+        boatRef.current.rotation.set(
+          Math.sin(t * 1.4) * 0.018,
+          heading - 2.22,
+          Math.cos(t * 1.2) * 0.022
+        );
+      }
+
+      // Multi-Station 3D Camera Focus Choreography
+      const focusMode = simState.lobbyFocus || 'OVERVIEW';
+      const eye = stage.clone();
+      const focus = stage.clone();
+      let targetFov = wide ? 44 : 52;
+
+      if (focusMode === 'CAR') {
+        eye.addScaledVector(forward, wide ? 1.85 : 2.65).addScaledVector(side, 1.55 + drawerOffset * 0.65 + breathX);
+        eye.y += 1.48 + breathY;
+        focus.addScaledVector(forward, -3.15).addScaledVector(side, 2.75 + drawerOffset * 0.55);
+        focus.y += 0.68;
+        targetFov = wide ? 41 : 49;
+      } else if (focusMode === 'AIRCRAFT') {
+        eye.addScaledVector(forward, wide ? -0.45 : 0.45).addScaledVector(side, -2.15 + drawerOffset * 0.65 + breathX);
+        eye.y += 1.88 + breathY;
+        focus.addScaledVector(forward, -5.65).addScaledVector(side, -3.85 + drawerOffset * 0.55);
+        focus.y += 0.72;
+        targetFov = wide ? 43 : 50;
+      } else if (focusMode === 'BOAT') {
+        eye.addScaledVector(forward, wide ? -1.45 : -0.65).addScaledVector(side, 2.85 + drawerOffset * 0.65 + breathX);
+        eye.y += 1.65 + breathY;
+        focus.addScaledVector(forward, -7.85).addScaledVector(side, 5.05 + drawerOffset * 0.55);
+        focus.y -= 1.35;
+        targetFov = wide ? 42 : 50;
+      } else if (focusMode === 'ARSENAL') {
+        eye.addScaledVector(forward, wide ? 3.55 : 4.25).addScaledVector(side, -0.75 + drawerOffset * 0.6 + breathX);
+        eye.y += 1.42 + breathY;
+        focus.addScaledVector(forward, -0.85).addScaledVector(side, -1.05 + drawerOffset * 0.65);
+        focus.y += 0.96;
+        targetFov = wide ? 40 : 48;
+      } else if (focusMode === 'CHARACTER') {
+        eye.addScaledVector(forward, wide ? 3.95 : 4.65).addScaledVector(side, drawerOffset * 0.35 + breathX);
+        eye.y += 1.38 + breathY;
+        focus.addScaledVector(side, drawerOffset * 0.85);
+        focus.y += 0.98;
+        targetFov = wide ? 39 : 48;
+      } else {
+        // OVERVIEW: Full Promenade with Hero, Supercar Turntable, Helipad Aircraft, Marina Boat & Skyline
+        eye.addScaledVector(forward, wide ? 5.35 : 5.55).addScaledVector(side, (!tabIsPlay && wide ? -0.32 : 0) + breathX);
+        eye.y += (wide ? 1.56 : 1.74) + breathY;
+        focus.addScaledVector(side, !tabIsPlay && wide ? -1.05 : 0).addScaledVector(forward, -0.35);
+        focus.y += wide ? 0.96 : (tabIsPlay ? 0.72 : 0.58);
+        targetFov = wide ? 44 : 51;
+      }
 
       const camFollowAlpha = 1 - Math.exp(-7 * dt);
       if (state.camera.position.distanceToSquared(eye) > 100) state.camera.position.copy(eye);
@@ -2735,7 +2841,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
       if (state.camera instanceof THREE.PerspectiveCamera) {
         state.camera.near = 0.12;
-        state.camera.fov = THREE.MathUtils.damp(state.camera.fov, wide ? 43 : 51, 9, dt);
+        state.camera.fov = THREE.MathUtils.damp(state.camera.fov, targetFov, 9, dt);
         state.camera.updateProjectionMatrix();
       }
       if (playerRef.current) {

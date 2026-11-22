@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { AIM_MODES, RETICLES, type AimMode, type Reticle } from './aim';
-import type { LobbyTabId, LobbyThemeId } from './lobbyThemes';
+import type { LobbyFocusId, LobbyTabId, LobbyThemeId } from './lobbyThemes';
 import { RouletteOutcome, VehicleMode } from './worldMath';
 import type { Tumble } from './motion';
 import { grandPrixGates } from './grandPrix';
@@ -787,6 +787,7 @@ export const simState = {
   lobbyAutoRotate: true,
   lobbyEmoteTimer: 0,
   lobbyTab: 'PLAY' as LobbyTabId,
+  lobbyFocus: 'OVERVIEW' as LobbyFocusId,
   worldTimeTheme: 'AUTO' as 'AUTO' | LobbyThemeId,
   touchControlsEnabled: false,
   tourVisitedIds: [] as string[],

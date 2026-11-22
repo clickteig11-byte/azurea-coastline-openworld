@@ -1348,9 +1348,10 @@ export function LivingWorldNPCs() {
 
     // ------------------------------------------------------------------------
     // 1. Update 16 Smooth-Shaded PBR Human Citizens (Skeletal Stride + Sidewalks/Crosswalks/Dodge)
+    // Pause distant Midtown pedestrian simulation while on the Lobby screen to prevent CPU throttling
     // ------------------------------------------------------------------------
     civilianTargets.length = 0;
-    for (let i = 0; i < PED_COUNT; i++) {
+    for (let i = 0; i < (simState.startMenuOpen ? 0 : PED_COUNT); i++) {
       const p = pedestrians[i];
       const crossingClosed = (simState.startMenuOpen || simState.gameMode === 'GRAND_PRIX') && p.kind === 'CROSSWALK';
       if (citizenGroupRefs.current[i]) citizenGroupRefs.current[i]!.visible = !crossingClosed;
