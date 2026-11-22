@@ -425,6 +425,57 @@ export function createAsphaltRoadTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+export function createAsphaltRoughnessTexture(): THREE.CanvasTexture {
+  const w = 256;
+  const h = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+
+  ctx.fillStyle = 'rgb(224,224,224)';
+  ctx.fillRect(0, 0, w, h);
+
+  // Polished tire-wear wheel paths inside the 4 lanes
+  const lanes = [39, 92, 164, 217];
+  lanes.forEach((lx) => {
+    const g = ctx.createLinearGradient(lx - 13, 0, lx + 13, 0);
+    g.addColorStop(0, 'rgba(155,155,155,0)');
+    g.addColorStop(0.5, 'rgba(145,145,145,0.65)');
+    g.addColorStop(1, 'rgba(155,155,155,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(lx - 13, 0, 26, h);
+  });
+
+  // Micro-grain mineral aggregate roughness speckle
+  const rand = makeSeededRand(556);
+  for (let i = 0; i < 12000; i++) {
+    const x = rand() * w;
+    const y = rand() * h;
+    const v = 165 + Math.floor(rand() * 78);
+    ctx.fillStyle = `rgb(${v},${v},${v})`;
+    ctx.fillRect(x, y, 2, 2);
+  }
+
+  // Slightly higher-sheen reflective road paint lines
+  ctx.fillStyle = 'rgb(142,142,142)';
+  ctx.fillRect(7, 0, 3, h);
+  ctx.fillRect(w - 10, 0, 3, h);
+  ctx.fillRect(w / 2 - 4.5, 0, 3, h);
+  ctx.fillRect(w / 2 + 1.5, 0, 3, h);
+  for (let y = 10; y < h; y += 64) {
+    ctx.fillRect(65, y, 2.5, 29);
+    ctx.fillRect(w - 67.5, y, 2.5, 29);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1, 14);
+  tex.anisotropy = 4;
+  return tex;
+}
+
 /**
  * Fast Sobel height-to-normal-map converter for procedural CanvasTextures.
  * Produces tangent-space normal maps so grazing sunlight catches mortar joints,
@@ -1438,24 +1489,50 @@ export function createGranitePodiumPBR(): {
   return { map, roughnessMap };
 }
 
-export function createPavementTexture() {
+function buildPavementCanvasTexture(isRoughness: boolean): THREE.CanvasTexture {
+  const size = 256;
   const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 128;
+  canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  const pixels = ctx.createImageData(128, 128);
+  const pixels = ctx.createImageData(size, size);
   const random = makeSeededRand(8707);
-  for (let i = 0; i < pixels.data.length; i += 4) {
-    const mineral = random();
-    const fleck = Math.round(39 + mineral * 21 + (random() < 0.035 ? mineral * 32 : 0));
-    pixels.data[i] = fleck;
-    pixels.data[i + 1] = fleck + 2;
-    pixels.data[i + 2] = fleck + 3;
-    pixels.data[i + 3] = 255;
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      const mineral = random();
+      const coarse = Math.sin(x * 0.14 + y * 0.09) * 0.5 + 0.5;
+      const sparkle = random() < 0.042;
+      if (isRoughness) {
+        const val = Math.round(184 + mineral * 54 + (sparkle ? -42 : coarse * 10));
+        const clamped = Math.max(125, Math.min(248, val));
+        pixels.data[i] = clamped;
+        pixels.data[i + 1] = clamped;
+        pixels.data[i + 2] = clamped;
+      } else {
+        const fleck = Math.round(37 + mineral * 20 + coarse * 5 + (sparkle ? mineral * 34 : 0));
+        pixels.data[i] = fleck;
+        pixels.data[i + 1] = fleck + 2;
+        pixels.data[i + 2] = fleck + 4;
+      }
+      pixels.data[i + 3] = 255;
+    }
   }
+
   ctx.putImageData(pixels, 0, 0);
   const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
+  if (!isRoughness) {
+    texture.colorSpace = THREE.SRGBColorSpace;
+  }
   texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
   texture.anisotropy = 4;
   return texture;
+}
+
+export function createPavementTexture() {
+  return buildPavementCanvasTexture(false);
+}
+
+export function createPavementRoughnessTexture() {
+  return buildPavementCanvasTexture(true);
 }

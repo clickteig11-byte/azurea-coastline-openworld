@@ -1,8 +1,11 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import { coastRoadOffset, getTerrainHeight, LANDMARKS } from '../game/worldMath';
 import { createLimestonePBR, createSidewalkCobblePBR, createRoofGravelHVACPBR } from './Textures';
 import { WorldSectionBatch, type Vec3, type WorldPart, type WorldFinish } from './WorldSections';
+import { LOBBY_THEMES, resolveActiveThemeId } from '../game/lobbyThemes';
+import { simState } from '../game/store';
 
 const shops = [
   { name: 'COVE COFFEE', color: '#39645c' },
@@ -29,17 +32,21 @@ export const cityPlots = (() => {
     ...LANDMARKS.map(({ position: [x, , z] }) => [x, z, 20]),
     [-52, 42, 24], [98, -35, 32], [-105, 45, 36], [-118, -28, 30],
     [-158, -145, 23], [135, -95, 32], [148, 108, 28], [-138, 155, 25],
+    [183, 173, 28],
   ];
   let index = 0;
-  for (const zBase of [-184, -162, -143, -98, -77, -56, -34, 28, 51, 102, 123, 145, 166]) {
+  for (const zBase of [-186, -166, -146, -95, -74, -53, -32, 28, 51, 105, 126, 147, 168]) {
     for (const xBase of [-175, -154, -132, -110, -88, -66, -43, 43, 65, 87, 109, 131, 153, 175, 198]) {
       index++;
       const x = xBase + (index * 7 % 5 - 2) * 0.6;
       const z = zBase + (index * 13 % 5 - 2) * 0.7;
       const w = 13.5 + index * 3 % 5;
       const d = 12.8 + index * 7 % 5;
-      if (Math.abs(z + 120) < 21 || Math.abs(z) < 24 || Math.abs(z - 80) < 22) continue;
-      if ((z > 123 && x < -35) || (x > 61 && Math.abs(z + 95) < 35)) continue;
+      const hw = w / 2 + 2.3;
+      const hd = d / 2 + 2.3;
+      if (Math.abs(x) - hw < 23.0) continue;
+      if (Math.abs(z + 120) - hd < 14.5 || Math.abs(z) - hd < 15.5 || Math.abs(z - 80) - hd < 14.5) continue;
+      if ((z + hd > 123 && x - hw < -35) || (x + hw > 61 && Math.abs(z + 95) - hd < 35)) continue;
       if (protectedAreas.some(([px, pz, radius]) => Math.hypot(x - px, z - pz) < radius + 7)) continue;
       const corners = [-1, 1].flatMap((a) => [-1, 1].map((b): [number, number] =>
         [x + a * (w / 2 + 2), z + b * (d / 2 + 2)]));
@@ -55,7 +62,51 @@ export const cityPlots = (() => {
   return plots;
 })();
 
-function facadeTexture(style: 'blue' | 'aqua' | 'deco' | 'brick' | 'terrace' | 'shop') {
+type FacadeStyle = 'blue' | 'aqua' | 'deco' | 'brick' | 'terrace' | 'shop';
+
+function drawLitPane(
+  ctx: CanvasRenderingContext2D,
+  px: number,
+  py: number,
+  pw: number,
+  ph: number,
+  tone: 'warm' | 'amber' | 'cool' | 'dim'
+) {
+  if (tone === 'dim') {
+    ctx.fillStyle = '#0e141c';
+    ctx.fillRect(px, py, pw, ph);
+    return;
+  }
+  const grad = ctx.createLinearGradient(px, py, px, py + ph);
+  if (tone === 'cool') {
+    grad.addColorStop(0, '#dbf4ff');
+    grad.addColorStop(0.28, '#8be0fc');
+    grad.addColorStop(0.75, '#4aa8cf');
+    grad.addColorStop(1, '#1c445c');
+  } else if (tone === 'amber') {
+    grad.addColorStop(0, '#ffe8aa');
+    grad.addColorStop(0.32, '#f7b24d');
+    grad.addColorStop(0.78, '#b86820');
+    grad.addColorStop(1, '#4a260c');
+  } else {
+    grad.addColorStop(0, '#fff4cf');
+    grad.addColorStop(0.30, '#ffd47e');
+    grad.addColorStop(0.76, '#cf8834');
+    grad.addColorStop(1, '#583412');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(px, py, pw, ph);
+
+  // Recessed ceiling light fixture bar + subtle venetian blind texture for 3D interior depth
+  ctx.fillStyle = tone === 'cool' ? '#f0fbff' : '#fffbe6';
+  ctx.fillRect(px + 2, py + 2, Math.max(2, pw - 4), 2.4);
+  ctx.fillStyle = 'rgba(18, 14, 10, 0.24)';
+  for (let by = py + 10; by < py + ph - 6; by += 6) {
+    ctx.fillRect(px + 1, by, pw - 2, 1.4);
+  }
+}
+
+function facadeTexture(style: FacadeStyle) {
   const channels = {
     color: document.createElement('canvas'),
     roughness: document.createElement('canvas'),
@@ -74,7 +125,7 @@ function facadeTexture(style: 'blue' | 'aqua' | 'deco' | 'brick' | 'terrace' | '
   roughness.fillRect(0, 0, 128, 128);
   normal.fillStyle = '#8080ff';
   normal.fillRect(0, 0, 128, 128);
-  for (let i = 0; i < 2600; i++) {
+  for (let i = 0; i < 700; i++) {
     const x = (i * 71.731) % 128;
     const y = (i * 31.937) % 128;
     color.fillStyle = i % 3 === 0 ? '#ffffff1a' : '#191b1a15';
@@ -106,10 +157,10 @@ function facadeTexture(style: 'blue' | 'aqua' | 'deco' | 'brick' | 'terrace' | '
   color.fillStyle = '#263238';
   color.fillRect(inset - 1, top - 1, panelWidth + 2, bottom - top + 3);
   const glass = color.createLinearGradient(4, top, 111, bottom);
-  glass.addColorStop(0, style === 'aqua' ? '#abc8bf' : '#9eb3bc');
-  glass.addColorStop(0.34, style === 'shop' ? '#827456' : '#657d8f');
-  glass.addColorStop(0.62, '#465e69');
-  glass.addColorStop(1, '#263a46');
+  glass.addColorStop(0, style === 'aqua' ? '#70989a' : '#6b8594');
+  glass.addColorStop(0.38, style === 'shop' ? '#5c5240' : '#405666');
+  glass.addColorStop(0.7, '#273a45');
+  glass.addColorStop(1, '#14222c');
   color.fillStyle = glass;
   color.fillRect(inset + 2, top + 2, panelWidth - 4, bottom - top - 3);
   roughness.fillStyle = style === 'shop' ? '#858585' : '#5c5c5c';
@@ -166,14 +217,82 @@ function facadeTexture(style: 'blue' | 'aqua' | 'deco' | 'brick' | 'terrace' | '
   color.fillStyle = style === 'deco' ? '#dfc5a2' : '#e1e0d16d';
   color.fillRect(inset - 2, bottom, panelWidth + 4, 2.7);
 
-  const make = (canvas: HTMLCanvasElement) => {
+  const make = (canvas: HTMLCanvasElement, isSRGB = false) => {
     const texture = new THREE.CanvasTexture(canvas);
     texture.anisotropy = 8;
+    if (isSRGB) texture.colorSpace = THREE.SRGBColorSpace;
     return texture;
   };
-  const map = make(channels.color);
-  map.colorSpace = THREE.SRGBColorSpace;
-  return { map, roughnessMap: make(channels.roughness), normalMap: make(channels.normal) };
+
+  // Generate occupancy emissiveMap textures on the same facade geometry coordinates
+  const buildEmissiveCanvas = (variant: number) => {
+    const emCanvas = document.createElement('canvas');
+    emCanvas.width = emCanvas.height = 128;
+    const eCtx = emCanvas.getContext('2d')!;
+    eCtx.fillStyle = '#000000';
+    eCtx.fillRect(0, 0, 128, 128);
+
+    const paneY = top + 2;
+    const paneH = bottom - top - 3;
+    const leftX = inset + 2;
+    const leftW = Math.max(2, 62.1 - leftX);
+    const rightX = 65.9;
+    const rightW = Math.max(2, inset + panelWidth - 2 - rightX);
+
+    if (style === 'shop') {
+      const wash = eCtx.createLinearGradient(0, paneY, 0, paneY + paneH);
+      wash.addColorStop(0, '#ffd480');
+      wash.addColorStop(0.45, '#e89d42');
+      wash.addColorStop(1, '#5e3610');
+      eCtx.fillStyle = wash;
+      eCtx.fillRect(leftX, paneY, panelWidth - 4, paneH);
+
+      for (let px = inset + 7; px < 117; px += 17) {
+        const glow = eCtx.createRadialGradient(px, 30, 1.2, px, 30, 14);
+        glow.addColorStop(0, '#fff7db');
+        glow.addColorStop(0.42, '#ffc966');
+        glow.addColorStop(1, 'rgba(255, 190, 80, 0)');
+        eCtx.fillStyle = glow;
+        eCtx.fillRect(px - 14, 16, 28, 28);
+      }
+
+      // Dark counter silhouette & crisp mullion mask
+      eCtx.fillStyle = '#181008';
+      eCtx.fillRect(leftX, 88, panelWidth - 4, 16);
+      eCtx.fillStyle = '#000000';
+      eCtx.fillRect(62.1, top, 3.8, bottom - top);
+      return make(emCanvas, true);
+    }
+
+    const isGlassTower = style === 'blue' || style === 'aqua';
+    if (variant === 0) {
+      drawLitPane(eCtx, leftX, paneY, leftW, paneH, 'warm');
+      drawLitPane(eCtx, rightX, paneY, rightW, paneH, 'dim');
+    } else if (variant === 1) {
+      drawLitPane(eCtx, leftX, paneY, leftW, paneH, 'dim');
+      drawLitPane(eCtx, rightX, paneY, rightW, paneH, isGlassTower ? 'cool' : 'amber');
+    } else if (variant === 2) {
+      drawLitPane(eCtx, leftX, paneY, leftW, paneH, 'warm');
+      drawLitPane(eCtx, rightX, paneY, rightW, paneH, isGlassTower ? 'cool' : 'amber');
+    } else {
+      drawLitPane(eCtx, leftX, paneY, leftW, paneH, 'dim');
+      drawLitPane(eCtx, rightX, paneY, rightW, paneH, 'dim');
+    }
+
+    // Crisp unlit mullion & perimeter shadow mask
+    eCtx.fillStyle = '#000000';
+    eCtx.fillRect(62.1, top, 3.8, bottom - top);
+    return make(emCanvas, true);
+  };
+
+  const map = make(channels.color, true);
+  const roughnessMap = make(channels.roughness);
+  const normalMap = make(channels.normal);
+  const emissiveMaps = style === 'shop'
+    ? [buildEmissiveCanvas(0)]
+    : [0, 1, 2, 3].map((v) => buildEmissiveCanvas(v));
+
+  return { map, roughnessMap, normalMap, emissiveMaps };
 }
 
 function shopSign(name: string, color: string) {
@@ -228,10 +347,11 @@ function makeCity() {
         ];
         for (let bay = 0; bay < bays; bay++) {
           const offset = (bay + 0.5) * bayWidth - breadth / 2;
-          const wall = ground ? 'shop' : p.wall;
+          const variant = (index * 17 + floorNo * 11 + bay * 7 + (bay ^ floorNo)) % 4;
+          const wall = ground ? 'shop' : p.wall + variant;
           const color = ground ? '#e2d9bf' : ['#ffffff', '#dce3df', '#f4e6cc'][(index + bay * 7 + floorNo * 11) % 3];
           add(ground ? 'Storefront glazing' : 'Façade panel', wall, color,
-            at(offset, (height - 0.22) / 2), [bayWidth - 0.025, height - 0.22, 0.22], wall === 'brick' || wall === 'deco' ? 120 : 74, angle);
+            at(offset, (height - 0.22) / 2), [bayWidth - 0.025, height - 0.22, 0.22], p.wall === 'brick' || p.wall === 'deco' ? 120 : 74, angle);
           if (!ground && (style === 3 || style === 4) && (bay + index) % 3 !== 0) {
             add('Balcony slab', 'concrete', p.frame, at(offset, 0.1, 0.64), [bayWidth - 0.1, 0.2, 1.42], 120, angle);
             add('Balcony glazing', 'rail', '#96bcbc', at(offset, 0.58, 1.29), [bayWidth - 0.15, 0.65, 0.095], 48, angle);
@@ -294,7 +414,7 @@ function makeCity() {
     const roofW = baseW * p.widths[p.widths.length - 1];
     const roofD = baseD * p.widths[p.widths.length - 1];
     if (style === 1 || style === 7) {
-      add('Roof lantern', 'deco', '#e8d0a4', [roofX, levelY + 1.1, roofZ], [roofW * 0.58, 2.2, roofD * 0.6], 155);
+      add('Roof lantern', 'deco2', '#e8d0a4', [roofX, levelY + 1.1, roofZ], [roofW * 0.58, 2.2, roofD * 0.6], 155);
       add('Finial', 'metal', '#a9a894', [roofX, levelY + 4, roofZ], [0.4, 4.8, 0.4], 77);
     } else if (style === 0 || style === 5) {
       const size = Math.min(roofW, roofD) * 0.85;
@@ -340,17 +460,55 @@ function makeCity() {
 
 export function CoastalCity() {
   const parts = useMemo(makeCity, []);
-  const finishes = useMemo<Record<string, WorldFinish>>(() => {
+  const cityGroupRef = useRef<THREE.Group>(null);
+  const glowRef = useRef(LOBBY_THEMES.SUNLIT_RIVIERA.windowGlow);
+  const litMaterialsRef = useRef<{ mat: THREE.MeshStandardMaterial; isShop: boolean }[]>([]);
+
+  const { finishes, emissiveLookup } = useMemo(() => {
     const concrete = createLimestonePBR();
     const paving = createSidewalkCobblePBR();
     const roof = createRoofGravelHVACPBR();
-    return {
-      blueGlass: { material: 'glass', roughness: 0.26, metalness: 0.35, ...facadeTexture('blue') },
-      aquaGlass: { material: 'glass', roughness: 0.25, metalness: 0.33, ...facadeTexture('aqua') },
-      shop: { material: 'glass', roughness: 0.34, metalness: 0.25, ...facadeTexture('shop') },
-      deco: { material: 'masonry', roughness: 0.65, metalness: 0.06, ...facadeTexture('deco') },
-      brick: { material: 'masonry', roughness: 0.85, ...facadeTexture('brick') },
-      terrace: { material: 'glass', roughness: 0.45, metalness: 0.18, ...facadeTexture('terrace') },
+
+    const blue = facadeTexture('blue');
+    const aqua = facadeTexture('aqua');
+    const shop = facadeTexture('shop');
+    const deco = facadeTexture('deco');
+    const brick = facadeTexture('brick');
+    const terrace = facadeTexture('terrace');
+
+    const emissiveMapByFinish: Record<string, THREE.CanvasTexture> = {
+      shop: shop.emissiveMaps[0],
+    };
+    const buildVariants = (
+      prefix: string,
+      pbr: ReturnType<typeof facadeTexture>,
+      material: WorldFinish['material'],
+      roughness: number,
+      metalness?: number
+    ): Record<string, WorldFinish> => {
+      const entries: Record<string, WorldFinish> = {};
+      for (let v = 0; v < 4; v++) {
+        const key = `${prefix}${v}`;
+        emissiveMapByFinish[key] = pbr.emissiveMaps[v];
+        entries[key] = {
+          material,
+          roughness,
+          metalness,
+          map: pbr.map,
+          roughnessMap: pbr.roughnessMap,
+          normalMap: pbr.normalMap,
+        };
+      }
+      return entries;
+    };
+
+    const finishMap: Record<string, WorldFinish> = {
+      ...buildVariants('blueGlass', blue, 'glass', 0.26, 0.35),
+      ...buildVariants('aquaGlass', aqua, 'glass', 0.25, 0.33),
+      shop: { material: 'glass', roughness: 0.34, metalness: 0.25, map: shop.map, roughnessMap: shop.roughnessMap, normalMap: shop.normalMap },
+      ...buildVariants('deco', deco, 'masonry', 0.65, 0.06),
+      ...buildVariants('brick', brick, 'masonry', 0.85),
+      ...buildVariants('terrace', terrace, 'glass', 0.45, 0.18),
       rail: { material: 'glass', roughness: 0.27, metalness: 0.32 },
       concrete: { material: 'masonry', roughness: 0.83, map: concrete },
       stone: { material: 'masonry', roughness: 0.89, map: paving },
@@ -364,15 +522,71 @@ export function CoastalCity() {
       ...Object.fromEntries(shops.map(({ name, color }, i) => ['shopSign' + i,
         { material: 'wood' as const, roughness: 0.65, map: shopSign(name, color) }])),
     };
+
+    return { finishes: finishMap, emissiveLookup: emissiveMapByFinish };
   }, []);
-  const batches = useMemo(() => Object.entries(finishes).map(([id, finish]) => ({ id, finish, parts: parts.filter((part) => part.finish === id) })), [parts, finishes]);
-  useEffect(() => () => Object.entries(finishes).forEach(([id, finish]) => {
-    finish.geometry?.dispose();
-    if (id.startsWith('shopSign') || ['blueGlass', 'aquaGlass', 'shop', 'deco', 'brick', 'terrace'].includes(id)) {
-      finish.map?.dispose();
-      finish.normalMap?.dispose();
-      finish.roughnessMap?.dispose();
+
+  const batches = useMemo(
+    () =>
+      Object.entries(finishes)
+        .map(([id, finish]) => ({ id, finish, parts: parts.filter((part) => part.finish === id) }))
+        .filter((batch) => batch.parts.length > 0),
+    [parts, finishes]
+  );
+
+  useLayoutEffect(() => {
+    const root = cityGroupRef.current;
+    if (!root) return;
+    const tracked: { mat: THREE.MeshStandardMaterial; isShop: boolean }[] = [];
+    for (const child of root.children) {
+      const emMap = emissiveLookup[child.name];
+      if (!emMap) continue;
+      child.traverse((obj) => {
+        if (obj instanceof THREE.Mesh && obj.material instanceof THREE.MeshStandardMaterial) {
+          const mat = obj.material;
+          mat.emissive.set('#ffffff');
+          mat.emissiveMap = emMap;
+          mat.emissiveIntensity = child.name === 'shop' ? Math.max(0.18, glowRef.current * 1.15) : glowRef.current;
+          mat.needsUpdate = true;
+          tracked.push({ mat, isShop: child.name === 'shop' });
+        }
+      });
     }
-  }), [finishes]);
-  return <group>{batches.map(({ id, parts, finish }) => <WorldSectionBatch key={id} parts={parts} finish={finish} />)}</group>;
+    litMaterialsRef.current = tracked;
+  }, [batches, emissiveLookup]);
+
+  useFrame((_, dt) => {
+    const activeThemeId = resolveActiveThemeId(simState.startMenuOpen, simState.lobbyTheme, simState.worldTimeTheme);
+    const targetGlow = LOBBY_THEMES[activeThemeId].windowGlow;
+    const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
+    glowRef.current = THREE.MathUtils.lerp(glowRef.current, targetGlow, damp);
+    const activeGlow = glowRef.current < 0.03 ? 0 : glowRef.current;
+    for (const entry of litMaterialsRef.current) {
+      entry.mat.emissiveIntensity = entry.isShop
+        ? (glowRef.current < 0.03 ? 0.03 : glowRef.current * 1.15)
+        : activeGlow;
+    }
+  });
+
+  useEffect(() => () => {
+    const textures = new Set<THREE.Texture>();
+    Object.values(finishes).forEach((finish) => {
+      finish.geometry?.dispose();
+      if (finish.map) textures.add(finish.map);
+      if (finish.normalMap) textures.add(finish.normalMap);
+      if (finish.roughnessMap) textures.add(finish.roughnessMap);
+    });
+    Object.values(emissiveLookup).forEach((tex) => textures.add(tex));
+    textures.forEach((tex) => tex.dispose());
+  }, [finishes, emissiveLookup]);
+
+  return (
+    <group ref={cityGroupRef}>
+      {batches.map(({ id, parts: batchParts, finish }) => (
+        <group key={id} name={id}>
+          <WorldSectionBatch parts={batchParts} finish={finish} />
+        </group>
+      ))}
+    </group>
+  );
 }

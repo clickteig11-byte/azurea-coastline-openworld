@@ -104,19 +104,19 @@ interface RpmMaterialRefs {
 
 const DEFAULT_CUSTOMIZATION: CharacterCustomization = {
   archetype: 'RPM_CUSTOM',
-  presetName: 'Azurea Founder',
-  skinColor: '#f5d0b5',
-  topColor: '#1e3a8a',
-  topRoughness: 0.35,
-  topMetalness: 0.25,
-  bottomColor: '#0f172a',
+  presetName: 'Riviera Runner',
+  skinColor: '#f1c7a8',
+  topColor: '#0284c7',
+  topRoughness: 0.34,
+  topMetalness: 0.14,
+  bottomColor: '#1e293b',
   footwearColor: '#f8fafc',
-  headwearOn: true,
+  headwearOn: false,
   headwearColor: '#0f172a',
   beardOn: false,
   beardColor: '#27272a',
-  eyewear: 'AVIATOR_GOLD',
-  backpackOn: true,
+  eyewear: 'NONE',
+  backpackOn: false,
 };
 
 const AIM_CENTER = new THREE.Vector2();
@@ -146,7 +146,7 @@ export function triggerBattleRoyaleDrop() {
   simState.brActive = simState.gameMode === 'BATTLE_ROYALE';
   simState.parachuting = true;
   simState.gliding = false;
-  simState.playerPos.set(0, 118, 52);
+  simState.playerPos.set(12, 126, 76);
   simState.playerVel.set(0, -10, 0);
   simState.playerYaw = Math.PI;
   simState.playerHp = 100;
@@ -424,6 +424,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const viewModel = useRef<THREE.Group>(null);
   const viewWeapon = useRef<THREE.Group>(null);
   const viewPick = useRef<THREE.Group>(null);
+  const sleeveLeftMatRef = useRef<THREE.MeshStandardMaterial>(null);
+  const sleeveRightMatRef = useRef<THREE.MeshStandardMaterial>(null);
   const worldPick = useRef<THREE.Group>(null);
   const clonedWeapon = useRef<THREE.Object3D | null>(null);
   const cameraBlend = useRef(0);
@@ -554,6 +556,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (backpackGroupRef.current) {
       backpackGroupRef.current.visible = !coastalRigs.current.has(cust.archetype as CoastalCharacter) && Boolean(cust.backpackOn);
     }
+    if (sleeveLeftMatRef.current) {
+      sleeveLeftMatRef.current.color.set(cust.topColor);
+    }
+    if (sleeveRightMatRef.current) {
+      sleeveRightMatRef.current.color.set(cust.topColor);
+    }
   };
 
   const selectWeaponSlot = (idx: number) => {
@@ -595,7 +603,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (!aiming.ready || simState.shotCooldown > 0 || simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen ||
         foot && (footMotion.current.swim || simState.parachuting || simState.gliding) ||
         simState.gameMode === 'BATTLE_ROYALE' && simState.brResult !== null) return;
-    if (foot && construction.active) {
+    if (foot && construction.active && !simState.parachuting && !simState.gliding) {
       if (placeBuild(buildPoint(), simState.playerPos)) {
         const point = construction.preview?.origin ?? simState.playerPos;
         emitEnvironment('dust', point, 0.5);
@@ -671,19 +679,41 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         to = obstruction.point;
       }
     }
+    let splashHit = false;
     if (hit) {
       damageWorld(hit, spec.damage);
-      if (spec.id === 'RPG') blastWorld(to, 6.2, spec.damage * 0.8, hit.section);
+      if (spec.id === 'RPG') {
+        blastWorld(to, 6.2, spec.damage * 0.8, hit.section);
+      }
     } else if (bestBot) {
       const eliminated = injureBot(bestBot, spec.damage, direction.x * 3.9, direction.z * 3.9);
       aiming.feedback = 0.24;
       soundEngine.playHitMarker(eliminated);
+      if (spec.id === 'RPG') blastWorld(to, 6.2, spec.damage * 0.75);
     } else if (civilian) {
       civilian.impact(spec.damage, direction, to);
       aiming.feedback = 0.19;
       soundEngine.playHitMarker(false);
     }
-    aiming.impact = Boolean(bestBot || civilian || hit);
+    if (spec.id === 'RPG' && simState.brActive) {
+      for (const bot of simState.botTargets) {
+        if (!bot.alive || bot === bestBot) continue;
+        const bx = bot.x - to.x;
+        const by = bot.y + 0.9 - to.y;
+        const bz = bot.z - to.z;
+        const dist = Math.hypot(bx, by, bz);
+        if (dist < 5.5) {
+          const falloff = 1 - dist / 5.5;
+          const splashDmg = Math.round(spec.damage * 0.75 * falloff);
+          const push = 4.2 * falloff / Math.max(0.5, Math.hypot(bx, bz));
+          const eliminated = injureBot(bot, splashDmg, bx * push, bz * push, falloff * 0.45);
+          aiming.feedback = 0.24;
+          splashHit = true;
+          soundEngine.playHitMarker(eliminated);
+        }
+      }
+    }
+    aiming.impact = Boolean(bestBot || civilian || hit || splashHit);
     simState.lastShotFrom = muzzle.toArray();
     simState.lastShotTo = to.toArray();
   };
@@ -781,6 +811,53 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
   };
 
+  const syncCarFleet = (nextIdx: number) => {
+    const safeIdx = ((nextIdx % CAR_NAMES.length) + CAR_NAMES.length) % CAR_NAMES.length;
+    activeCarIdxRef.current = safeIdx;
+    simState.activeCarIdx = safeIdx;
+    simState.activeCarName = CAR_NAMES[safeIdx];
+    Object.assign(simState.carDamage, { hp: 100, wrecked: false });
+    if (simState.mode === 'CAR') {
+      simState.vehicleHp = 100;
+      simState.vehicleWrecked = false;
+    }
+    carRigsRef.current.forEach((rig, idx) => {
+      if (rig) rig.wrapper.visible = idx === safeIdx;
+    });
+  };
+
+  const syncPlaneFleet = (nextIdx: number) => {
+    const safeIdx = ((nextIdx % PLANE_NAMES.length) + PLANE_NAMES.length) % PLANE_NAMES.length;
+    activePlaneIdxRef.current = safeIdx;
+    simState.activePlaneIdx = safeIdx;
+    simState.activePlaneName = PLANE_NAMES[safeIdx];
+    simState.aircraftDamage = freshAircraftDamage();
+    simState.planeVel.set(0, 0, 0);
+    simState.planeRoll = 0;
+    if (simState.mode === 'PLANE') {
+      simState.vehicleHp = 100;
+      simState.vehicleWrecked = false;
+    }
+    planeRigsRef.current.forEach((rig, idx) => {
+      if (rig) rig.wrapper.visible = idx === safeIdx;
+    });
+  };
+
+  const syncBoatFleet = (nextIdx: number) => {
+    const safeIdx = ((nextIdx % BOAT_NAMES.length) + BOAT_NAMES.length) % BOAT_NAMES.length;
+    activeBoatIdxRef.current = safeIdx;
+    simState.activeBoatIdx = safeIdx;
+    simState.activeBoatName = BOAT_NAMES[safeIdx];
+    Object.assign(simState.boatDamage, { hp: 100, wrecked: false });
+    if (simState.mode === 'BOAT') {
+      simState.vehicleHp = 100;
+      simState.vehicleWrecked = false;
+    }
+    boatRigsRef.current.forEach((rig, idx) => {
+      if (rig) rig.wrapper.visible = idx === safeIdx;
+    });
+  };
+
   // Cycle between 5 Hero Cars, 6 Aircraft, 6 Boats/Ships, Character Customizer Studio, Parachute Sky-Drop & Weapons
   useEffect(() => {
     const s = simState as any;
@@ -788,46 +865,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (!s.activePlaneName) s.activePlaneName = PLANE_NAMES[0];
     if (!s.activeBoatName) s.activeBoatName = BOAT_NAMES[0];
 
-    const cycleHeroCar = () => {
-      const nextIdx = (activeCarIdxRef.current + 1) % CAR_NAMES.length;
-      activeCarIdxRef.current = nextIdx;
-      s.activeCarIdx = nextIdx;
-      s.activeCarName = CAR_NAMES[nextIdx];
-      Object.assign(simState.carDamage, { hp: 100, wrecked: false });
-      simState.vehicleHp = 100;
-      simState.vehicleWrecked = false;
-      carRigsRef.current.forEach((rig, idx) => {
-        if (rig) rig.wrapper.visible = idx === nextIdx;
-      });
-    };
-
-    const cycleAircraft = () => {
-      const nextIdx = (activePlaneIdxRef.current + 1) % PLANE_NAMES.length;
-      activePlaneIdxRef.current = nextIdx;
-      s.activePlaneIdx = nextIdx;
-      s.activePlaneName = PLANE_NAMES[nextIdx];
-      simState.aircraftDamage = freshAircraftDamage();
-      simState.planeVel.set(0, 0, 0);
-      simState.planeRoll = 0;
-      simState.vehicleHp = 100;
-      simState.vehicleWrecked = false;
-      planeRigsRef.current.forEach((rig, idx) => {
-        if (rig) rig.wrapper.visible = idx === nextIdx;
-      });
-    };
-
-    const cycleBoat = () => {
-      const nextIdx = (activeBoatIdxRef.current + 1) % BOAT_NAMES.length;
-      activeBoatIdxRef.current = nextIdx;
-      s.activeBoatIdx = nextIdx;
-      s.activeBoatName = BOAT_NAMES[nextIdx];
-      Object.assign(simState.boatDamage, { hp: 100, wrecked: false });
-      simState.vehicleHp = 100;
-      simState.vehicleWrecked = false;
-      boatRigsRef.current.forEach((rig, idx) => {
-        if (rig) rig.wrapper.visible = idx === nextIdx;
-      });
-    };
+    const cycleHeroCar = () => syncCarFleet(activeCarIdxRef.current + 1);
+    const cycleAircraft = () => syncPlaneFleet(activePlaneIdxRef.current + 1);
+    const cycleBoat = () => syncBoatFleet(activeBoatIdxRef.current + 1);
 
     const cycleActiveFleetModel = () => {
       if (simState.mode === 'PLANE') {
@@ -852,30 +892,75 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (s.startMenuOpen || s.controlsOpen || (s.customizerOpen && e.code !== 'KeyC')) return;
       if (e.code === 'KeyV' && !e.repeat) {
         cycleHeroCar();
+        window.dispatchEvent(new CustomEvent('hud-sync'));
       } else if (e.code === 'KeyB' && !e.repeat) {
         cycleActiveFleetModel();
+        window.dispatchEvent(new CustomEvent('hud-sync'));
       } else if (e.code === 'KeyC' && !e.repeat) {
         toggleCharacterCustomizer();
       } else if (e.code === 'KeyP' && !e.repeat) {
         triggerBattleRoyaleDrop();
       } else if (e.code === 'KeyQ' && !e.repeat) {
+        construction.active = false;
+        construction.pickaxe = false;
         selectWeaponSlot(simState.activeWeaponIdx + 1);
+        window.dispatchEvent(new CustomEvent('hud-sync'));
       } else if (e.code === 'KeyH' && !e.repeat) {
         repairVehicle();
       } else if (e.code === 'KeyT' && !e.repeat && simState.mode === 'FOOT') {
         construction.pickaxe = !construction.pickaxe;
         construction.active = false;
+        window.dispatchEvent(new CustomEvent('hud-sync'));
       } else if (e.code === 'KeyG' && !e.repeat && simState.mode === 'FOOT') {
         construction.active = !construction.active;
+        if (construction.active) construction.pickaxe = false;
+        window.dispatchEvent(new CustomEvent('hud-sync'));
       } else if (construction.active && simState.mode === 'FOOT' && !e.repeat) {
         const piece = ['Digit5', 'Digit6', 'Digit7', 'Digit8'].indexOf(e.code);
-        if (piece >= 0) construction.type = BUILD_TYPES[piece];
-        else if (e.code === 'KeyR') construction.turn = (construction.turn + 1) % 4;
-        else if (e.code === 'KeyY') construction.material = BUILD_MATERIALS[(BUILD_MATERIALS.indexOf(construction.material) + 1) % 3];
-        else if (e.code === 'KeyF') fireActiveWeapon();
+        if (piece >= 0) {
+          construction.type = BUILD_TYPES[piece];
+          window.dispatchEvent(new CustomEvent('hud-sync'));
+        } else if (e.code === 'KeyR') {
+          construction.turn = (construction.turn + 1) % 4;
+          window.dispatchEvent(new CustomEvent('hud-sync'));
+        } else if (e.code === 'KeyY') {
+          construction.material = BUILD_MATERIALS[(BUILD_MATERIALS.indexOf(construction.material) + 1) % 3];
+          window.dispatchEvent(new CustomEvent('hud-sync'));
+        } else if (e.code === 'KeyF') fireActiveWeapon();
       } else if (e.code === 'KeyF') {
         fireActiveWeapon();
       }
+    };
+
+    const onLobbyVehicleChange = (e: Event) => {
+      const detail = (e as CustomEvent<{
+        kind?: 'CAR' | 'BOAT' | 'PLANE';
+        idx?: number;
+        carIdx?: number;
+        planeIdx?: number;
+        boatIdx?: number;
+      } | undefined>).detail;
+      const carIdx =
+        detail?.kind === 'CAR' && typeof detail.idx === 'number'
+          ? detail.idx
+          : typeof detail?.carIdx === 'number'
+          ? detail.carIdx
+          : s.activeCarIdx;
+      const planeIdx =
+        detail?.kind === 'PLANE' && typeof detail.idx === 'number'
+          ? detail.idx
+          : typeof detail?.planeIdx === 'number'
+          ? detail.planeIdx
+          : s.activePlaneIdx;
+      const boatIdx =
+        detail?.kind === 'BOAT' && typeof detail.idx === 'number'
+          ? detail.idx
+          : typeof detail?.boatIdx === 'number'
+          ? detail.boatIdx
+          : s.activeBoatIdx;
+      if (typeof carIdx === 'number') syncCarFleet(carIdx);
+      if (typeof planeIdx === 'number') syncPlaneFleet(planeIdx);
+      if (typeof boatIdx === 'number') syncBoatFleet(boatIdx);
     };
 
     const onCycleCarEvent = () => cycleHeroCar();
@@ -934,6 +1019,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     };
 
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('lobby-vehicle-change', onLobbyVehicleChange);
     window.addEventListener('cycle-car', onCycleCarEvent);
     window.addEventListener('cycle-plane', onCyclePlaneEvent);
     window.addEventListener('cycle-boat', onCycleBoatEvent);
@@ -952,6 +1038,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     window.addEventListener('blur', onBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('lobby-vehicle-change', onLobbyVehicleChange);
       window.removeEventListener('cycle-car', onCycleCarEvent);
       window.removeEventListener('cycle-plane', onCyclePlaneEvent);
       window.removeEventListener('cycle-boat', onCycleBoatEvent);
@@ -1259,14 +1346,20 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           if (/attach-back-mesh|shellSpine2|hardwareSpine2/i.test(mesh.name)) materials.pack.push(mesh);
           if (Array.isArray(mesh.material) || !(mesh.material as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
           const finish = mesh.material as THREE.MeshStandardMaterial;
-          if (collected.has(finish)) return;
-          collected.add(finish);
-          if (finish.name === 'Outfit Fabric' || finish.name === 'Shirt') materials.fabrics.push(finish);
-          if (finish.name === 'Utility Trousers' || finish.name === 'Pants') materials.trousers.push(finish);
-          if (/^Hair(?:Base)?$/.test(finish.name)) materials.hair.push(finish);
-          if (finish.name === 'Skin') materials.skin.push(finish);
-          if (finish.name === 'Shoes') materials.shoes.push(finish);
-          if (finish.name === 'Reflective Safety Trim') materials.accents.push(finish);
+          if (!collected.has(finish)) {
+            collected.add(finish);
+            finish.flatShading = false;
+            finish.roughness = Math.max(finish.roughness, 0.76);
+            finish.metalness = Math.min(finish.metalness, 0.05);
+            finish.envMapIntensity = 0.55;
+            finish.needsUpdate = true;
+            if (finish.name === 'Outfit Fabric' || finish.name === 'Shirt') materials.fabrics.push(finish);
+            if (finish.name === 'Utility Trousers' || finish.name === 'Pants') materials.trousers.push(finish);
+            if (/^Hair(?:Base)?$/.test(finish.name)) materials.hair.push(finish);
+            if (finish.name === 'Skin') materials.skin.push(finish);
+            if (finish.name === 'Shoes') materials.shoes.push(finish);
+            if (finish.name === 'Reflective Safety Trim') materials.accents.push(finish);
+          }
         });
         const bounds = new THREE.Box3().setFromObject(model);
         const height = bounds.max.y - bounds.min.y;
@@ -1526,7 +1619,14 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         if (isCar) simState.carSpeed *= 0.94;
         return;
       }
-      if (isCar && Math.abs(hit.normal.y) < 0.8) simState.carSpeed *= normalSpeed > 12 ? -0.19 : 0.32;
+      if (isCar && Math.abs(hit.normal.y) < 0.8) {
+        const headOn = Math.max(0, -direction.dot(hit.normal));
+        if (headOn > 0.55) {
+          simState.carSpeed *= normalSpeed > 12 ? -0.22 : 0.28;
+        } else {
+          simState.carSpeed *= 1 - headOn * 0.65;
+        }
+      }
       if (vehicle === 'BOAT') simState.boatSpeed *= normalSpeed > 8 ? -0.23 : 0.35;
       if (isPlane) {
         simState.planeSpeed *= hit.normal.y > 0.65 ? 0.67 : 0.42;
@@ -1617,28 +1717,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       applyCharacterCustomization();
     }
 
-    // Sync active fleet indices if changed from HUD
+    // Sync active fleet indices if changed from HUD or Lobby
     if (typeof s.activeCarIdx === 'number' && s.activeCarIdx !== activeCarIdxRef.current) {
-      activeCarIdxRef.current = s.activeCarIdx;
-      Object.assign(simState.carDamage, { hp: 100, wrecked: false });
-      carRigsRef.current.forEach((rig, idx) => {
-        if (rig) rig.wrapper.visible = idx === activeCarIdxRef.current;
-      });
+      syncCarFleet(s.activeCarIdx);
     }
     if (typeof s.activePlaneIdx === 'number' && s.activePlaneIdx !== activePlaneIdxRef.current) {
-      activePlaneIdxRef.current = s.activePlaneIdx;
-      simState.aircraftDamage = freshAircraftDamage();
-      simState.planeVel.set(0, 0, 0);
-      planeRigsRef.current.forEach((rig, idx) => {
-        if (rig) rig.wrapper.visible = idx === activePlaneIdxRef.current;
-      });
+      syncPlaneFleet(s.activePlaneIdx);
     }
     if (typeof s.activeBoatIdx === 'number' && s.activeBoatIdx !== activeBoatIdxRef.current) {
-      activeBoatIdxRef.current = s.activeBoatIdx;
-      Object.assign(simState.boatDamage, { hp: 100, wrecked: false });
-      boatRigsRef.current.forEach((rig, idx) => {
-        if (rig) rig.wrapper.visible = idx === activeBoatIdxRef.current;
-      });
+      syncBoatFleet(s.activeBoatIdx);
     }
 
     // FPS tracker
@@ -1834,15 +1921,21 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         if (motion.swim) {
           const surface = simState.tideOffset + getWaveHeight(player.x, player.z, t);
           const depth = THREE.MathUtils.clamp(Math.hypot(velocity.x, velocity.z) / 4, 0, 1);
-          const target = Math.max(groundY, surface - 1.14 - depth * 0.09 + Math.sin(t * 3.7) * 0.052);
-          velocity.y = THREE.MathUtils.damp(velocity.y, (target - player.y) * 10, 8.5, dt);
-          player.y = Math.max(groundY, player.y + velocity.y * dt);
-          motion.splash -= dt;
-          if (hasInput && motion.splash <= 0) {
-            motion.splash = boost ? 0.32 : 0.57;
-            const stroke = 0.33 + depth * 0.45;
-            emitEnvironment('water', player.clone().setY(surface + 0.07), stroke, velocity.x, velocity.z);
-            soundEngine.playSurface('water', stroke * 0.52);
+          if (jumpPressed && simState.tideOffset - groundY < 0.95) {
+            motion.swim = false;
+            velocity.y = 5.6;
+            soundEngine.playSurface('water', 0.42);
+          } else {
+            const target = Math.max(groundY, surface - 1.14 - depth * 0.09 + Math.sin(t * 3.7) * 0.052);
+            velocity.y = THREE.MathUtils.damp(velocity.y, (target - player.y) * 10, 8.5, dt);
+            player.y = Math.max(groundY, player.y + velocity.y * dt);
+            motion.splash -= dt;
+            if (hasInput && motion.splash <= 0) {
+              motion.splash = boost ? 0.32 : 0.57;
+              const stroke = 0.33 + depth * 0.45;
+              emitEnvironment('water', player.clone().setY(surface + 0.07), stroke, velocity.x, velocity.z);
+              soundEngine.playSurface('water', stroke * 0.52);
+            }
           }
         } else {
           const contact = onGround && player.y <= groundY + 0.18;
@@ -1987,9 +2080,14 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const drifting = ride.grounded && oldSpeed > 10 && (launchDrift || Math.abs(ride.slip) > 0.155);
       isDrifting = drifting;
       tirePressure = drifting ? THREE.MathUtils.clamp((Math.abs(ride.slip) - 0.065) * 3.7, 0, 1) : 0;
-      if (launchDrift) ride.driftCharge = Math.min(100, ride.driftCharge + tirePressure * oldSpeed * dt * 1.6);
+      if (launchDrift) ride.driftCharge = Math.min(100, ride.driftCharge + tirePressure * oldSpeed * dt * 1.85);
       if (ride.driftHeld && !launchDrift) {
-        simState.driftScore = Math.min(100, simState.driftScore + ride.driftCharge);
+        if (ride.driftCharge >= 18 && throttleInput > 0.15 && !brake) {
+          ride.boost = Math.max(ride.boost, 0.42 + ride.driftCharge * 0.011);
+          simState.driftScore = Math.max(0, simState.driftScore - ride.driftCharge * 0.25);
+        } else {
+          simState.driftScore = Math.min(100, simState.driftScore + ride.driftCharge);
+        }
         ride.driftCharge = 0;
       }
       ride.driftHeld = launchDrift;
@@ -2101,7 +2199,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (simState.vehicleWrecked) {
         simState.boatSpeed = THREE.MathUtils.clamp(simState.boatSpeed, -6, 6);
       }
-      simState.boatYaw += (left - right) * 2.4 * steerSens * dt;
+      const boatTurnAuthority = 0.42 + 0.58 * Math.min(1, Math.abs(simState.boatSpeed) / 10);
+      simState.boatYaw += (left - right) * 2.4 * boatTurnAuthority * steerSens * dt;
 
       const prevX = simState.boatPos.x;
       const prevZ = simState.boatPos.z;
@@ -2178,7 +2277,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           simState.planeVel.x = THREE.MathUtils.damp(simState.planeVel.x, Math.sin(yaw) * forward + Math.cos(yaw) * sideways, 2.35, dt);
           simState.planeVel.z = THREE.MathUtils.damp(simState.planeVel.z, Math.cos(yaw) * forward - Math.sin(yaw) * sideways, 2.35, dt);
           simState.planeSpeed = Math.hypot(simState.planeVel.x, simState.planeVel.z);
-          const tiltLoss = Math.abs(simState.planePitch) * 1.7 + Math.abs(simState.planeRoll) * 0.65;
+          const tiltLoss = (Math.abs(simState.planePitch) * 1.7 + Math.abs(simState.planeRoll) * 0.65) * (steerAssist ? 0.16 : 0.65);
           simState.planeVel.y = THREE.MathUtils.damp(simState.planeVel.y,
             collective * (collective > 0 ? 10.5 : 6.2) * power - tiltLoss - (failing ? 2.75 : 0), 3.5, dt);
         } else {
@@ -2318,7 +2417,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     // Sync Active 3D Weapon Visibility & Recoil Kickback (hide weapon in Character Studio closeup so outfit is clear)
     const recoilOffset = -Math.max(0, simState.firingTimer - 0.16) * 1.1;
     if (weaponMountRef.current) {
-      weaponMountRef.current.visible = !isStartMenuOpen && !construction.pickaxe && !construction.active && !isCustomizerOpen && !footMotion.current.swim && !simState.gliding && !simState.parachuting && (mouseOrbitRef.current !== null || simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
+      weaponMountRef.current.visible = !isStartMenuOpen && !construction.pickaxe && !construction.active && !isCustomizerOpen && !footMotion.current.swim && !simState.gliding && !simState.parachuting && (aiming.ads || mouseOrbitRef.current !== null || simState.firingTimer > 0 || simState.gameMode === 'BATTLE_ROYALE');
       weaponMountRef.current.position.set(-0.13, 1.23, 0.42 + recoilOffset);
       weaponMountRef.current.rotation.x = simState.orbitPitch * 0.45;
     }
@@ -2409,7 +2508,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     if (taillightMatRef.current) {
       taillightMatRef.current.emissiveIntensity = simState.mode === 'CAR' && back > 0 ? 4.8 : 1.8;
     }
-    const showBoostFlames = simState.mode === 'CAR' && (boost || simState.roulette === 'RED');
+    const showBoostFlames = simState.mode === 'CAR' && (boost || suspension.current.boost > 0 || simState.roulette === 'RED');
     const flamePulse = 0.85 + Math.sin(t * 48) * 0.35;
     if (boostFlameLeftRef.current) {
       boostFlameLeftRef.current.visible = showBoostFlames;
@@ -2512,12 +2611,19 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     if (boatRef.current) {
       boatRef.current.position.copy(simState.boatPos);
-      const pitchWaveAmp = activeBoatIdxRef.current === 1 ? 0.015 : 0.04;
-      const rollWaveAmp = activeBoatIdxRef.current === 1 ? 0.018 : 0.05;
+      const isCruise = activeBoatIdxRef.current === 1;
+      const pitchWaveAmp = isCruise ? 0.015 : 0.04;
+      const rollWaveAmp = isCruise ? 0.018 : 0.05;
+      const turnHeel = simState.mode === 'BOAT' && !isCruise
+        ? (left - right) * Math.min(1, Math.abs(simState.boatSpeed) / 14) * 0.14
+        : 0;
+      const bowLift = simState.mode === 'BOAT' && !isCruise
+        ? -Math.min(0.09, Math.max(-0.04, simState.boatSpeed * 0.0024))
+        : 0;
       boatRef.current.rotation.set(
-        Math.sin(t * 2.5) * pitchWaveAmp,
+        Math.sin(t * 2.5) * pitchWaveAmp + bowLift,
         simState.boatYaw,
-        Math.cos(t * 2.1) * rollWaveAmp
+        Math.cos(t * 2.1) * rollWaveAmp + turnHeel
       );
     }
     // Spin propellers / submarine thrusters across all 6 Boat Fleet rigs
@@ -2600,31 +2706,54 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     // Camera Choreography: Start Menu Panoramic Orbit, Character Studio Camera, OR Snappy Chase Camera
     if (isStartMenuOpen) {
+      if (simState.lobbyEmoteTimer > 0) {
+        simState.lobbyEmoteTimer = Math.max(0, simState.lobbyEmoteTimer - dt);
+      }
       const stage = new THREE.Vector3(lobbyStage.x, lobbyStage.y + 0.067, lobbyStage.z);
       const heading = lobbyStage.yaw;
       const forward = new THREE.Vector3(Math.sin(heading), 0, Math.cos(heading));
       const side = new THREE.Vector3(Math.cos(heading), 0, -Math.sin(heading));
       const wide = state.size.width >= 720;
-      const eye = stage.clone().addScaledVector(forward, wide ? 4.95 : 5.6).addScaledVector(side, 0.34);
-      eye.y += wide ? 1.66 : 1.92;
-      const focus = stage.clone().addScaledVector(side, wide ? -1.36 : 0);
-      focus.y += wide ? 1.04 : 0.42;
+      const tabIsPlay = simState.lobbyTab === 'PLAY';
+      const breathX = Math.sin(t * 0.45) * 0.06;
+      const breathY = Math.cos(t * 0.36) * 0.025;
+      const eyeSideOffset = !tabIsPlay && wide ? -0.32 : 0;
+      const eye = stage.clone()
+        .addScaledVector(forward, wide ? 5.25 : 5.45)
+        .addScaledVector(side, eyeSideOffset + breathX);
+      eye.y += (wide ? 1.54 : 1.74) + breathY;
+
+      const focus = stage.clone().addScaledVector(side, !tabIsPlay && wide ? -1.1 : 0);
+      focus.y += wide ? 0.98 : (tabIsPlay ? 0.72 : 0.58);
+
+      const camFollowAlpha = 1 - Math.exp(-7 * dt);
       if (state.camera.position.distanceToSquared(eye) > 100) state.camera.position.copy(eye);
-      else state.camera.position.lerp(eye, 1 - Math.exp(-7 * dt));
-      state.camera.lookAt(focus);
+      else state.camera.position.lerp(eye, camFollowAlpha);
+      if (camTarget.current.distanceToSquared(focus) > 100) camTarget.current.copy(focus);
+      else camTarget.current.lerp(focus, camFollowAlpha);
+      state.camera.lookAt(camTarget.current);
+
       if (state.camera instanceof THREE.PerspectiveCamera) {
         state.camera.near = 0.12;
-        state.camera.fov = THREE.MathUtils.damp(state.camera.fov, wide ? 43 : 52, 9, dt);
+        state.camera.fov = THREE.MathUtils.damp(state.camera.fov, wide ? 43 : 51, 9, dt);
         state.camera.updateProjectionMatrix();
       }
       if (playerRef.current) {
+        playerRef.current.visible = true;
         playerRef.current.position.copy(stage);
         const yaw = heading + simState.lobbyYaw;
         playerRef.current.rotation.y += Math.atan2(Math.sin(yaw - playerRef.current.rotation.y),
           Math.cos(yaw - playerRef.current.rotation.y)) * (1 - Math.exp(-16 * dt));
         const rig = [rpmRigRef.current, michelleRigRef.current, soldierRigRef.current, ...coastalRigs.current.values()]
           .find((candidate) => candidate?.wrapper.visible);
-        if (rig) animateHumanoid(rig, { dt, time: t, phase: t * 0.5, speed: 0 });
+        if (rig) {
+          animateHumanoid(rig, {
+            dt, time: t, phase: t * 0.5, speed: 0, emote: simState.lobbyEmoteTimer,
+          });
+        }
+        if (accessoriesRootRef.current) {
+          accessoriesRootRef.current.position.y = rig?.wrapper.position.y ?? 0;
+        }
       }
     } else if (isCustomizerOpen) {
       const studioDist = 2.55;
@@ -2753,7 +2882,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         const verticalBob = simState.mode === 'FOOT' ? Math.sin(footMotion.current.phase * 2) * Math.min(0.033, speedKmh * 0.002) : 0;
         const pilot = activePos.clone().addScaledVector(travelForward, cameraLead);
         pilot.y += eyeHeight + verticalBob;
-        const pitch = THREE.MathUtils.clamp(-orbit.pitch + (inFlight ? simState.planePitch : 0), -1.22, 1.22);
+        const carPitch = simState.mode === 'CAR' ? -suspension.current.pitch * 0.65 : 0;
+        const pitch = THREE.MathUtils.clamp(-orbit.pitch + (inFlight ? simState.planePitch : carPitch), -1.22, 1.22);
         const look = forward.clone().multiplyScalar(Math.cos(pitch)).setY(Math.sin(pitch));
         const farLook = pilot.clone().addScaledVector(look, 85);
         const chaseLook = state.camera.getWorldDirection(new THREE.Vector3()).multiplyScalar(85).add(state.camera.position);
@@ -2790,7 +2920,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     aiming.thirdPerson = simState.cameraView !== 1;
     aiming.spread = THREE.MathUtils.damp(aiming.spread, Math.min(13, speedKmh * 0.19 + simState.firingTimer * 30) *
       (aiming.ads ? 0.36 : 1), 14, dt);
-    construction.preview = !isMenuOpen && simState.mode === 'FOOT' && construction.active ? planBuild(buildPoint(), simState.playerPos) : null;
+    construction.preview = !isMenuOpen && simState.mode === 'FOOT' && !simState.parachuting && !simState.gliding && construction.active
+      ? planBuild(buildPoint(), simState.playerPos)
+      : null;
     const swing = aiming.pickSwing > 0 ? Math.sin((1 - aiming.pickSwing / 0.5) * Math.PI) : 0;
     if (worldPick.current) {
       worldPick.current.visible = !isMenuOpen && simState.cameraView !== 1 && construction.pickaxe && !construction.active &&
@@ -2872,7 +3004,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         raceCountdown: simState.raceCountdown,
         bestLapTime: simState.bestLapTime,
         lapCount: simState.lapCount,
-        driftScore: simState.driftScore,
+        driftScore: Math.min(100, Math.round(simState.driftScore + suspension.current.driftCharge)),
         brActive: simState.brActive,
         parachuting: simState.parachuting,
         activeWeaponIdx: simState.activeWeaponIdx,
@@ -2911,10 +3043,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         <group ref={viewWeapon} rotation={[0, Math.PI, 0]} />
         <group ref={viewPick} rotation={[0.46, 0.2, -0.54]} scale={0.62}><Pickaxe /></group>
         <mesh position={[0.065, -0.09, 0.19]} rotation={[1.1, 0, -0.2]}>
-          <capsuleGeometry args={[0.047, 0.2, 4, 8]} /><meshStandardMaterial color="#254140" roughness={0.83} />
+          <capsuleGeometry args={[0.047, 0.2, 4, 8]} /><meshStandardMaterial ref={sleeveRightMatRef} color="#254140" roughness={0.83} />
         </mesh>
         <mesh position={[-0.085, -0.078, -0.09]} rotation={[1.3, 0, 0.43]}>
-          <capsuleGeometry args={[0.041, 0.18, 4, 8]} /><meshStandardMaterial color="#294649" roughness={0.82} />
+          <capsuleGeometry args={[0.041, 0.18, 4, 8]} /><meshStandardMaterial ref={sleeveLeftMatRef} color="#294649" roughness={0.82} />
         </mesh>
       </group>
       {/* CUSTOMIZABLE HIGH-RES HUMAN PLAYER (READY PLAYER ME + MICHELLE VIP + VANGUARD SOLDIER) + 3D ACCESSORIES */}

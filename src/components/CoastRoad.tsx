@@ -1,12 +1,15 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { useFrame } from '@react-three/fiber';
 import {
   COAST_CONNECTORS, COAST_ROAD_HALF_WIDTH, STUNT_RAMPS, coastBeachWidth,
   coastConnectorEnd, coastConnectorHeight, coastJunction, coastRoadHeight,
   coastRoadRadius, getTerrainHeight, getTravelHeight,
 } from '../game/worldMath';
-import { createPavementTexture } from './Textures';
+import { createPavementRoughnessTexture, createPavementTexture } from './Textures';
 import { DamageableProp, WorldSectionBatch, type Vec3, type WorldFinish, type WorldPart } from './WorldSections';
+import { LOBBY_THEMES, resolveActiveThemeId } from '../game/lobbyThemes';
+import { simState } from '../game/store';
 
 const segments = 600;
 const turn = Math.PI * 2;
@@ -51,11 +54,11 @@ function clearJunction(index: number, clearance: number) {
   return !coastJunction(x, z, clearance);
 }
 
-function connectorMesh(road: typeof COAST_CONNECTORS[number], side: number, from: number, to: number, lift: number) {
+function connectorMesh(road: typeof COAST_CONNECTORS[number], side: number, from: number, to: number, lift: number, endOffset = -7.7) {
   const innerZ = road.z + from;
   const outerZ = road.z + to;
-  const endA = coastConnectorEnd(innerZ, side, -7.7);
-  const endB = coastConnectorEnd(outerZ, side, -7.7);
+  const endA = coastConnectorEnd(innerZ, side, endOffset);
+  const endB = coastConnectorEnd(outerZ, side, endOffset);
   return surface(Array.from({ length: 22 }, (_, i) => {
     const fraction = i / 21;
     const x = THREE.MathUtils.lerp((road.cityEnd - 0.2) * side, endA, fraction);
@@ -113,6 +116,10 @@ function roadsideParts() {
 }
 
 export function CoastRoad() {
+  const lampBatchRef = useRef<THREE.Group>(null);
+  const lampMatRef = useRef<THREE.MeshStandardMaterial | null>(null);
+  const lampGlowRef = useRef(0.38);
+
   const road = useMemo(() => {
     const h = COAST_ROAD_HALF_WIDTH;
     const asphalt = coastStrip(-h, h, 0.043);
@@ -130,12 +137,23 @@ export function CoastRoad() {
     ]);
     const connectors = COAST_CONNECTORS.flatMap((road) => [-1, 1].map((side) => ({
       surface: connectorMesh(road, side, -road.halfWidth, road.halfWidth, 0.039),
-      line: connectorMesh(road, side, -0.072, 0.072, 0.061),
+      line: connectorMesh(road, side, -0.072, 0.072, 0.061, -9.2),
     })));
     return { asphalt, shoulder, lines, connectors, south };
   }, []);
   const parts = useMemo(roadsideParts, []);
   const pavement = useMemo(createPavementTexture, []);
+  const pavementRoughness = useMemo(createPavementRoughnessTexture, []);
+  const bollardGlowMat = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#fff2cc',
+        emissive: '#ffd485',
+        emissiveIntensity: 0.38,
+        roughness: 0.22,
+      }),
+    []
+  );
   const beach = useMemo(() => [-2.23, -1.82, -0.43, 0.27, 1.14, 2.14].map((angle, index) => {
     const radius = coastRoadRadius(angle) + coastBeachWidth(angle) * 0.62;
     const x = Math.sin(angle) * radius;
@@ -156,32 +174,70 @@ export function CoastRoad() {
     }));
   }), []);
 
+  useLayoutEffect(() => {
+    lampMatRef.current = null;
+    lampBatchRef.current?.traverse((obj) => {
+      if (obj instanceof THREE.Mesh && obj.material instanceof THREE.MeshStandardMaterial) {
+        lampMatRef.current = obj.material;
+      }
+    });
+  }, [parts]);
+
+  useFrame((_, dt) => {
+    const activeThemeId = resolveActiveThemeId(simState.startMenuOpen, simState.lobbyTheme, simState.worldTimeTheme);
+    const targetGlow = 0.25 + LOBBY_THEMES[activeThemeId].windowGlow * 1.65;
+    const damp = 1 - Math.exp(-2.8 * Math.min(dt, 0.1));
+    lampGlowRef.current = THREE.MathUtils.lerp(lampGlowRef.current, targetGlow, damp);
+    if (lampMatRef.current) {
+      lampMatRef.current.emissiveIntensity = lampGlowRef.current;
+    }
+    bollardGlowMat.emissiveIntensity = lampGlowRef.current * 0.92;
+  });
+
   useEffect(() => () => {
     pavement.dispose();
+    pavementRoughness.dispose();
+    bollardGlowMat.dispose();
     [road.asphalt, road.shoulder, road.south, ...road.lines,
       ...road.connectors.flatMap((connector) => [connector.surface, connector.line]), ...ramps].forEach((geo) => geo.dispose());
-  }, [road, pavement, ramps]);
+  }, [road, pavement, pavementRoughness, bollardGlowMat, ramps]);
 
   return (
     <group>
-      <mesh geometry={road.shoulder} receiveShadow><meshStandardMaterial color="#a7a69a" roughness={0.9} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={road.asphalt} receiveShadow><meshStandardMaterial map={pavement} roughness={0.92} side={THREE.DoubleSide} /></mesh>
-      <mesh geometry={road.south} receiveShadow><meshStandardMaterial map={pavement} roughness={0.92} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={1} /></mesh>
+      <mesh geometry={road.shoulder} receiveShadow>
+        <meshStandardMaterial color="#a7a69a" roughness={0.9} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={2} polygonOffsetUnits={2} />
+      </mesh>
+      <mesh geometry={road.asphalt} receiveShadow>
+        <meshStandardMaterial map={pavement} roughnessMap={pavementRoughness} roughness={0.9} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh geometry={road.south} receiveShadow>
+        <meshStandardMaterial map={pavement} roughnessMap={pavementRoughness} roughness={0.9} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={2} polygonOffsetUnits={2} />
+      </mesh>
       {road.lines.map((geometry, i) => (
-        <mesh key={i} geometry={geometry} receiveShadow><meshStandardMaterial color="#e9e2c9" roughness={0.85} side={THREE.DoubleSide} /></mesh>
+        <mesh key={i} geometry={geometry} receiveShadow>
+          <meshStandardMaterial color="#e9e2c9" roughness={0.82} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+        </mesh>
       ))}
       {road.connectors.map(({ surface, line }, i) => (
         <group key={i}>
-          <mesh geometry={surface} receiveShadow><meshStandardMaterial map={pavement} roughness={0.92} side={THREE.DoubleSide} /></mesh>
-          <mesh geometry={line} receiveShadow><meshStandardMaterial color="#c8af6f" roughness={0.82} side={THREE.DoubleSide} /></mesh>
+          <mesh geometry={surface} receiveShadow>
+            <meshStandardMaterial map={pavement} roughnessMap={pavementRoughness} roughness={0.9} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={1} polygonOffsetUnits={1} />
+          </mesh>
+          <mesh geometry={line} receiveShadow>
+            <meshStandardMaterial color="#c8af6f" roughness={0.8} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+          </mesh>
         </group>
       ))}
       {ramps.map((geometry, i) => (
-        <mesh key={i} geometry={geometry} receiveShadow><meshStandardMaterial color="#746a57" roughness={0.88} side={THREE.DoubleSide} /></mesh>
+        <mesh key={i} geometry={geometry} receiveShadow>
+          <meshStandardMaterial color="#746a57" roughness={0.88} side={THREE.DoubleSide} polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
+        </mesh>
       ))}
       <WorldSectionBatch parts={parts.foundations} finish={concrete} />
       <WorldSectionBatch parts={parts.metal} finish={steel} />
-      <WorldSectionBatch parts={parts.glass} finish={lamps} />
+      <group ref={lampBatchRef}>
+        <WorldSectionBatch parts={parts.glass} finish={lamps} />
+      </group>
       {beach.map(({ x, z, color, index }) => (
         <group key={index}>
           {index % 2 === 0 && <LifeguardStand x={x - 4.1} z={z - 1.6} index={index} />}
@@ -195,7 +251,7 @@ export function CoastRoad() {
           </DamageableProp>
         </group>
       ))}
-      <SouthBoardwalk />
+      <SouthBoardwalk bollardGlowMat={bollardGlowMat} />
     </group>
   );
 }
@@ -217,7 +273,7 @@ function LifeguardStand({ x, z, index }: { x: number; z: number; index: number }
   );
 }
 
-function SouthBoardwalk() {
+function SouthBoardwalk({ bollardGlowMat }: { bollardGlowMat: THREE.MeshStandardMaterial }) {
   const angle = 0.48;
   const radius = coastRoadRadius(angle) + 33;
   const x = Math.sin(angle) * radius;
@@ -234,15 +290,29 @@ function SouthBoardwalk() {
   return (
     <group>
       <WorldSectionBatch parts={slats} finish={boardwalkWood} />
-      {[0.7, 4.9, 9.1, 12.1].flatMap((distance) => [-1.6, 1.6].map((side) => {
+      {[0.7, 4.9, 9.1, 12.1].flatMap((distance, idx) => [-1.6, 1.6].map((side) => {
         const px = x + Math.sin(angle) * distance + Math.cos(angle) * side;
         const pz = z + Math.cos(angle) * distance - Math.sin(angle) * side;
         const base = getTerrainHeight(px, pz) - 0.29;
+        const hasBollardGlobe = idx === 0 || idx === 3;
         return (
-          <mesh key={distance + ':' + side} position={[px, (base + y) / 2, pz]} castShadow>
-            <boxGeometry args={[0.22, Math.max(0.25, y - base), 0.22]} />
-            <meshStandardMaterial color="#6a5544" roughness={0.87} />
-          </mesh>
+          <group key={distance + ':' + side}>
+            <mesh position={[px, (base + y) / 2, pz]} castShadow>
+              <boxGeometry args={[0.22, Math.max(0.25, y - base), 0.22]} />
+              <meshStandardMaterial color="#6a5544" roughness={0.87} />
+            </mesh>
+            {hasBollardGlobe && (
+              <group position={[px, y + 0.34, pz]}>
+                <mesh castShadow>
+                  <cylinderGeometry args={[0.1, 0.12, 0.56, 8]} />
+                  <meshStandardMaterial color="#4b3f35" roughness={0.82} />
+                </mesh>
+                <mesh position={[0, 0.33, 0]} material={bollardGlowMat}>
+                  <sphereGeometry args={[0.11, 10, 10]} />
+                </mesh>
+              </group>
+            )}
+          </group>
         );
       }))}
     </group>

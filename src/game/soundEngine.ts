@@ -18,6 +18,8 @@ class SoundEngine {
   private waveNoise: AudioBuffer | null = null;
   private muted = false;
   private userUnlocked = false;
+  private audioDisabled = false;
+  private resuming = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -34,26 +36,47 @@ class SoundEngine {
   }
 
   private ensureContext(): AudioContext | null {
-    if (this.muted || !this.userUnlocked || typeof window === 'undefined') return null;
+    if (this.muted || this.audioDisabled || !this.userUnlocked || typeof window === 'undefined') return null;
     try {
       if (!this.ctx) {
         const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (!Ctx) return null;
+        if (!Ctx) {
+          this.audioDisabled = true;
+          return null;
+        }
         this.ctx = new Ctx();
+        this.ctx.onstatechange = () => {
+          if (this.ctx?.state === 'closed') this.audioDisabled = true;
+        };
       }
-      if (this.ctx.state === 'suspended') {
-        void this.ctx.resume().catch(() => {});
+      if (this.ctx.state === 'suspended' && !this.resuming) {
+        this.resuming = true;
+        void this.ctx
+          .resume()
+          .catch(() => {
+            this.audioDisabled = true;
+            void this.ctx?.close().catch(() => {});
+            this.ctx = null;
+          })
+          .finally(() => {
+            this.resuming = false;
+          });
       }
-      return this.ctx.state === 'running' ? this.ctx : null;
+      return this.ctx?.state === 'running' ? this.ctx : null;
     } catch {
+      this.audioDisabled = true;
       return null;
     }
   }
 
   public toggleMute(): boolean {
     this.muted = !this.muted;
-    if (this.muted && this.engineGain && this.ctx) this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
-    if (this.muted && this.ctx && this.tireGain) this.tireGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.04);
+    try {
+      if (this.muted && this.engineGain && this.ctx) this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+      if (this.muted && this.ctx && this.tireGain) this.tireGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.04);
+    } catch {
+      /* ignore closed audio context */
+    }
     return this.muted;
   }
 
@@ -62,27 +85,40 @@ class SoundEngine {
   }
 
   public updateEngine(mode: VehicleMode, speedKmh: number): void {
-    const ctx = this.ensureContext();
-    if (!ctx || mode === 'FOOT') {
-      if (this.engineGain && this.ctx) this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+    if (mode === 'FOOT') {
+      try {
+        if (this.engineGain && this.ctx && this.ctx.state === 'running') {
+          this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
+        }
+      } catch {
+        /* ignore */
+      }
       return;
     }
-    if (!this.engineOsc || !this.engineGain || !this.engineFilter) {
-      this.engineOsc = ctx.createOscillator();
-      this.engineFilter = ctx.createBiquadFilter();
-      this.engineGain = ctx.createGain();
-      this.engineFilter.type = 'lowpass';
-      this.engineGain.gain.value = 0;
-      this.engineOsc.connect(this.engineFilter).connect(this.engineGain).connect(ctx.destination);
-      this.engineOsc.start();
+    const ctx = this.ensureContext();
+    if (!ctx) {
+      return;
     }
-    const now = ctx.currentTime;
-    const s = Math.min(Math.abs(speedKmh) / 140, 1.5);
-    const cfg = ENGINE_PROFILES[mode];
-    this.engineOsc.type = cfg.type;
-    this.engineOsc.frequency.setTargetAtTime(cfg.base + s * cfg.span, now, 0.06);
-    this.engineFilter.frequency.setTargetAtTime(cfg.cutoff + s * 240, now, 0.08);
-    this.engineGain.gain.setTargetAtTime(cfg.vol * (0.4 + s * 0.6), now, 0.08);
+    try {
+      if (!this.engineOsc || !this.engineGain || !this.engineFilter) {
+        this.engineOsc = ctx.createOscillator();
+        this.engineFilter = ctx.createBiquadFilter();
+        this.engineGain = ctx.createGain();
+        this.engineFilter.type = 'lowpass';
+        this.engineGain.gain.value = 0;
+        this.engineOsc.connect(this.engineFilter).connect(this.engineGain).connect(ctx.destination);
+        this.engineOsc.start();
+      }
+      const now = ctx.currentTime;
+      const s = Math.min(Math.abs(speedKmh) / 140, 1.5);
+      const cfg = ENGINE_PROFILES[mode];
+      this.engineOsc.type = cfg.type;
+      this.engineOsc.frequency.setTargetAtTime(cfg.base + s * cfg.span, now, 0.06);
+      this.engineFilter.frequency.setTargetAtTime(cfg.cutoff + s * 240, now, 0.08);
+      this.engineGain.gain.setTargetAtTime(cfg.vol * (0.4 + s * 0.6), now, 0.08);
+    } catch {
+      this.audioDisabled = true;
+    }
   }
 
   public playGunshot(weaponId: WeaponId = 'AR'): void {
@@ -150,26 +186,30 @@ class SoundEngine {
   public playSurface(kind: 'water' | 'landing' | 'step', energy: number): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
-    if (!this.waveNoise) {
-      this.waveNoise = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.45), ctx.sampleRate);
-      const samples = this.waveNoise.getChannelData(0);
-      for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+    try {
+      if (!this.waveNoise) {
+        this.waveNoise = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.45), ctx.sampleRate);
+        const samples = this.waveNoise.getChannelData(0);
+        for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1;
+      }
+      const source = ctx.createBufferSource();
+      const filter = ctx.createBiquadFilter();
+      const volume = ctx.createGain();
+      const now = ctx.currentTime;
+      const duration = kind === 'water' ? 0.24 : kind === 'landing' ? 0.19 : 0.105;
+      source.buffer = this.waveNoise;
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(kind === 'water' ? 1700 : kind === 'landing' ? 530 : 820, now);
+      filter.frequency.exponentialRampToValueAtTime(kind === 'water' ? 470 : 115, now + duration);
+      volume.gain.setValueAtTime(Math.max(0.002, Math.min(0.19, energy * (kind === 'step' ? 0.024 : 0.11))), now);
+      volume.gain.exponentialRampToValueAtTime(0.001, now + duration);
+      source.connect(filter).connect(volume).connect(ctx.destination);
+      source.start(now);
+      source.stop(now + duration);
+      if (kind === 'landing') this.tone(ctx, 58, 'sine', 0, 0.16, Math.min(0.16, energy * 0.095));
+    } catch {
+      this.audioDisabled = true;
     }
-    const source = ctx.createBufferSource();
-    const filter = ctx.createBiquadFilter();
-    const volume = ctx.createGain();
-    const now = ctx.currentTime;
-    const duration = kind === 'water' ? 0.24 : kind === 'landing' ? 0.19 : 0.105;
-    source.buffer = this.waveNoise;
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(kind === 'water' ? 1700 : kind === 'landing' ? 530 : 820, now);
-    filter.frequency.exponentialRampToValueAtTime(kind === 'water' ? 470 : 115, now + duration);
-    volume.gain.setValueAtTime(Math.max(0.002, Math.min(0.19, energy * (kind === 'step' ? 0.024 : 0.11))), now);
-    volume.gain.exponentialRampToValueAtTime(0.001, now + duration);
-    source.connect(filter).connect(volume).connect(ctx.destination);
-    source.start(now);
-    source.stop(now + duration);
-    if (kind === 'landing') this.tone(ctx, 58, 'sine', 0, 0.16, Math.min(0.16, energy * 0.095));
   }
 
   public setMuted(muted: boolean) {
@@ -187,21 +227,25 @@ class SoundEngine {
     if (!this.tireOsc && pressure <= 0) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
-    if (!this.tireOsc || !this.tireGain || !this.tireFilter) {
-      this.tireOsc = ctx.createOscillator();
-      this.tireOsc.type = 'sawtooth';
-      this.tireGain = ctx.createGain();
-      this.tireGain.gain.value = 0;
-      this.tireFilter = ctx.createBiquadFilter();
-      this.tireFilter.type = 'bandpass';
-      this.tireFilter.Q.value = 0.76;
-      this.tireOsc.connect(this.tireFilter).connect(this.tireGain).connect(ctx.destination);
-      this.tireOsc.start();
+    try {
+      if (!this.tireOsc || !this.tireGain || !this.tireFilter) {
+        this.tireOsc = ctx.createOscillator();
+        this.tireOsc.type = 'sawtooth';
+        this.tireGain = ctx.createGain();
+        this.tireGain.gain.value = 0;
+        this.tireFilter = ctx.createBiquadFilter();
+        this.tireFilter.type = 'bandpass';
+        this.tireFilter.Q.value = 0.76;
+        this.tireOsc.connect(this.tireFilter).connect(this.tireGain).connect(ctx.destination);
+        this.tireOsc.start();
+      }
+      const now = ctx.currentTime;
+      this.tireOsc.frequency.setTargetAtTime(470 + speed * 6.4 + pressure * 250, now, 0.065);
+      this.tireFilter.frequency.setTargetAtTime(900 + pressure * 1200, now, 0.065);
+      this.tireGain.gain.setTargetAtTime(Math.min(0.056, pressure * 0.057), now, 0.055);
+    } catch {
+      this.audioDisabled = true;
     }
-    const now = ctx.currentTime;
-    this.tireOsc.frequency.setTargetAtTime(470 + speed * 6.4 + pressure * 250, now, 0.065);
-    this.tireFilter.frequency.setTargetAtTime(900 + pressure * 1200, now, 0.065);
-    this.tireGain.gain.setTargetAtTime(Math.min(0.056, pressure * 0.057), now, 0.055);
   }
 
   public playConstruction(material: 'Wood' | 'Stone' | 'Metal') {
@@ -222,17 +266,21 @@ class SoundEngine {
   }
 
   private tone(ctx: AudioContext, freq: number, type: OscillatorType, delay: number, dur: number, peak: number): void {
-    const t0 = ctx.currentTime + delay;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t0);
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.02);
+    try {
+      const t0 = ctx.currentTime + delay;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + dur + 0.02);
+    } catch {
+      this.audioDisabled = true;
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { AIM_MODES, RETICLES, type AimMode, type Reticle } from './aim';
+import type { LobbyTabId, LobbyThemeId } from './lobbyThemes';
 import { RouletteOutcome, VehicleMode } from './worldMath';
 import type { Tumble } from './motion';
 import { grandPrixGates } from './grandPrix';
@@ -85,6 +86,22 @@ export const FOOTWEAR_COLOR_SWATCHES: string[] = [
 ];
 
 export const CHARACTER_PRESETS: CharacterCustomization[] = [
+  {
+    archetype: 'RPM_CUSTOM',
+    presetName: 'Riviera Runner',
+    skinColor: '#eab68c',
+    topColor: '#0284c7',
+    topRoughness: 0.38,
+    topMetalness: 0.14,
+    bottomColor: '#1e293b',
+    footwearColor: '#f8fafc',
+    headwearOn: false,
+    headwearColor: '#0f172a',
+    beardOn: false,
+    beardColor: '#27272a',
+    eyewear: 'NONE',
+    backpackOn: false,
+  },
   {
     archetype: 'COAST_NAVIGATOR',
     presetName: 'Harbor Navigator',
@@ -766,10 +783,15 @@ export const simState = {
   orbitPitch: 0,
   cameraView: 0,
   lobbyYaw: 0,
+  lobbyTheme: 'SUNLIT_RIVIERA' as LobbyThemeId,
+  lobbyAutoRotate: true,
+  lobbyEmoteTimer: 0,
+  lobbyTab: 'PLAY' as LobbyTabId,
+  worldTimeTheme: 'AUTO' as 'AUTO' | LobbyThemeId,
   touchControlsEnabled: false,
   tourVisitedIds: [] as string[],
   gliding: false,
-  chips: 0,
+  chips: 2500,
   multiplier: 1,
   roulette: 'IDLE' as RouletteOutcome,
   rouletteTimer: 45,

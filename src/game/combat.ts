@@ -10,7 +10,7 @@ export function injureBot(bot: BotTarget, amount: number, vx: number, vz: number
   bot.hp = Math.max(0, bot.hp - amount + absorbed);
   bot.hitFlash = 0.26;
   emitEnvironment(simState.controlSettings.blood && amount > absorbed ? 'blood' : 'impact', new THREE.Vector3(bot.x, bot.y + 1.06, bot.z), 0.28 + severity * 0.75, vx, vz);
-  if (bot.hp === 0 || severity > 0.21) {
+  if (bot.hp === 0 || severity > 0.14) {
     bot.parachuting = false;
     bot.fall = launchTumble(vx, vz, Math.max(0.19, severity), side);
     bot.downUntil = 1.55 + severity * 1.6;

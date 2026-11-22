@@ -15,20 +15,117 @@ import {
   createNormalMapFromCanvas,
   createBarkPBR,
   createAsphaltRoadTexture,
+  createAsphaltRoughnessTexture,
   createSidewalkCobblePBR,
   createCrosswalkIntersectionPBR,
   createModernConcreteSteelPBR,
 } from './Textures';
 import { VegasLandmarks } from './Landmarks';
-import { COAST_SUN, coastRoadRadius, coastRoadOffset, getTerrainHeight, LANDMARKS, NORTH_BAY_BRIDGE } from '../game/worldMath';
+import { coastRoadRadius, coastRoadOffset, getTerrainHeight, LANDMARKS, NORTH_BAY_BRIDGE } from '../game/worldMath';
 import { cityPlots } from './City';
 import { DamageableProp } from './WorldSections';
 import { registerWorldSection } from '../game/worldDamage';
 import { simState } from '../game/store';
+import { LOBBY_THEMES, resolveActiveThemeId, type LobbyThemeConfig } from '../game/lobbyThemes';
 
 export { VegasLandmarks };
 
-const SUN_DIR = COAST_SUN;
+export interface AtmosphereTarget {
+  theme: LobbyThemeConfig;
+  zenith: THREE.Color;
+  horizon: THREE.Color;
+  fogColor: THREE.Color;
+  sunColor: THREE.Color;
+  dirColor: THREE.Color;
+  hemiSky: THREE.Color;
+  hemiGround: THREE.Color;
+  fillColor: THREE.Color;
+  sunDir: THREE.Vector3;
+  sunsetWarmth: number;
+  moonVisibility: number;
+  starIntensity: number;
+  envIntensity: number;
+}
+
+const ROULETTE_COLORS = {
+  redZenith: new THREE.Color('#9a3412'),
+  redHorizon: new THREE.Color('#fdba74'),
+  redSun: new THREE.Color('#fb923c'),
+  redHemi: new THREE.Color('#fca57e'),
+  blackZenith: new THREE.Color('#24698f'),
+  blackHorizon: new THREE.Color('#aed1e1'),
+  blackHemi: new THREE.Color('#93c5fd'),
+  blackFill: new THREE.Color('#38bdf8'),
+};
+
+export function createAtmosphereTarget(): AtmosphereTarget {
+  const theme = LOBBY_THEMES.SUNLIT_RIVIERA;
+  return {
+    theme,
+    zenith: new THREE.Color(theme.skyZenith),
+    horizon: new THREE.Color(theme.skyHorizon),
+    fogColor: new THREE.Color(theme.fogColor),
+    sunColor: new THREE.Color(theme.sunColor),
+    dirColor: new THREE.Color(theme.dirColor),
+    hemiSky: new THREE.Color(theme.hemiSky),
+    hemiGround: new THREE.Color(theme.hemiGround),
+    fillColor: new THREE.Color(theme.fillColor),
+    sunDir: new THREE.Vector3(...theme.sunDir).normalize(),
+    sunsetWarmth: theme.sunsetWarmth,
+    moonVisibility: theme.moonVisibility,
+    starIntensity: theme.starIntensity,
+    envIntensity: 1.0,
+  };
+}
+
+export function resolveAtmosphereTarget(out: AtmosphereTarget): AtmosphereTarget {
+  const themeId = resolveActiveThemeId(simState.startMenuOpen, simState.lobbyTheme, simState.worldTimeTheme);
+  const theme = LOBBY_THEMES[themeId];
+  out.theme = theme;
+  out.zenith.set(theme.skyZenith);
+  out.horizon.set(theme.skyHorizon);
+  out.fogColor.set(theme.fogColor);
+  out.sunColor.set(theme.sunColor);
+  out.dirColor.set(theme.dirColor);
+  out.hemiSky.set(theme.hemiSky);
+  out.hemiGround.set(theme.hemiGround);
+  out.fillColor.set(theme.fillColor);
+  out.sunDir.set(theme.sunDir[0], theme.sunDir[1], theme.sunDir[2]).normalize();
+  out.sunsetWarmth = theme.sunsetWarmth;
+  out.moonVisibility = theme.moonVisibility;
+  out.starIntensity = theme.starIntensity;
+  out.envIntensity =
+    themeId === 'SUNLIT_RIVIERA' ? 1.0
+    : themeId === 'SUNSET_BOARDWALK' ? 0.78
+    : themeId === 'TACTICAL_OVERLOOK' ? 0.48
+    : 0.34;
+
+  if (!simState.startMenuOpen) {
+    if (simState.roulette === 'RED') {
+      out.zenith.lerp(ROULETTE_COLORS.redZenith, 0.78);
+      out.horizon.lerp(ROULETTE_COLORS.redHorizon, 0.72);
+      out.fogColor.lerp(ROULETTE_COLORS.redHorizon, 0.72);
+      out.sunColor.lerp(ROULETTE_COLORS.redSun, 0.55);
+      out.dirColor.lerp(ROULETTE_COLORS.redSun, 0.48);
+      out.hemiSky.lerp(ROULETTE_COLORS.redHemi, 0.48);
+      out.sunsetWarmth = Math.max(out.sunsetWarmth, 0.75);
+      out.moonVisibility *= 0.45;
+    } else if (simState.roulette === 'BLACK') {
+      out.zenith.lerp(ROULETTE_COLORS.blackZenith, 0.76);
+      out.horizon.lerp(ROULETTE_COLORS.blackHorizon, 0.70);
+      out.fogColor.lerp(ROULETTE_COLORS.blackHorizon, 0.70);
+      out.hemiSky.lerp(ROULETTE_COLORS.blackHemi, 0.45);
+      out.fillColor.lerp(ROULETTE_COLORS.blackFill, 0.50);
+    }
+  }
+  return out;
+}
+
+const tmpSrgbColor = new THREE.Color();
+function srgbTripleToLinearVec3(rgb: [number, number, number], out = new THREE.Vector3()): THREE.Vector3 {
+  tmpSrgbColor.setRGB(rgb[0], rgb[1], rgb[2], THREE.SRGBColorSpace);
+  return out.set(tmpSrgbColor.r, tmpSrgbColor.g, tmpSrgbColor.b);
+}
 
 function getSidewalkCobblePBR(): { map: THREE.CanvasTexture; roughnessMap?: THREE.CanvasTexture } {
   return { map: createSidewalkCobblePBR() };
@@ -79,31 +176,34 @@ export const REPAIR_BAY_COORDS: [number, number][] = [
 
 export function SkyDome() {
   const dome = useRef<THREE.Mesh>(null);
+  const initialTheme = LOBBY_THEMES.SUNLIT_RIVIERA;
+  const target = useMemo(createAtmosphereTarget, []);
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
-      uZenith: { value: new THREE.Color('#2679a6') },
-      uHorizon: { value: new THREE.Color('#c7d5d7') },
-      uSunColor: { value: new THREE.Color('#fef08a') },
-      uSunDir: { value: SUN_DIR.clone() },
+      uZenith: { value: new THREE.Color(initialTheme.skyZenith) },
+      uHorizon: { value: new THREE.Color(initialTheme.skyHorizon) },
+      uSunColor: { value: new THREE.Color(initialTheme.sunColor) },
+      uSunDir: { value: new THREE.Vector3(...initialTheme.sunDir).normalize() },
+      uMoonVis: { value: initialTheme.moonVisibility },
+      uStarIntensity: { value: initialTheme.starIntensity },
+      uSunsetWarmth: { value: initialTheme.sunsetWarmth },
     }),
     []
   );
 
-  const palette = useMemo(() => ({
-    neutral: [new THREE.Color('#2679a6'), new THREE.Color('#c7d5d7')],
-    blue: [new THREE.Color('#24698f'), new THREE.Color('#aed1e1')],
-    amber: [new THREE.Color('#9a3412'), new THREE.Color('#fdba74')],
-  }), []);
   useFrame((state, dt) => {
     uniforms.uTime.value = state.clock.elapsedTime;
-    const [zenith, horizon] = simState.roulette === 'RED' ? palette.amber :
-      simState.roulette === 'BLACK' ? palette.blue : palette.neutral;
-    const mix = 1 - Math.exp(-2 * dt);
+    resolveAtmosphereTarget(target);
+    const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
     dome.current?.position.copy(state.camera.position);
-    uniforms.uZenith.value.lerp(zenith, mix);
-    uniforms.uHorizon.value.lerp(horizon, mix);
-
+    uniforms.uZenith.value.lerp(target.zenith, damp);
+    uniforms.uHorizon.value.lerp(target.horizon, damp);
+    uniforms.uSunColor.value.lerp(target.sunColor, damp);
+    uniforms.uSunDir.value.lerp(target.sunDir, damp).normalize();
+    uniforms.uMoonVis.value = THREE.MathUtils.lerp(uniforms.uMoonVis.value, target.moonVisibility, damp);
+    uniforms.uStarIntensity.value = THREE.MathUtils.lerp(uniforms.uStarIntensity.value, target.starIntensity, damp);
+    uniforms.uSunsetWarmth.value = THREE.MathUtils.lerp(uniforms.uSunsetWarmth.value, target.sunsetWarmth, damp);
   });
 
   return (
@@ -122,20 +222,30 @@ export function SkyDome() {
 
 export function StylizedOcean() {
   const meshRef = useRef<THREE.Mesh>(null);
+  const initialTheme = LOBBY_THEMES.SUNLIT_RIVIERA;
+  const target = useMemo(createAtmosphereTarget, []);
+  const tmpShallow = useMemo(() => new THREE.Vector3(), []);
+  const tmpDeep = useMemo(() => new THREE.Vector3(), []);
+  const tmpFoam = useMemo(() => new THREE.Vector3(), []);
   const uniforms = useMemo(
     () => ({
       uTime: { value: 0 },
-      uShallow: { value: new THREE.Vector3(0.09, 0.58, 0.56) },
-      uDeep: { value: new THREE.Vector3(0.055, 0.24, 0.34) },
-      uFoam: { value: new THREE.Vector3(0.79, 0.88, 0.85) },
-      uSunDir: { value: SUN_DIR.clone() },
+      uShallow: { value: srgbTripleToLinearVec3(initialTheme.oceanShallow) },
+      uDeep: { value: srgbTripleToLinearVec3(initialTheme.oceanDeep) },
+      uFoam: { value: srgbTripleToLinearVec3(initialTheme.oceanFoam) },
+      uSunDir: { value: new THREE.Vector3(...initialTheme.sunDir).normalize() },
+      uSunColor: { value: new THREE.Color(initialTheme.sunColor) },
+      uHorizonCol: { value: new THREE.Color(initialTheme.skyHorizon) },
+      uSkyZenith: { value: new THREE.Color(initialTheme.skyZenith) },
+      uMoonVis: { value: initialTheme.moonVisibility },
+      uSunsetWarmth: { value: initialTheme.sunsetWarmth },
       uCameraPos: { value: new THREE.Vector3() },
     }),
     []
   );
 
   const geometry = useMemo(() => {
-    const mesh = new THREE.PlaneGeometry(2, 2, 220, 220);
+    const mesh = new THREE.PlaneGeometry(2, 2, 156, 156);
     mesh.rotateX(-Math.PI / 2);
     const vertices = mesh.attributes.position;
     // Concentrate vertices around the playable coastline and stretch the outer ocean to the horizon.
@@ -145,9 +255,23 @@ export function StylizedOcean() {
     return mesh;
   }, []);
 
-  useFrame((state) => {
+  useFrame((state, dt) => {
     uniforms.uTime.value = state.clock.elapsedTime;
     uniforms.uCameraPos.value.copy(state.camera.position);
+    resolveAtmosphereTarget(target);
+    const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
+    srgbTripleToLinearVec3(target.theme.oceanShallow, tmpShallow);
+    srgbTripleToLinearVec3(target.theme.oceanDeep, tmpDeep);
+    srgbTripleToLinearVec3(target.theme.oceanFoam, tmpFoam);
+    uniforms.uShallow.value.lerp(tmpShallow, damp);
+    uniforms.uDeep.value.lerp(tmpDeep, damp);
+    uniforms.uFoam.value.lerp(tmpFoam, damp);
+    uniforms.uSunDir.value.lerp(target.sunDir, damp).normalize();
+    uniforms.uSunColor.value.lerp(target.sunColor, damp);
+    uniforms.uHorizonCol.value.lerp(target.horizon, damp);
+    uniforms.uSkyZenith.value.lerp(target.zenith, damp);
+    uniforms.uMoonVis.value = THREE.MathUtils.lerp(uniforms.uMoonVis.value, target.moonVisibility, damp);
+    uniforms.uSunsetWarmth.value = THREE.MathUtils.lerp(uniforms.uSunsetWarmth.value, target.sunsetWarmth, damp);
     if (meshRef.current) {
       meshRef.current.position.y = simState.tideOffset;
     }
@@ -167,9 +291,19 @@ export function StylizedOcean() {
 }
 
 export function IslandTerrain() {
+  const initialTheme = LOBBY_THEMES.SUNLIT_RIVIERA;
+  const target = useMemo(createAtmosphereTarget, []);
+  const tmpSunLight = useMemo(() => new THREE.Color(), []);
+  const tmpAmbient = useMemo(() => new THREE.Color(), []);
   const uniforms = useMemo(
     () => THREE.UniformsUtils.merge([THREE.UniformsLib.lights, {
-      uSunDir: { value: SUN_DIR.clone() },
+      uSunDir: { value: new THREE.Vector3(...initialTheme.sunDir).normalize() },
+      uHorizonCol: { value: new THREE.Color(initialTheme.skyHorizon) },
+      uSunLightCol: { value: new THREE.Color(initialTheme.dirColor).multiplyScalar(initialTheme.dirIntensity * 0.46) },
+      uAmbientCol: { value: new THREE.Color(initialTheme.hemiSky).multiplyScalar(initialTheme.hemiIntensity * 0.54) },
+      uSunColor: { value: new THREE.Color(initialTheme.sunColor) },
+      uSunsetWarmth: { value: initialTheme.sunsetWarmth },
+      uMoonVis: { value: initialTheme.moonVisibility },
       uCameraPos: { value: new THREE.Vector3() },
       uTime: { value: 0 },
     }]),
@@ -177,7 +311,7 @@ export function IslandTerrain() {
   );
 
   const geometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(780, 1020, 228, 300);
+    const geo = new THREE.PlaneGeometry(780, 1020, 168, 216);
     geo.rotateX(-Math.PI / 2);
     geo.translate(0, 0, -153);
     const pos = geo.attributes.position;
@@ -192,9 +326,20 @@ export function IslandTerrain() {
     return geo;
   }, []);
 
-  useFrame((state) => {
+  useFrame((state, dt) => {
     uniforms.uTime.value = state.clock.elapsedTime;
     uniforms.uCameraPos.value.copy(state.camera.position);
+    resolveAtmosphereTarget(target);
+    const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
+    tmpSunLight.copy(target.dirColor).multiplyScalar(target.theme.dirIntensity * 0.46);
+    tmpAmbient.copy(target.hemiSky).multiplyScalar(target.theme.hemiIntensity * 0.54);
+    uniforms.uSunDir.value.lerp(target.sunDir, damp).normalize();
+    uniforms.uHorizonCol.value.lerp(target.horizon, damp);
+    uniforms.uSunLightCol.value.lerp(tmpSunLight, damp);
+    uniforms.uAmbientCol.value.lerp(tmpAmbient, damp);
+    uniforms.uSunColor.value.lerp(target.sunColor, damp);
+    uniforms.uSunsetWarmth.value = THREE.MathUtils.lerp(uniforms.uSunsetWarmth.value, target.sunsetWarmth, damp);
+    uniforms.uMoonVis.value = THREE.MathUtils.lerp(uniforms.uMoonVis.value, target.moonVisibility, damp);
   });
 
   return (
@@ -533,6 +678,53 @@ export function VegasStripDetails() {
     return t;
   }, []);
 
+  const mainAsphaltRough = useMemo(() => {
+    const t = createAsphaltRoughnessTexture();
+    t.repeat.set(1, 16);
+    return t;
+  }, []);
+
+  const crossAsphaltRough = useMemo(() => {
+    const t = createAsphaltRoughnessTexture().clone();
+    t.needsUpdate = true;
+    t.center.set(0.5, 0.5);
+    t.rotation = Math.PI / 2;
+    t.repeat.set(1, 6);
+    return t;
+  }, []);
+
+  const lampGlowRef = useRef(0.43);
+  const { streetLampBulbMat, busLedMat, busKioskMat } = useMemo(() => ({
+    streetLampBulbMat: new THREE.MeshStandardMaterial({
+      color: '#fef9c3',
+      emissive: '#fef08a',
+      emissiveIntensity: 0.43,
+      roughness: 0.2,
+    }),
+    busLedMat: new THREE.MeshStandardMaterial({
+      color: '#fef08a',
+      emissive: '#fef08a',
+      emissiveIntensity: 0.55,
+      roughness: 0.22,
+    }),
+    busKioskMat: new THREE.MeshStandardMaterial({
+      color: '#38bdf8',
+      emissive: '#0284c7',
+      emissiveIntensity: 0.85,
+      roughness: 0.18,
+    }),
+  }), []);
+
+  useEffect(() => () => {
+    mainAsphaltTex.dispose();
+    crossAsphaltTex.dispose();
+    mainAsphaltRough.dispose();
+    crossAsphaltRough.dispose();
+    streetLampBulbMat.dispose();
+    busLedMat.dispose();
+    busKioskMat.dispose();
+  }, [mainAsphaltTex, crossAsphaltTex, mainAsphaltRough, crossAsphaltRough, streetLampBulbMat, busLedMat, busKioskMat]);
+
   const { map: sidewalkTex, roughnessMap: sidewalkRough } = useMemo(() => getSidewalkCobblePBR(), []);
   const { map: crosswalkTex, roughnessMap: crosswalkRough } = useMemo(() => getCrosswalkIntersectionPBR(), []);
   const { map: steelConcreteTex, roughnessMap: steelConcreteRough } = useMemo(() => getModernConcreteSteelPBR(), []);
@@ -691,8 +883,15 @@ export function VegasStripDetails() {
     });
   }, [lootCrateModel, ammoCrateModel]);
 
-  useFrame((state) => {
+  useFrame((state, dt) => {
     const t = state.clock.elapsedTime;
+    const activeThemeId = resolveActiveThemeId(simState.startMenuOpen, simState.lobbyTheme, simState.worldTimeTheme);
+    const targetLampGlow = 0.28 + LOBBY_THEMES[activeThemeId].windowGlow * 1.85;
+    const damp = 1 - Math.exp(-2.8 * Math.min(dt, 0.1));
+    lampGlowRef.current = THREE.MathUtils.lerp(lampGlowRef.current, targetLampGlow, damp);
+    streetLampBulbMat.emissiveIntensity = lampGlowRef.current;
+    busLedMat.emissiveIntensity = 0.35 + lampGlowRef.current * 0.65;
+    busKioskMat.emissiveIntensity = 0.65 + lampGlowRef.current * 0.45;
     if (fountainRef.current) {
       fountainRef.current.children.forEach((jet, i) => {
         const wave = 0.5 + 0.5 * Math.sin(t * 4.2 + i * 0.55);
@@ -879,12 +1078,20 @@ export function VegasStripDetails() {
 
       {/* 1. Grand Central Avenue between the North Bay and South Promenade junctions */}
       <mesh
-        position={[0, groundY + 0.05, (coastRoadRadius(0) + NORTH_BAY_BRIDGE.approach) / 2]}
+        position={[0, groundY + 0.055, (coastRoadRadius(0) + NORTH_BAY_BRIDGE.approach) / 2]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
       >
         <planeGeometry args={[NORTH_BAY_BRIDGE.halfWidth * 2, coastRoadRadius(0) - NORTH_BAY_BRIDGE.approach]} />
-        <meshStandardMaterial map={mainAsphaltTex} roughness={0.82} metalness={0.08} />
+        <meshStandardMaterial
+          map={mainAsphaltTex}
+          roughnessMap={mainAsphaltRough}
+          roughness={0.86}
+          metalness={0.08}
+          polygonOffset
+          polygonOffsetFactor={1}
+          polygonOffsetUnits={1}
+        />
       </mesh>
 
       {/* Grand Central Avenue Textured Concrete Sidewalks (width = 5.5m along x = ±18.8) & Raised Stone Curbs */}
@@ -945,21 +1152,37 @@ export function VegasStripDetails() {
           <group key={blvd.name}>
             {/* West Wing Roadway */}
             <mesh
-              position={[westCenter, by + 0.048, blvd.z]}
+              position={[westCenter, by + 0.052, blvd.z]}
               rotation={[-Math.PI / 2, 0, 0]}
               receiveShadow
             >
               <planeGeometry args={[westLen, blvd.width]} />
-              <meshStandardMaterial map={crossAsphaltTex} roughness={0.82} metalness={0.08} />
+              <meshStandardMaterial
+                map={crossAsphaltTex}
+                roughnessMap={crossAsphaltRough}
+                roughness={0.86}
+                metalness={0.08}
+                polygonOffset
+                polygonOffsetFactor={1}
+                polygonOffsetUnits={1}
+              />
             </mesh>
             {/* East Wing Roadway */}
             <mesh
-              position={[eastCenter, by + 0.048, blvd.z]}
+              position={[eastCenter, by + 0.052, blvd.z]}
               rotation={[-Math.PI / 2, 0, 0]}
               receiveShadow
             >
               <planeGeometry args={[eastLen, blvd.width]} />
-              <meshStandardMaterial map={crossAsphaltTex} roughness={0.82} metalness={0.08} />
+              <meshStandardMaterial
+                map={crossAsphaltTex}
+                roughnessMap={crossAsphaltRough}
+                roughness={0.86}
+                metalness={0.08}
+                polygonOffset
+                polygonOffsetFactor={1}
+                polygonOffsetUnits={1}
+              />
             </mesh>
 
             {/* Cross-Boulevard Sidewalks & Raised Stone Curbs (West & East Wings) */}
@@ -1009,7 +1232,7 @@ export function VegasStripDetails() {
         return (
           <mesh
             key={`crosswalk-pad-${cz}`}
-            position={[0, iy + 0.062, cz]}
+            position={[0, iy + 0.072, cz]}
             rotation={[-Math.PI / 2, 0, 0]}
             receiveShadow
           >
@@ -1019,6 +1242,9 @@ export function VegasStripDetails() {
               roughnessMap={crosswalkRough}
               roughness={0.75}
               metalness={0.08}
+              polygonOffset
+              polygonOffsetFactor={-1}
+              polygonOffsetUnits={-1}
             />
           </mesh>
         );
@@ -1165,9 +1391,8 @@ export function VegasStripDetails() {
                 <meshStandardMaterial color="#0f172a" metalness={0.85} roughness={0.22} />
               </mesh>
               {/* Warm LED Ceiling Strip Light */}
-              <mesh position={[0.15, 3.22, 0]}>
+              <mesh position={[0.15, 3.22, 0]} material={busLedMat}>
                 <boxGeometry args={[1.6, 0.05, 4.8]} />
-                <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={1.1} />
               </mesh>
               {/* Tempered Glass Rear Windscreen Panel */}
               <mesh position={[-0.85, 1.65, 0]}>
@@ -1191,9 +1416,8 @@ export function VegasStripDetails() {
                 <boxGeometry args={[1.35, 2.55, 0.22]} />
                 <meshStandardMaterial color="#0f172a" metalness={0.8} roughness={0.25} />
               </mesh>
-              <mesh position={[0.1, 1.62, 2.45 * faceSign]}>
+              <mesh position={[0.1, 1.62, 2.45 * faceSign]} material={busKioskMat}>
                 <boxGeometry args={[1.12, 1.95, 0.26]} />
-                <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={1.25} roughness={0.18} />
               </mesh>
               </group>
             </DamageableProp>
@@ -1207,9 +1431,8 @@ export function VegasStripDetails() {
           position={lamp.pos} center={[0, 3.9, 0]} size={[0.47, 7.8, 0.47]}>
           <group rotation={[0, lamp.rotY, 0]}>
           <primitive object={lamp.obj} scale={1.08} />
-          <mesh position={[0, 8.35, 1.35]}>
+          <mesh position={[0, 8.35, 1.35]} material={streetLampBulbMat}>
             <boxGeometry args={[0.38, 0.1, 0.55]} />
-            <meshStandardMaterial color="#fef9c3" emissive="#fef08a" emissiveIntensity={1.8} />
           </mesh>
           </group>
         </DamageableProp>

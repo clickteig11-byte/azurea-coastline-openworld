@@ -30,11 +30,13 @@ export interface HumanoidRig {
   air: number;
   swim: number;
   stroke: number;
+  emoteElapsed: number;
+  emoteBlend: number;
   mixer?: THREE.AnimationMixer;
   clips: Partial<Record<'idle' | 'walk' | 'run', THREE.AnimationAction>>;
 }
 
-interface Pose {
+export interface Pose {
   dt: number;
   time: number;
   phase: number;
@@ -49,6 +51,7 @@ interface Pose {
   aim?: number;
   recoil?: number;
   harvest?: number;
+  emote?: number;
   lookPitch?: number;
   lookYaw?: number;
   ground?: GroundMotion;
@@ -70,7 +73,10 @@ function setPose(joint: Joint | undefined, x: number, y: number, z: number, blen
 }
 
 export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, animations: THREE.AnimationClip[] = []): HumanoidRig {
-  const rig: HumanoidRig = { wrapper, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0, clips: {}, legs: [] };
+  const rig: HumanoidRig = {
+    wrapper, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0,
+    emoteElapsed: 0, emoteBlend: 0, clips: {}, legs: [],
+  };
   wrapper.updateWorldMatrix(true, true);
   const bones: Record<string, THREE.Bone> = {};
   const aliases: Record<string, string> = { Abdomen: 'Spine', Torso: 'Spine1' };
@@ -208,14 +214,28 @@ function groundLegs(rig: HumanoidRig, ground: GroundMotion, phase: number, speed
 
 export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   const { dt, time, phase, speed, reverse = false, lateral = 0, airborne, fallSpeed = 0, landing = 0,
-    aim = 0, recoil = 0, lookPitch = 0, lookYaw = 0, ground, swimming = false, swimSpeed = 0 } = motion;
+    aim = 0, recoil = 0, emote = 0, lookPitch = 0, lookYaw = 0, ground, swimming = false, swimSpeed = 0 } = motion;
   const joints = rig.joints;
   rig.gait = THREE.MathUtils.damp(rig.gait, THREE.MathUtils.clamp(speed / 2.3, 0, 1), 13, dt);
   rig.aim = THREE.MathUtils.damp(rig.aim, aim, aim > rig.aim ? 22 : 10, dt);
   rig.air = THREE.MathUtils.damp(rig.air, airborne ? 1 : 0, 15, dt);
+
+  const canEmote = emote > 0 && rig.gait < 0.15 && !airborne && !swimming;
+  if (canEmote) {
+    rig.emoteElapsed += dt;
+  } else if (emote <= 0) {
+    rig.emoteElapsed = 0;
+  }
+  const emoteTarget = canEmote
+    ? THREE.MathUtils.smoothstep(rig.emoteElapsed, 0, 0.24) * THREE.MathUtils.smoothstep(emote, 0, 0.36)
+    : 0;
+  rig.emoteBlend = THREE.MathUtils.damp(rig.emoteBlend, emoteTarget, emoteTarget > rig.emoteBlend ? 14 : 10, dt);
+  const emoteWeight = rig.emoteBlend * (1 - rig.gait) * (1 - rig.air) * (1 - rig.swim);
+
   const swing = Math.sin(phase);
   const sway = Math.cos(phase);
   const breath = Math.sin(time * 2.45);
+  const idleSway = Math.sin(time * 0.95);
   const run = THREE.MathUtils.smoothstep(speed, 2.8, 6.3);
   const center = Math.abs(lateral);
   const animated = Boolean(rig.mixer && rig.clips.walk && rig.clips.run && rig.clips.idle);
@@ -223,6 +243,7 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   const chute = airborne === 'parachute';
   const tuck = airborne === 'jump';
   const groundBlend = 1 - rig.air;
+  const idleStance = (1 - rig.gait) * groundBlend * (1 - rig.aim);
   const response = 1 - Math.exp(-20 * dt);
 
   if (animated) {
@@ -241,15 +262,19 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   }
   const authored = !animated || center > 0.13;
   const baseBlend = authored ? response : 0;
-  const overlay = Math.max(baseBlend, rig.air, landing * 0.85);
+  const overlay = Math.max(baseBlend, rig.air, landing * 0.85, emoteWeight);
   const stride = rig.gait * (0.42 + run * 0.27) * groundBlend;
   const airLean = glide ? 0.76 : chute ? -0.12 : 0.11;
   const lean = (0.02 + run * 0.18) * rig.gait * groundBlend + airLean * rig.air + landing * 0.24;
-  setPose(joints.Hips, lean * 0.4, sway * stride * 0.105, -lateral * rig.gait * 0.12, overlay);
-  setPose(joints.Spine, lean + breath * 0.013, -sway * stride * 0.2, lateral * 0.09, overlay);
-  setPose(joints.Spine1, breath * 0.012 - landing * 0.08, rig.aim * lookYaw * 0.22, 0, Math.max(baseBlend, rig.aim * 0.5));
-  setPose(joints.Head, -lean * 0.68 + lookPitch * 0.36, lookYaw * 0.42 - sway * stride * 0.06,
-    -lateral * 0.05, Math.max(baseBlend, rig.aim, rig.air));
+  setPose(joints.Hips, lean * 0.4, sway * stride * 0.105 + idleStance * 0.04,
+    -lateral * rig.gait * 0.12 + idleStance * idleSway * 0.02, overlay);
+  setPose(joints.Spine, lean + breath * 0.014, -sway * stride * 0.2 - idleStance * 0.04,
+    lateral * 0.09 - idleStance * idleSway * 0.015, overlay);
+  setPose(joints.Spine1, breath * 0.014 - landing * 0.08 - idleStance * 0.025, rig.aim * lookYaw * 0.22,
+    0, Math.max(baseBlend, rig.aim * 0.5, emoteWeight));
+  setPose(joints.Head, -lean * 0.68 + lookPitch * 0.36 + idleStance * breath * 0.012,
+    lookYaw * 0.42 - sway * stride * 0.06 + idleStance * idleSway * 0.035,
+    -lateral * 0.05, Math.max(baseBlend, rig.aim, rig.air, emoteWeight));
 
   for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
     const cycle = swing * sign;
@@ -258,20 +283,48 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
     const strideWidth = (cycle * 0.39 + sign * 0.11) * lateral * rig.gait;
     const bent = (tuck ? (fallSpeed > 0 ? 0.57 : 0.26) + sign * 0.17 : chute ? 0.44 : 0.2) * rig.air;
     const knee = rise * stride * (1.05 + run * 0.5) + rig.air * (glide ? 0.36 : 0.77) + landing * 0.59;
-    setPose(joints[side + 'UpLeg'], -step - bent - landing * 0.29, 0, strideWidth + sign * (chute ? 0.12 : 0.038) * rig.air, overlay);
-    setPose(joints[side + 'Leg'], knee, 0, -strideWidth * 0.27, overlay);
-    setPose(joints[side + 'Foot'], -knee * 0.43 - Math.max(0, cycle) * stride * 0.35, lateral * 0.13, -strideWidth * 0.45, overlay);
+    setPose(joints[side + 'UpLeg'], -step - bent - landing * 0.29 - idleStance * (sign > 0 ? 0.035 : 0.015), 0,
+      strideWidth + sign * (chute ? 0.12 : 0.038) * rig.air + sign * idleStance * 0.045, overlay);
+    setPose(joints[side + 'Leg'], knee + idleStance * (sign > 0 ? 0.06 : 0.03), 0, -strideWidth * 0.27, overlay);
+    setPose(joints[side + 'Foot'], -knee * 0.43 - Math.max(0, cycle) * stride * 0.35 - idleStance * 0.03,
+      lateral * 0.13 + sign * idleStance * 0.05, -strideWidth * 0.45 - sign * idleStance * 0.035, overlay);
     setPose(joints[side + 'ToeBase'], Math.max(0, -cycle) * stride * 0.55, 0, 0, overlay);
 
-    const armSign = Math.sign(joints[side + 'Arm']?.bone.position.x ?? sign) || sign;
-    const armWeight = Math.max(baseBlend, rig.aim, rig.air);
+    const armWeight = Math.max(baseBlend, rig.aim, rig.air, emoteWeight);
     const reach = chute ? -1.85 : glide ? -0.53 : -0.37;
-    const armSwing = cycle * stride * (0.73 + run * 0.34);
+    const armSwing = cycle * stride * (0.73 + run * 0.34) - idleStance * 0.04;
+    const idleArmOut = (0.075 * groundBlend * (1 - rig.aim)) * sign;
     setPose(joints[side + 'Arm'], THREE.MathUtils.lerp(armSwing + reach * rig.air,
       -1.15 + lookPitch * 0.4 + recoil * 0.35, rig.aim), rig.aim * sign * 0.22,
-      (glide ? 1.18 : chute ? 0.46 : 0.13) * armSign * rig.air - 0.12 * armSign * rig.aim, armWeight);
-    setPose(joints[side + 'ForeArm'], -0.12 - run * 0.48 * groundBlend - (chute ? 0.83 : 0.28) * rig.air - rig.aim * 0.46,
+      (glide ? 1.18 : chute ? 0.46 : 0.13) * sign * rig.air + idleArmOut - 0.12 * sign * rig.aim, armWeight);
+    setPose(joints[side + 'ForeArm'], -0.22 - run * 0.52 * groundBlend - (chute ? 0.83 : 0.28) * rig.air - rig.aim * 0.46,
       -sign * rig.aim * 0.24, 0, armWeight);
+  }
+
+  let emoteDrop = 0;
+  if (emoteWeight > 0.004) {
+    const tEmote = rig.emoteElapsed;
+    const groove = Math.sin(tEmote * 6.2);
+    const bounce = 0.5 - 0.5 * Math.cos(tEmote * 12.4);
+    const wave = Math.sin(tEmote * 7.8);
+    emoteDrop = -0.042 * bounce * emoteWeight;
+
+    // Confident chest lift, rhythmic shoulder groove, subtle knee bounce, and raised right-arm salute/wave
+    setPose(joints.Hips, -0.04 * bounce, groove * 0.12, groove * 0.055, emoteWeight);
+    setPose(joints.Spine, -0.10 - 0.035 * bounce, -groove * 0.11, -groove * 0.05, emoteWeight);
+    setPose(joints.Spine1, -0.075, groove * 0.08, 0, emoteWeight);
+    setPose(joints.Head, -0.055 + 0.04 * bounce, -0.10 + groove * 0.08, groove * 0.05, emoteWeight);
+
+    for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+      setPose(joints[side + 'UpLeg'], -0.14 * bounce, sign * 0.05, sign * 0.075, emoteWeight);
+      setPose(joints[side + 'Leg'], 0.28 * bounce, 0, 0, emoteWeight);
+      setPose(joints[side + 'Foot'], -0.14 * bounce, sign * 0.05, -sign * 0.04, emoteWeight);
+    }
+
+    setPose(joints.RightArm, -2.32 + wave * 0.12, 0.18, -0.56 + wave * 0.22, emoteWeight);
+    setPose(joints.RightForeArm, -0.52 - wave * 0.36, 0, 0.24 * wave, emoteWeight);
+    setPose(joints.LeftArm, -0.22 + groove * 0.12, 0.14, 0.24, emoteWeight);
+    setPose(joints.LeftForeArm, -0.68 - bounce * 0.12, 0.25, 0, emoteWeight);
   }
 
   rig.swim = THREE.MathUtils.damp(rig.swim, swimming ? 1 : 0, 10, dt);
@@ -297,7 +350,7 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   const bob = ground
     ? (-0.044 - run * 0.093) * rig.gait + Math.abs(sway) * 0.024 * rig.gait + breath * 0.004
     : (animated && !authored ? 0 : Math.abs(sway) * stride * 0.055 + breath * 0.004);
-  rig.wrapper.position.y = THREE.MathUtils.damp(rig.wrapper.position.y, bob - landing * 0.10 + freestyle * 0.7, 22, dt);
+  rig.wrapper.position.y = THREE.MathUtils.damp(rig.wrapper.position.y, bob - landing * 0.10 + freestyle * 0.7 + emoteDrop, 22, dt);
   if (motion.harvest !== undefined) {
     const progress = motion.harvest;
     const windup = Math.sin(Math.PI * THREE.MathUtils.smoothstep(progress, 0, 0.51) / 2);

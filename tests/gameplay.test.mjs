@@ -286,3 +286,72 @@ test('both sourced characters contain binary GLB geometry, materials, skeletons,
       primitive.attributes.JOINTS_0 !== undefined && primitive.attributes.WEIGHTS_0 !== undefined)));
   }
 });
+
+test('LOBBY_THEMES and resolveActiveThemeId cover all 4 coastal themes cleanly', async () => {
+  const { LOBBY_THEMES, LOBBY_THEME_ORDER, resolveActiveThemeId } =
+    await import('../src/game/lobbyThemes.ts');
+  assert.deepEqual(LOBBY_THEME_ORDER, [
+    'SUNLIT_RIVIERA',
+    'SUNSET_BOARDWALK',
+    'TACTICAL_OVERLOOK',
+    'MIDNIGHT_HARBOR',
+  ]);
+  for (const id of LOBBY_THEME_ORDER) {
+    const theme = LOBBY_THEMES[id];
+    assert.ok(theme, `Missing theme ${id}`);
+    assert.equal(theme.id, id);
+    assert.ok(theme.label.length > 0 && theme.subtitle.length > 0);
+    assert.ok(theme.thumbUrl.startsWith('/images/lobby/'));
+    assert.match(theme.accentHex, /^#[0-9a-f]{6}$/i);
+    assert.equal(theme.sunDir.length, 3);
+    assert.ok(theme.fogNear > 0 && theme.fogFar > theme.fogNear);
+    assert.ok(theme.exposure >= 0.8 && theme.exposure <= 1.5);
+    for (const triplet of [theme.oceanShallow, theme.oceanDeep, theme.oceanFoam]) {
+      assert.equal(triplet.length, 3);
+      assert.ok(triplet.every((c) => c >= 0 && c <= 1));
+    }
+  }
+  assert.equal(resolveActiveThemeId(true, 'SUNSET_BOARDWALK', 'MIDNIGHT_HARBOR'), 'SUNSET_BOARDWALK');
+  assert.equal(resolveActiveThemeId(true, 'TACTICAL_OVERLOOK', 'AUTO'), 'TACTICAL_OVERLOOK');
+  assert.equal(resolveActiveThemeId(false, 'SUNLIT_RIVIERA', 'AUTO'), 'SUNLIT_RIVIERA');
+  assert.equal(resolveActiveThemeId(false, 'SUNLIT_RIVIERA', 'MIDNIGHT_HARBOR'), 'MIDNIGHT_HARBOR');
+});
+
+test('Grand Prix final-sector progress stays bounded and humanoid emote blends smoothly', async () => {
+  const finishPoint = new Vector3();
+  sampleGrandPrix(GRAND_PRIX_LENGTH * 0.96, finishPoint);
+  const progress = nearestRaceProgress(finishPoint, 0, grandPrixGates.length - 1);
+  assert.ok(Number.isFinite(progress) && progress > GRAND_PRIX_LENGTH * 0.8 && progress <= GRAND_PRIX_LENGTH);
+
+  const { Bone, Group } = await import('three');
+  const { createHumanoidRig, animateHumanoid } = await import('../src/game/humanoid.ts');
+  const wrapper = new Group();
+  const model = new Group();
+  const hips = new Bone(); hips.name = 'Hips';
+  const spine = new Bone(); spine.name = 'Spine';
+  const spine1 = new Bone(); spine1.name = 'Spine1';
+  const head = new Bone(); head.name = 'Head';
+  const rightArm = new Bone(); rightArm.name = 'RightArm'; rightArm.position.set(-0.2, 0.2, 0);
+  const rightForeArm = new Bone(); rightForeArm.name = 'RightForeArm'; rightForeArm.position.set(0, -0.28, 0);
+  const leftArm = new Bone(); leftArm.name = 'LeftArm'; leftArm.position.set(0.2, 0.2, 0);
+  const leftForeArm = new Bone(); leftForeArm.name = 'LeftForeArm'; leftForeArm.position.set(0, -0.28, 0);
+  hips.add(spine);
+  spine.add(spine1);
+  spine1.add(head, rightArm, leftArm);
+  rightArm.add(rightForeArm);
+  leftArm.add(leftForeArm);
+  model.add(hips);
+  wrapper.add(model);
+
+  const rig = createHumanoidRig(wrapper, model);
+  const restRight = rig.joints.RightArm.rest.clone();
+  for (let i = 0; i < 20; i++) {
+    animateHumanoid(rig, { dt: 1 / 60, time: i / 60, phase: 0, speed: 0, emote: 2.0 - i / 60 });
+  }
+  assert.ok(rig.emoteBlend > 0.5);
+  assert.ok(rig.joints.RightArm.bone.quaternion.angleTo(restRight) > 0.4);
+  for (let i = 0; i < 45; i++) {
+    animateHumanoid(rig, { dt: 1 / 60, time: 1 + i / 60, phase: 0, speed: 0, emote: 0 });
+  }
+  assert.ok(rig.emoteBlend < 0.02);
+});

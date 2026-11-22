@@ -68,6 +68,7 @@ function setTouchKey(key: string, held: boolean) {
 
 export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: MobileControlsProps) {
   const [size, setSize] = useState(() => simState.controlSettings.joystickSize);
+  const [, setTouchTick] = useState(0);
   const pad = useRef<HTMLDivElement>(null);
   const knob = useRef<HTMLDivElement>(null);
   const stickPointer = useRef<number | null>(null);
@@ -87,6 +88,7 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
     const release = () => {
       releaseStick();
       orbitPointer.current = null;
+      aiming.ads = false;
       simState.touchThrottle = 0;
       simState.touchBrake = false;
       simState.touchKeys.clear();
@@ -109,13 +111,17 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
     if (!visible) {
       releaseStick();
       orbitPointer.current = null;
+      aiming.ads = false;
+      simState.touchThrottle = 0;
+      simState.touchBrake = false;
+      simState.touchKeys.clear();
     }
   }, [visible]);
 
   const moveStick = (x: number, y: number) => {
     const rect = stickBounds.current ?? pad.current?.getBoundingClientRect();
     if (!rect) return;
-    const radius = rect.width * 0.34;
+    const radius = Math.max(12, rect.width * 0.34);
     const offsetX = x - rect.left - rect.width / 2;
     const offsetY = y - rect.top - rect.height / 2;
     const distance = Math.hypot(offsetX, offsetY);
@@ -183,13 +189,28 @@ export function MobileControls({ mode, visible, vehicleHp, onSelectMode }: Mobil
             onClick={() => emit('repair-vehicle')}><Wrench size={15} /><span>Repair</span></button>}
           {foot && <>
             <button type="button" aria-label="Equip pickaxe" className="touch-action-button" data-held={construction.pickaxe && !construction.active}
-              onClick={() => { construction.pickaxe = !construction.pickaxe; construction.active = false; }}><Pickaxe size={16} /><span>Pickaxe</span></button>
+              onClick={() => {
+                construction.pickaxe = !construction.pickaxe;
+                construction.active = false;
+                setTouchTick((n) => n + 1);
+                emit('hud-sync');
+              }}><Pickaxe size={16} /><span>Pickaxe</span></button>
             <button type="button" aria-label="Toggle build mode" className="touch-action-button" data-held={construction.active}
-              onClick={() => { construction.active = !construction.active; }}><Boxes size={16} /><span>Build</span></button>
+              onClick={() => {
+                construction.active = !construction.active;
+                if (construction.active) construction.pickaxe = false;
+                setTouchTick((n) => n + 1);
+                emit('hud-sync');
+              }}><Boxes size={16} /><span>Build</span></button>
           </>}
           <button type="button" aria-label="Next vehicle or weapon" className="touch-action-button" onClick={() => {
-            if (mode === 'FOOT') { construction.active = false; construction.pickaxe = false; window.dispatchEvent(new CustomEvent('select-weapon', { detail: (simState.activeWeaponIdx + 1) % WEAPON_SPECS.length })); }
-            else emit(nextModel[mode]);
+            if (mode === 'FOOT') {
+              construction.active = false;
+              construction.pickaxe = false;
+              window.dispatchEvent(new CustomEvent('select-weapon', { detail: (simState.activeWeaponIdx + 1) % WEAPON_SPECS.length }));
+              setTouchTick((n) => n + 1);
+              emit('hud-sync');
+            } else emit(nextModel[mode]);
           }}><Repeat size={16} /><span>{foot ? 'Gear' : 'Model'}</span></button>
           <button type="button" aria-label="Switch travel mode" className="touch-action-button"
             onClick={() => onSelectMode(modes[(modes.indexOf(mode) + 1) % modes.length])}><Footprints size={16} /><span>Mode</span></button>

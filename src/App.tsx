@@ -2,7 +2,7 @@ import { SkidMarks } from './components/SkidMarks';
 import { construction } from './game/building';
 import { LobbyStage } from './components/LobbyStage';
 import { Construction } from './components/Construction';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { createProceduralEnvMap } from './components/Textures';
@@ -15,6 +15,8 @@ import {
   VegasLandmarks,
   ChipCollectibles,
   LandmarkBeacons,
+  createAtmosphereTarget,
+  resolveAtmosphereTarget,
 } from './components/World';
 import { VehicleDirector, triggerRouletteSpin } from './components/Vehicles';
 import { NorthBay } from './components/NorthBay';
@@ -25,7 +27,8 @@ import { WorldEffects } from './components/WorldEffects';
 import { LivingWorldNPCs } from './components/NPCs';
 import { HUD } from './components/HUD';
 import { GameHudSnapshot, simState } from './game/store';
-import { COAST_SUN, getTerrainHeight, getTravelHeight, VehicleMode } from './game/worldMath';
+import { LOBBY_THEMES } from './game/lobbyThemes';
+import { getTerrainHeight, getTravelHeight, VehicleMode } from './game/worldMath';
 
 function PerformanceGovernor() {
   const { setDpr, viewport } = useThree();
@@ -71,41 +74,92 @@ function ProceduralEnvMap() {
 }
 
 function CoastalLighting() {
+  const initialTheme = LOBBY_THEMES.SUNLIT_RIVIERA;
+  const hemiRef = useRef<THREE.HemisphereLight>(null);
   const light = useRef<THREE.DirectionalLight>(null);
+  const fillRef = useRef<THREE.DirectionalLight>(null);
+  const fogRef = useRef<THREE.Fog>(null);
   const target = useRef<THREE.Object3D>(null);
+  const atm = useMemo(createAtmosphereTarget, []);
+  const sunDirRef = useRef(new THREE.Vector3(...initialTheme.sunDir).normalize());
+  const initialSunPos = useMemo<[number, number, number]>(
+    () => [initialTheme.sunDir[0] * 142, initialTheme.sunDir[1] * 142, initialTheme.sunDir[2] * 142],
+    []
+  );
   const quality = useRef({ elapsed: 0, interval: 0.065, average: 0.017 });
   const desktop = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches;
-  useFrame(({ gl, camera }, dt) => {
-    if (!light.current || !target.current || !gl.shadowMap.enabled) return;
-    const timing = quality.current;
-    timing.average = THREE.MathUtils.lerp(timing.average, Math.min(0.12, dt), 0.024);
-    timing.elapsed += dt;
-    const interval = timing.average > 0.038 ? 0.22 : timing.interval;
-    if (timing.elapsed < interval) return;
-    timing.elapsed = 0;
-    const focus = simState.startMenuOpen ? camera.position : simState.mode === 'CAR' ? simState.carPos : simState.mode === 'PLANE' ? simState.planePos :
-      simState.mode === 'BOAT' ? simState.boatPos : simState.playerPos;
-    const size = desktop ? 150 : 108;
-    const texel = size / (desktop ? 1536 : 768);
-    target.current.position.set(Math.round(focus.x / texel) * texel, Math.min(focus.y, 28), Math.round(focus.z / texel) * texel);
-    target.current.updateMatrixWorld();
-    light.current.position.copy(target.current.position).addScaledVector(COAST_SUN, 142);
-    light.current.target = target.current;
-    gl.shadowMap.autoUpdate = false;
-    gl.shadowMap.needsUpdate = true;
+
+  useFrame(({ gl, camera, scene }, dt) => {
+    const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
+    resolveAtmosphereTarget(atm);
+    const { theme } = atm;
+
+    if (hemiRef.current) {
+      hemiRef.current.color.lerp(atm.hemiSky, damp);
+      hemiRef.current.groundColor.lerp(atm.hemiGround, damp);
+      hemiRef.current.intensity = THREE.MathUtils.lerp(hemiRef.current.intensity, theme.hemiIntensity, damp);
+    }
+
+    sunDirRef.current.lerp(atm.sunDir, damp).normalize();
+
+    if (light.current) {
+      light.current.color.lerp(atm.dirColor, damp);
+      light.current.intensity = THREE.MathUtils.lerp(light.current.intensity, theme.dirIntensity, damp);
+    }
+
+    if (fillRef.current) {
+      fillRef.current.color.lerp(atm.fillColor, damp);
+      fillRef.current.intensity = THREE.MathUtils.lerp(fillRef.current.intensity, theme.fillIntensity, damp);
+    }
+
+    if (fogRef.current) {
+      fogRef.current.color.lerp(atm.fogColor, damp);
+      fogRef.current.near = THREE.MathUtils.lerp(fogRef.current.near, theme.fogNear, damp);
+      fogRef.current.far = THREE.MathUtils.lerp(fogRef.current.far, theme.fogFar, damp);
+    }
+
+    gl.toneMappingExposure = THREE.MathUtils.lerp(gl.toneMappingExposure, theme.exposure, damp);
+    scene.environmentIntensity = THREE.MathUtils.lerp(scene.environmentIntensity, atm.envIntensity, damp);
+
+    if (!light.current || !target.current) return;
+    if (gl.shadowMap.enabled) {
+      const timing = quality.current;
+      timing.average = THREE.MathUtils.lerp(timing.average, Math.min(0.12, dt), 0.024);
+      timing.elapsed += dt;
+      const interval = timing.average > 0.038 ? 0.22 : timing.interval;
+      if (timing.elapsed < interval) {
+        light.current.position.copy(target.current.position).addScaledVector(sunDirRef.current, 142);
+        return;
+      }
+      timing.elapsed = 0;
+      const focus = simState.startMenuOpen ? camera.position : simState.mode === 'CAR' ? simState.carPos : simState.mode === 'PLANE' ? simState.planePos :
+        simState.mode === 'BOAT' ? simState.boatPos : simState.playerPos;
+      const size = desktop ? 150 : 108;
+      const texel = size / (desktop ? 1024 : 512);
+      target.current.position.set(Math.round(focus.x / texel) * texel, Math.min(focus.y, 28), Math.round(focus.z / texel) * texel);
+      target.current.updateMatrixWorld();
+      light.current.position.copy(target.current.position).addScaledVector(sunDirRef.current, 142);
+      light.current.target = target.current;
+      gl.shadowMap.autoUpdate = false;
+      gl.shadowMap.needsUpdate = true;
+    } else {
+      light.current.position.copy(target.current.position).addScaledVector(sunDirRef.current, 142);
+    }
   });
+
   const halfSize = desktop ? 75 : 54;
   return (
     <>
       <object3D ref={target} />
-      <hemisphereLight args={['#dbeaff', '#88796e', 0.75]} />
-      <directionalLight ref={light} position={COAST_SUN.clone().multiplyScalar(142)} intensity={2.15}
-        color="#fff0d9" castShadow shadow-mapSize-width={desktop ? 1536 : 768}
-        shadow-mapSize-height={desktop ? 1536 : 768} shadow-camera-near={10} shadow-camera-far={260}
+      <fog ref={fogRef} attach="fog" args={[initialTheme.fogColor, initialTheme.fogNear, initialTheme.fogFar]} />
+      <hemisphereLight ref={hemiRef} args={[initialTheme.hemiSky, initialTheme.hemiGround, initialTheme.hemiIntensity]} />
+      <directionalLight ref={light} position={initialSunPos} intensity={initialTheme.dirIntensity}
+        color={initialTheme.dirColor} castShadow shadow-mapSize-width={desktop ? 1024 : 512}
+        shadow-mapSize-height={desktop ? 1024 : 512} shadow-camera-near={10} shadow-camera-far={260}
         shadow-camera-left={-halfSize} shadow-camera-right={halfSize} shadow-camera-top={halfSize}
         shadow-camera-bottom={-halfSize} shadow-normalBias={0.16} shadow-bias={-0.00022}
         shadow-radius={3.2} shadow-intensity={0.83} />
-      <directionalLight position={[35, 24, 55]} intensity={0.21} color="#9fc8f1" />
+      <directionalLight ref={fillRef} position={[35, 24, 55]} intensity={initialTheme.fillIntensity} color={initialTheme.fillColor} />
     </>
   );
 }
@@ -116,7 +170,6 @@ const GameWorld = React.memo(function GameWorld({ onHudUpdate }: { onHudUpdate: 
       <ProceduralEnvMap />
       <PerformanceGovernor />
       <CoastalLighting />
-      <fog attach="fog" args={['#b5cbd1', 325, 1320]} />
 
       <SkyDome />
       <IslandTerrain />
@@ -220,12 +273,13 @@ export function App() {
       simState.parachuting = false;
       simState.gliding = false;
       if (simState.planePos.distanceTo(prevPos) > 45 && simState.aircraftDamage.state !== 'wrecked') {
-        const airY = Math.max(getTerrainHeight(prevPos.x, prevPos.z) + 28, 32);
+        const inMidtown = Math.hypot(prevPos.x, prevPos.z) < 165;
+        const airY = Math.max(getTerrainHeight(prevPos.x, prevPos.z) + (inMidtown ? 104 : 68), inMidtown ? 112 : 76);
         simState.planePos.set(prevPos.x, airY, prevPos.z);
         simState.planeYaw = prevYaw;
-        simState.planePitch = -0.04;
+        simState.planePitch = 0.05;
         simState.planeRoll = 0;
-        simState.planeSpeed = 36;
+        simState.planeSpeed = 48;
       }
     }
     simState.mode = next;
@@ -356,7 +410,7 @@ export function App() {
           antialias: !window.matchMedia('(pointer: coarse)').matches,
           powerPreference: 'high-performance',
           toneMapping: THREE.ACESFilmicToneMapping,
-          toneMappingExposure: 1.02,
+          toneMappingExposure: LOBBY_THEMES.SUNLIT_RIVIERA.exposure,
         }}
       >
         <GameWorld onHudUpdate={setHud} />

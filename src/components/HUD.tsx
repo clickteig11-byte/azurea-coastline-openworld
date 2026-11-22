@@ -3,7 +3,7 @@ import { PlaySettings } from './PlaySettings';
 import { Reticle } from './Reticle';
 import { BUILD_COST, BUILD_MATERIALS, BUILD_TYPES, construction } from '../game/building';
 import { aiming } from '../game/aim';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Car,
   Plane,
@@ -33,6 +33,9 @@ import {
   Minimize2,
   Wrench,
   SlidersHorizontal,
+  Pickaxe,
+  Boxes,
+  Zap,
 } from 'lucide-react';
 import {
   CHARACTER_PRESETS,
@@ -449,13 +452,18 @@ export function HUD({ hud, onSelectMode }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
   const [worldIntro, setWorldIntro] = useState(false);
+  const chipsRestoredRef = useRef(false);
   const controlSettings = simState.controlSettings;
 
   useEffect(() => {
     restoreChips();
+    chipsRestoredRef.current = true;
     soundEngine.setMuted(simState.controlSettings.audioMuted);
+    setUiTick((t) => t + 1);
   }, []);
-  useEffect(() => { persistChips(); }, [hud.chips]);
+  useEffect(() => {
+    if (chipsRestoredRef.current) persistChips();
+  }, [hud.chips]);
 
   const updateControls = (patch: Partial<ControlSettings>) => {
     saveControlSettings(patch);
@@ -513,11 +521,15 @@ export function HUD({ hud, onSelectMode }: Props) {
     window.addEventListener('customizer-updated', onSyncUi);
     window.addEventListener('toggle-start-menu', onSyncUi);
     window.addEventListener('mode-switched', onSyncUi);
+    window.addEventListener('hud-sync', onSyncUi);
+    window.addEventListener('lobby-vehicle-change', onSyncUi);
     return () => {
       window.removeEventListener('toggle-customizer', onSyncUi);
       window.removeEventListener('customizer-updated', onSyncUi);
       window.removeEventListener('toggle-start-menu', onSyncUi);
       window.removeEventListener('mode-switched', onSyncUi);
+      window.removeEventListener('hud-sync', onSyncUi);
+      window.removeEventListener('lobby-vehicle-change', onSyncUi);
     };
   }, []);
 
@@ -560,7 +572,10 @@ export function HUD({ hud, onSelectMode }: Props) {
 
   const handleSelectGameMode = (mode: GamePlayMode) => {
     s.gameMode = mode;
-    if (mode !== 'BATTLE_ROYALE') simState.brActive = false;
+    if (mode !== 'BATTLE_ROYALE') {
+      simState.brActive = false;
+      simState.brResult = null;
+    }
     if (mode === 'GRAND_PRIX' && simState.mode !== 'CAR') {
       onSelectMode('CAR');
     } else if (mode === 'BATTLE_ROYALE' && simState.mode !== 'FOOT') {
@@ -641,7 +656,7 @@ export function HUD({ hud, onSelectMode }: Props) {
 
     if (matched) {
       setSelectedLandmarkId(matched.id);
-      if (activeGameMode === 'WORLD_TOUR') {
+      if ((s.gameMode as GamePlayMode) === 'WORLD_TOUR') {
         markTourVisited(matched.id);
       }
     }
@@ -778,7 +793,13 @@ export function HUD({ hud, onSelectMode }: Props) {
     warpToLocation(nextStop.x, nextStop.z, undefined, nextStop.id);
   };
 
-  const handleStartGame = () => {
+  const handleStartGame = (overrideMode?: GamePlayMode) => {
+    const validModes: readonly GamePlayMode[] = ['FREE_ROAM', 'BATTLE_ROYALE', 'GRAND_PRIX', 'WORLD_TOUR'];
+    const modeToLaunch: GamePlayMode =
+      typeof overrideMode === 'string' && validModes.includes(overrideMode as GamePlayMode)
+        ? (overrideMode as GamePlayMode)
+        : activeGameMode;
+    s.gameMode = modeToLaunch;
     setWorldIntro(true);
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
@@ -786,27 +807,35 @@ export function HUD({ hud, onSelectMode }: Props) {
     simState.keys.clear();
     s.startMenuOpen = false;
     simState.customizerOpen = false;
-    simState.brActive = activeGameMode === 'BATTLE_ROYALE';
+    simState.brActive = modeToLaunch === 'BATTLE_ROYALE';
+    if (modeToLaunch !== 'BATTLE_ROYALE') {
+      simState.brResult = null;
+    }
     setMobileTeleportOpen(false);
 
     const chosenDest =
       WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === selectedLandmarkId) ||
       WORLD_LANDMARK_DESTINATIONS[0];
 
-    if (activeGameMode === 'BATTLE_ROYALE') {
+    if (modeToLaunch === 'BATTLE_ROYALE') {
       simState.brActive = true;
       simState.playerHp = 100;
       simState.playerShield = 100;
       window.dispatchEvent(new CustomEvent('br-drop'));
-      simState.playerPos.set(chosenDest.spawnFootX, 120, chosenDest.spawnFootZ);
-      simState.playerYaw = Math.atan2(
-        chosenDest.x - chosenDest.spawnFootX,
-        chosenDest.z - chosenDest.spawnFootZ
-      );
-    } else if (activeGameMode === 'GRAND_PRIX') {
+      if (chosenDest.id === 'empire') {
+        simState.playerPos.set(12, 128, 76);
+        simState.playerYaw = Math.PI;
+      } else {
+        simState.playerPos.set(chosenDest.spawnFootX, 120, chosenDest.spawnFootZ);
+        simState.playerYaw = Math.atan2(
+          chosenDest.x - chosenDest.spawnFootX,
+          chosenDest.z - chosenDest.spawnFootZ
+        );
+      }
+    } else if (modeToLaunch === 'GRAND_PRIX') {
       simState.lapCount = 0;
       resetGrandPrixRace();
-    } else if (activeGameMode === 'WORLD_TOUR') {
+    } else if (modeToLaunch === 'WORLD_TOUR') {
       const startStop =
         WORLD_TOUR_STOPS.find((d) => d.id === selectedLandmarkId) || WORLD_TOUR_STOPS[0];
       simState.tourVisitedIds = [startStop.id];
@@ -910,12 +939,124 @@ export function HUD({ hud, onSelectMode }: Props) {
   const crashFlashTimer = Math.max(0, simState.crashFlashTimer ?? 0);
   const vehicleBarColor =
     vehicleHp >= 60 ? 'bg-emerald-400' : vehicleHp >= 30 ? 'bg-amber-400' : 'bg-rose-500';
-
+  const carGear =
+    simState.carSpeed < -0.5
+      ? 'R'
+      : hud.speedKmh < 3
+      ? 'N'
+      : hud.speedKmh < 28
+      ? '1'
+      : hud.speedKmh < 54
+      ? '2'
+      : hud.speedKmh < 82
+      ? '3'
+      : hud.speedKmh < 112
+      ? '4'
+      : hud.speedKmh < 144
+      ? '5'
+      : '6';
+  const driftPct = Math.max(0, Math.min(100, driftScore));
+  const throttlePct = Math.round(
+    Math.max(0, Math.min(1, hud.aircraftThrottle ?? simState.planeThrottle ?? 0.56)) * 100
+  );
   const isCustomizerOpen = Boolean(simState.customizerOpen);
   const custom = simState.customization;
   const activeCarIdx = typeof s.activeCarIdx === 'number' ? s.activeCarIdx : 0;
   const activeBoatIdx = typeof s.activeBoatIdx === 'number' ? s.activeBoatIdx : 0;
   const activePlaneIdx = typeof s.activePlaneIdx === 'number' ? s.activePlaneIdx : 0;
+
+  const showFootVitals = hud.mode === 'FOOT' || activeGameMode === 'BATTLE_ROYALE';
+  const showQuickBar =
+    !controlsOpen &&
+    !isCustomizerOpen &&
+    !simState.parachuting &&
+    (hud.mode === 'FOOT' || (activeGameMode === 'BATTLE_ROYALE' && hud.mode === 'CAR'));
+
+  const togglePickaxeTool = () => {
+    construction.pickaxe = !construction.pickaxe;
+    construction.active = false;
+    setUiTick((n) => n + 1);
+  };
+  const toggleBuildTool = () => {
+    construction.active = !construction.active;
+    if (construction.active) construction.pickaxe = false;
+    setUiTick((n) => n + 1);
+  };
+  const equipWeaponSlot = (idx: number) => {
+    construction.active = false;
+    construction.pickaxe = false;
+    window.dispatchEvent(new CustomEvent('select-weapon', { detail: idx }));
+    setUiTick((n) => n + 1);
+  };
+  const renderQuickBar = (compact: boolean) => (
+    <>
+      {hud.mode === 'FOOT' && (
+        <>
+          <button
+            type="button"
+            onClick={togglePickaxeTool}
+            title="Pickaxe (T)"
+            className={`flex shrink-0 items-center gap-1 rounded-xl px-2 py-1 font-semibold transition ${
+              compact ? 'text-[11px]' : 'text-xs font-medium'
+            } ${
+              construction.pickaxe && !construction.active
+                ? 'bg-sky-400 text-neutral-950'
+                : 'text-neutral-300 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Pickaxe className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+            <span>Axe</span>
+          </button>
+          <button
+            type="button"
+            onClick={toggleBuildTool}
+            title="Build Mode (G)"
+            className={`flex shrink-0 items-center gap-1 rounded-xl px-2 py-1 font-semibold transition ${
+              compact ? 'text-[11px]' : 'text-xs font-medium'
+            } ${
+              construction.active
+                ? 'bg-amber-400 text-neutral-950'
+                : 'text-neutral-300 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            <Boxes className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
+            <span>Build</span>
+          </button>
+          <span className="h-3.5 w-px shrink-0 bg-white/15" />
+        </>
+      )}
+
+      {WEAPON_SPECS.map((spec, idx) => {
+        const isSelected = !construction.active && !construction.pickaxe && activeWeaponIdx === idx;
+        return (
+          <button
+            key={spec.id}
+            type="button"
+            onClick={() => equipWeaponSlot(idx)}
+            className={`shrink-0 rounded-xl px-2 py-1 transition ${
+              compact ? 'text-[10px] font-semibold' : 'text-xs font-medium'
+            } ${
+              isSelected
+                ? 'bg-white text-neutral-950'
+                : 'text-neutral-300 hover:bg-white/10 hover:text-white'
+            }`}
+          >
+            {compact ? spec.id : spec.shortName}
+          </button>
+        );
+      })}
+
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent('fire-weapon'))}
+        className={`shrink-0 rounded-xl bg-white/10 px-2 py-1 font-medium tabular-nums text-white transition hover:bg-white/20 ${
+          compact ? 'text-[10px]' : 'px-2.5 text-xs'
+        }`}
+      >
+        {currentAmmo}/{maxAmmo}
+      </button>
+    </>
+  );
 
   const activeTourStop =
     WORLD_TOUR_STOPS.find((d) => d.id === selectedLandmarkId) || WORLD_TOUR_STOPS[0];
@@ -997,10 +1138,10 @@ export function HUD({ hud, onSelectMode }: Props) {
       )}
 
       {/* 2. TOP-LEFT BAR */}
-      <div className="pointer-events-auto fixed left-3 top-3 z-30 flex items-center gap-1 rounded-full border border-white/10 bg-neutral-950/75 px-2 py-1.5 shadow-lg backdrop-blur-md">
+      <div className="pointer-events-auto fixed left-2.5 top-2.5 z-30 flex max-w-[calc(100vw-7.8rem)] items-center gap-0.5 overflow-x-auto rounded-full border border-white/10 bg-neutral-950/75 px-1.5 py-1 shadow-lg backdrop-blur-md sm:left-3 sm:top-3 sm:max-w-none sm:gap-1 sm:px-2 sm:py-1.5">
         <button
           onClick={() => handleToggleStartMenu(true)}
-          className="rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-white/20"
+          className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-xs font-medium text-white transition hover:bg-white/20 sm:px-2.5"
         >
           <span className="hidden sm:inline">Menu (M)</span>
           <span className="sm:hidden">Menu</span>
@@ -1012,7 +1153,7 @@ export function HUD({ hud, onSelectMode }: Props) {
             if (!controlsOpen) simState.customizerOpen = false;
           }}
           title="Customize Controls & Sensitivity"
-          className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition ${
+          className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium transition sm:px-2.5 ${
             controlsOpen
               ? 'bg-white text-neutral-950'
               : 'text-neutral-200 hover:bg-white/10 hover:text-white'
@@ -1022,13 +1163,13 @@ export function HUD({ hud, onSelectMode }: Props) {
           <span className="hidden sm:inline">Controls</span>
         </button>
 
-        <button type="button" className="rounded-full px-2.5 py-1 text-xs text-neutral-200 hover:bg-white/10"
+        <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs text-neutral-200 hover:bg-white/10 sm:px-2.5"
           onClick={() => { simState.cameraView = 1 - simState.cameraView; simState.orbitYaw = simState.orbitPitch = 0; setUiTick((n) => n + 1); }}
           aria-label="Toggle first-person camera">{simState.cameraView === 1 ? '1st' : '3rd'}</button>
 
         <button
           onClick={handleToggleCustomizer}
-          className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+          className={`shrink-0 rounded-full px-2 py-1 text-xs font-medium transition sm:px-2.5 ${
             isCustomizerOpen
               ? 'bg-white text-neutral-950'
               : 'text-neutral-200 hover:bg-white/10 hover:text-white'
@@ -1041,20 +1182,20 @@ export function HUD({ hud, onSelectMode }: Props) {
         <button
           onClick={() => setTouchUi((v) => !v)}
           title={touchUi ? 'Hide Touch Controls' : 'Show Touch Controls'}
-          className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition ${
+          className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium transition sm:px-2.5 ${
             touchUi
               ? 'bg-white text-neutral-950'
               : 'text-neutral-200 hover:bg-white/10 hover:text-white'
           }`}
         >
           <Gamepad2 className="h-3.5 w-3.5" />
-          <span>Touch</span>
+          <span className="hidden sm:inline">Touch</span>
         </button>
 
         <button
           onClick={handleToggleFullscreen}
           title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-          className="rounded-full p-1.5 text-neutral-300 transition hover:bg-white/10 hover:text-white"
+          className="hidden rounded-full p-1.5 text-neutral-300 transition hover:bg-white/10 hover:text-white sm:inline-flex"
         >
           {isFullscreen ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
         </button>
@@ -1062,49 +1203,36 @@ export function HUD({ hud, onSelectMode }: Props) {
         <button
           onClick={handleToggleMute}
           title={muted ? 'Unmute Audio' : 'Mute Audio'}
-          className="rounded-full p-1.5 text-neutral-300 transition hover:bg-white/10 hover:text-white"
+          className="shrink-0 rounded-full p-1.5 text-neutral-300 transition hover:bg-white/10 hover:text-white"
         >
           {muted ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
         </button>
       </div>
 
-      {/* 3. TOP-RIGHT FAST-TRAVEL (Desktop Pills + Compact Mobile Teleport Dropdown) */}
-      <div className="pointer-events-auto fixed right-3 top-3 z-30">
-        {/* Desktop pills (lg+) */}
-        <div className="hidden max-w-[540px] flex-wrap items-center justify-end gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 px-2.5 py-1.5 shadow-lg backdrop-blur-md xl:flex">
-          {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
-            const isCurrent = selectedLandmarkId === lm.id;
-            return (
-              <button
-                key={lm.id}
-                onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
-                title={`${lm.cityBadge} — ${lm.fullTitle}`}
-                className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium transition ${
-                  isCurrent
-                    ? 'bg-white text-neutral-950'
-                    : 'text-neutral-300 hover:bg-white/10 hover:text-white'
-                }`}
-              >
-                {lm.shortLabel}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Compact Teleport Dropdown (< xl, including phones & tablets) */}
-        <div className="relative xl:hidden">
+      {/* 3. TOP-RIGHT FAST-TRAVEL DROPDOWN (Clean single-row capsule across all viewports) */}
+      <div className="pointer-events-auto fixed right-2.5 top-2.5 z-30 sm:right-3 sm:top-3">
+        <div className="relative">
           <button
             onClick={() => setMobileTeleportOpen((o) => !o)}
+            aria-expanded={mobileTeleportOpen}
             className="flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-950/75 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-md transition hover:bg-neutral-900"
           >
             <MapPin className="h-3.5 w-3.5 text-sky-400" />
-            <span>Teleport</span>
+            <span>Warp</span>
+            <span className="hidden text-sky-300 sm:inline">
+              · {WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === selectedLandmarkId)?.shortLabel || 'Vegas'}
+            </span>
+            <ChevronRight
+              className={`h-3.5 w-3.5 text-neutral-400 transition-transform ${
+                mobileTeleportOpen ? 'rotate-90 text-white' : ''
+              }`}
+            />
           </button>
 
           {mobileTeleportOpen && (
-            <div className="absolute right-0 mt-2 max-h-72 w-56 overflow-y-auto rounded-2xl border border-white/10 bg-neutral-950/92 p-2 shadow-2xl backdrop-blur-md">
+            <div className="absolute right-0 mt-2 max-h-80 w-60 overflow-y-auto rounded-2xl border border-white/10 bg-neutral-950/92 p-2 shadow-2xl backdrop-blur-md">
               <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-                Fast Travel
+                Fast Travel · 12 Landmarks
               </div>
               <div className="flex flex-col gap-0.5">
                 {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
@@ -1155,6 +1283,20 @@ export function HUD({ hud, onSelectMode }: Props) {
               <span className="font-semibold tabular-nums">{stormRadius}m</span>
             </div>
             <span className="h-3.5 w-px bg-white/15" />
+            {simState.brResult && (
+              <>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${
+                    simState.brResult === 'WON'
+                      ? 'bg-emerald-500/25 text-emerald-300'
+                      : 'bg-rose-500/25 text-rose-300'
+                  }`}
+                >
+                  {simState.brResult === 'WON' ? 'VICTORY' : 'ELIMINATED'}
+                </span>
+                <span className="h-3.5 w-px bg-white/15" />
+              </>
+            )}
             <button
               onClick={() => window.dispatchEvent(new CustomEvent('br-drop'))}
               className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-neutral-950 transition hover:bg-neutral-200"
@@ -1914,10 +2056,10 @@ export function HUD({ hud, onSelectMode }: Props) {
           })}
         </div>
 
-        {/* Mode Switcher + Battle Royale Health/Shield */}
+        {/* Mode Switcher + Health/Shield */}
         <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-neutral-950/75 p-2.5 shadow-xl backdrop-blur-md">
-          {/* Health & Shield Bars — Battle Royale only */}
-          {activeGameMode === 'BATTLE_ROYALE' && (
+          {/* Health & Shield Bars — On Foot & Battle Royale */}
+          {showFootVitals && (
             <div className="grid grid-cols-2 gap-2.5">
               <div>
                 <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
@@ -2016,7 +2158,7 @@ export function HUD({ hud, onSelectMode }: Props) {
                 onClick={handleToggleCustomizer}
                 className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
               >
-                <span>{custom.presetName || 'City Executive'}</span>
+                <span>{custom.presetName || 'Riviera Runner'}</span>
                 <span className="text-[11px] text-neutral-400">[C] Outfit</span>
               </button>
             )}
@@ -2027,7 +2169,7 @@ export function HUD({ hud, onSelectMode }: Props) {
       {/* 7. BOTTOM-RIGHT: Vehicle Integrity + Speedometer + Battle Royale Weapon Bar */}
       <div
         className={`pointer-events-auto fixed z-30 flex flex-col items-end gap-1.5 ${
-          touchUi ? 'right-3 top-[max(7.1rem,env(safe-area-inset-top))] max-sm:[&>div]:scale-[0.9] max-sm:[&>div]:origin-top-right' : 'bottom-3 right-3'
+          touchUi ? 'right-2.5 top-[max(3.55rem,env(safe-area-inset-top))] max-sm:[&>div]:scale-[0.86] max-sm:[&>div]:origin-top-right' : 'bottom-3 right-3'
         }`}
       >
         {/* Vehicle Integrity Readout & Quick Repair Pill (whenever driving/sailing/flying) */}
@@ -2078,58 +2220,129 @@ export function HUD({ hud, onSelectMode }: Props) {
               'W/S pitch · A/D bank · I/K power ' + Math.round((hud.aircraftThrottle ?? 0.56) * 100) + '% · Ctrl brake'}
           </p>
         )}
-        {/* Clean Digital Speedometer */}
-        <div className="flex items-baseline gap-3 rounded-2xl border border-white/10 bg-neutral-950/75 px-3.5 py-1.5 shadow-xl backdrop-blur-md sm:px-4 sm:py-2">
-          <div className="flex items-baseline gap-1">
-            <span className="text-lg font-semibold tabular-nums text-white sm:text-xl">
-              {hud.speedKmh}
-            </span>
-            <span className="text-[11px] text-neutral-400 sm:text-xs">km/h</span>
+        {/* Clean Digital Speedometer + Car Gear/Drift + Plane Airspeed/Altitude/Throttle */}
+        <div className="flex flex-col items-stretch gap-1.5 rounded-2xl border border-white/10 bg-neutral-950/75 px-3.5 py-2 shadow-xl backdrop-blur-md sm:px-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <div className="flex items-baseline gap-1">
+              <span className="text-lg font-semibold tabular-nums text-white sm:text-xl">
+                {hud.speedKmh}
+              </span>
+              <span className="text-[11px] text-neutral-400 sm:text-xs">km/h</span>
+            </div>
+
+            {hud.mode === 'CAR' && (
+              <>
+                <span className="h-3.5 w-px bg-white/15" />
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+                    Gear
+                  </span>
+                  <span className="rounded-md bg-white/10 px-1.5 py-0.5 font-mono text-xs font-bold tabular-nums text-sky-300">
+                    {carGear}
+                  </span>
+                </div>
+              </>
+            )}
+
+            {hud.mode === 'PLANE' && (
+              <>
+                <span className="h-3.5 w-px bg-white/15" />
+                <div className="flex items-baseline gap-1">
+                  <span className="text-sm font-medium tabular-nums text-neutral-200">
+                    {hud.altitude}
+                  </span>
+                  <span className="text-xs text-neutral-400">m</span>
+                </div>
+                <span className="h-3.5 w-px bg-white/15" />
+                <div className="flex items-baseline gap-1">
+                  <span className="text-[10px] font-medium uppercase text-neutral-400">THR</span>
+                  <span className="text-xs font-semibold tabular-nums text-sky-300">
+                    {throttlePct}%
+                  </span>
+                </div>
+              </>
+            )}
           </div>
-          {hud.mode === 'PLANE' && (
-            <>
-              <span className="h-3.5 w-px bg-white/15" />
-              <div className="flex items-baseline gap-1">
-                <span className="text-sm font-medium tabular-nums text-neutral-200">
-                  {hud.altitude}
-                </span>
-                <span className="text-xs text-neutral-400">m</span>
+
+          {hud.mode === 'CAR' && (
+            <div className="flex items-center gap-2">
+              <span className="flex items-center gap-1 text-[10px] font-medium text-neutral-400">
+                <Zap className={`h-3 w-3 ${driftPct >= 26 ? 'text-amber-400' : 'text-sky-400'}`} />
+                <span>Drift</span>
+              </span>
+              <div className="h-1.5 flex-1 min-w-[74px] overflow-hidden rounded-full bg-white/10">
+                <div
+                  style={{ width: `${driftPct}%` }}
+                  className={`h-full rounded-full transition-all duration-100 ${
+                    driftPct >= 26 ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.65)]' : 'bg-sky-400'
+                  }`}
+                />
               </div>
-            </>
+              <span className="w-7 text-right font-mono text-[10px] tabular-nums text-neutral-300">
+                {driftPct}%
+              </span>
+            </div>
+          )}
+
+          {hud.mode === 'PLANE' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-medium text-neutral-400">Throttle</span>
+              <div className="h-1.5 flex-1 min-w-[88px] overflow-hidden rounded-full bg-white/10">
+                <div
+                  style={{ width: `${throttlePct}%` }}
+                  className={`h-full rounded-full transition-all duration-100 ${
+                    throttlePct >= 82 ? 'bg-amber-400' : 'bg-sky-400'
+                  }`}
+                />
+              </div>
+            </div>
           )}
         </div>
 
-        {/* 5-Slot Weapon Loadout + Fire — Battle Royale only */}
-        {!touchUi && activeGameMode === 'BATTLE_ROYALE' && (hud.mode === 'FOOT' || hud.mode === 'CAR') && (
+        {/* Weapon / Pickaxe / Build Quick-Bar (Desktop) */}
+        {!touchUi && showQuickBar && (
           <div className="hidden items-center gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 p-1.5 shadow-xl backdrop-blur-md sm:flex">
-            {WEAPON_SPECS.map((spec, idx) => {
-              const isSelected = activeWeaponIdx === idx;
-              return (
-                <button
-                  key={spec.id}
-                  onClick={() =>
-                    window.dispatchEvent(new CustomEvent('select-weapon', { detail: idx }))
-                  }
-                  className={`rounded-xl px-2.5 py-1 text-xs font-medium transition ${
-                    isSelected
-                      ? 'bg-white text-neutral-950'
-                      : 'text-neutral-300 hover:bg-white/10 hover:text-white'
-                  }`}
-                >
-                  {spec.shortName}
-                </button>
-              );
-            })}
-
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('fire-weapon'))}
-              className="rounded-xl bg-white/10 px-2.5 py-1 text-xs font-medium tabular-nums text-white transition hover:bg-white/20"
-            >
-              Fire ({currentAmmo}/{maxAmmo})
-            </button>
+            {renderQuickBar(false)}
           </div>
         )}
       </div>
+
+      {/* Touch HP/Shield Pill & On-Foot Quick-Bar (aligned cleanly above mobile controls) */}
+      {touchUi && !isStartMenuOpen && !isCustomizerOpen && !controlsOpen && !(activeGameMode === 'BATTLE_ROYALE' && simState.brResult === 'OUT') && (
+        <>
+          {showFootVitals && (
+            <div className="pointer-events-none fixed bottom-[10.25rem] left-3 z-30 flex items-center gap-2.5 rounded-2xl border border-white/15 bg-neutral-950/80 px-2.5 py-1.5 shadow-xl backdrop-blur-md">
+              <div className="flex items-center gap-1.5">
+                <Heart className="h-3.5 w-3.5 text-emerald-400" />
+                <div className="h-1.5 w-12 overflow-hidden rounded-full bg-white/15">
+                  <div style={{ width: `${playerHp}%` }} className="h-full rounded-full bg-emerald-400 transition-all duration-150" />
+                </div>
+                <span className="text-[11px] font-semibold tabular-nums text-white">{playerHp}</span>
+              </div>
+              <span className="h-3 w-px bg-white/15" />
+              <div className="flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-sky-400" />
+                <div className="h-1.5 w-12 overflow-hidden rounded-full bg-white/15">
+                  <div style={{ width: `${playerShield}%` }} className="h-full rounded-full bg-sky-400 transition-all duration-150" />
+                </div>
+                <span className="text-[11px] font-semibold tabular-nums text-white">{playerShield}</span>
+              </div>
+            </div>
+          )}
+
+          {showQuickBar && (
+            <div
+              className={`pointer-events-auto fixed right-3 z-30 flex max-w-[calc(100vw-1.5rem)] items-center gap-1 overflow-x-auto rounded-2xl border border-white/15 bg-neutral-950/80 p-1 shadow-xl backdrop-blur-md ${
+                construction.active || construction.pickaxe
+                  ? 'bottom-[17.5rem] sm:bottom-[13rem]'
+                  : 'bottom-[14.5rem] sm:bottom-[9.25rem]'
+              }`}
+            >
+              {renderQuickBar(true)}
+            </div>
+          )}
+        </>
+      )}
 
       {/* 8. MOBILE TOUCH CONTROLS OVERLAY */}
       <MobileControls

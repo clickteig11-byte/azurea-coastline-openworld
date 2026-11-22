@@ -1,40 +1,54 @@
 # World Horizon — Open-World City Showcase
 
-**World Horizon** is a real-time 3D open-world metropolitan sandbox built with **React, TypeScript, Three.js, and React Three Fiber** — featuring **12 iconic world landmarks**, **4 defined game modes**, **17 playable vehicles, aircraft, and ships**, a **live 3D Character Wardrobe Studio**, and **full mobile touch-screen gameplay**.
+**World Horizon** is a real-time 3D open-world metropolitan sandbox built with **React, TypeScript, Three.js, and React Three Fiber** — featuring a **4-theme rotating live 3D Coastal Terrace Lobby**, **12 iconic world landmarks**, **4 direct-launch game modes**, **17 playable vehicles, aircraft, and ships**, **First-Person combat & Fortnite-style Wood/Stone/Metal building**, a **live 3D Character Wardrobe & Fleet Hangar**, and **full mobile touch-screen gameplay**.
 
 ---
 
-## 1. Full-Screen Start Screen & Defined Game Modes
+## 1. 4-Theme Rotating Coastal Terrace Lobby & Mode Launcher
 
-Launch straight into a clean, HUD-free start screen over the live orbiting 3D city skyline. Pick your **Game Mode**, **Traversal & Vehicle / Character**, and **Starting City**, then click **Start Game**.
+Launch directly into a live coastal pier terrace overlooking the Midtown skyline, Las Vegas Sphere, and Golden Gate Bridge. Cycle manually or enable **AUTO** rotation across 4 dynamic lighting, sky shader, ocean, window-glow, and car-headlight themes — then jump straight into any mode from the bottom card strip (`PLAY FREE ROAM`, `PLAY BATTLE ROYALE`, `PLAY GRAND PRIX`, `PLAY WORLD TOUR`), trigger **EMOTE**, or customize outfits/vehicles inside **LOCKER**, **VEHICLES**, **SHOP**, and **SETTINGS**.
 
-![Full-Screen Start Screen](docs/screenshots/01-start-screen.jpg)
+### Sunlit Riviera (Daytime Clear Bay)
+![Sunlit Riviera Lobby](docs/screenshots/01-start-screen.jpg)
+
+### Sunset Boardwalk (Golden Hour & Amber Horizon)
+![Sunset Boardwalk Lobby](docs/screenshots/01b-lobby-sunset-boardwalk.jpg)
+
+### Tactical Overlook (Blue-Hour Twilight)
+![Tactical Overlook Lobby](docs/screenshots/01c-lobby-tactical-overlook.jpg)
+
+### Midnight Harbor (Moonlit Skyline & Neon Terrace)
+![Midnight Harbor Lobby](docs/screenshots/01d-lobby-midnight-harbor.jpg)
+
+### Character Locker & Fleet Hangar
+![Character Locker Drawer](docs/screenshots/01e-lobby-locker.jpg)
+![Fleet Hangar Drawer](docs/screenshots/01f-lobby-vehicles.jpg)
 
 ### Four Distinct Game Modes
 
 | Mode | Objective & Gameplay | Dedicated HUD |
 | --- | --- | --- |
-| **Free Roam** | Explore the open city freely — drive supercars, fly jets & helicopters, captain cruise ships & yachts, or walk and customize your outfit. | Clean minimal HUD with minimap, speedometer, wardrobe, and fast travel. |
-| **Battle Royale** | Sky-drop from 120m with a steerable parachute, loot supply & ammo crates, stay inside the shrinking storm ring, and eliminate 8 armed AI combatants. | Live `Alive`, `Elims`, `Storm` radius strip, Health/Shield bars, and 5-slot weapon loadout. |
-| **Grand Prix** | High-speed 8-checkpoint street circuit down Grand Central Avenue, Golden Gate Bridge, Eiffel Blvd, and Colosseum Straight. | Live `Lap`, `Gate X / 8`, next gate distance, `Lap Time`, `Best Lap`, and `Drift Score`. |
+| **Free Roam** | Explore the open city freely — drive supercars, fly jets & helicopters, captain cruise ships & yachts, toggle First-Person (`X`), or build Wood/Stone/Metal structures (`G`). | Minimal HUD with radar, speedometer, quickbar, build bar, and `Warp` fast-travel dropdown. |
+| **Battle Royale** | Sky-drop from 120m with a steerable parachute, loot supply & ammo crates, stay inside the shrinking storm ring, and eliminate armed AI combatants. | Live `Alive`, `Elims`, `Storm` radius strip, Health/Shield bars, and 5-slot weapon loadout. |
+| **Grand Prix** | High-speed 9-gate street circuit with AI rivals, drift scoring, live lap timing, and responsive supercar handling. | Live `P1` standing, `Lap`, `Gate X / 9`, next gate distance, `Time`, and Drift telemetry. |
 | **World Tour** | Guided sightseeing tour across all 12 global city landmarks with architectural notes and progress tracking. | Live Monument Card (`X / 12`), city badge, description, and one-tap **Next Landmark** warp. |
 
 ---
 
 ## 2. Mode-by-Mode Gameplay Gallery
 
-### Free Roam — Unobstructed Grand Central Avenue
-Wide 4-lane textured asphalt avenues, zebra crosswalks, overhead LED traffic signal gantries, sidewalk bus shelters, deciduous street trees, and multi-part architectural skyscrapers (curtain-wall glass towers, cylindrical high-rises, Art Deco limestone towers, and urban brick mid-rises).
+### Free Roam — First-Person View & Textured Construction (`X` / `G`)
+Toggle into crisp First-Person view and place textured Wood plank, coursed Stone ashlar, or brushed Steel Walls, Ramps, Floors, and Roofs cleanly above the Weapon Quick-Bar.
 
-![Free Roam Grand Central Avenue](docs/screenshots/02-free-roam-avenue.jpg)
+![Free Roam First-Person Building](docs/screenshots/02-free-roam-avenue.jpg)
 
-### Grand Prix Race — Golden Gate Bridge Approach
-Snap into the 8-checkpoint street circuit with live lap timing, drift combos, and responsive supercar handling across the 44m-wide International Orange Golden Gate Suspension Bridge.
+### Grand Prix Race — Harbor Boulevard Grid Start
+Launch directly into the 9-gate street circuit with AI rivals, checkered avenues, and live position/drift telemetry.
 
-![Grand Prix Race at Golden Gate Bridge](docs/screenshots/03-grand-prix-golden-gate.jpg)
+![Grand Prix Race Start](docs/screenshots/03-grand-prix-golden-gate.jpg)
 
-### Battle Royale — 120m Parachute Sky-Drop
-Deploy from 120 meters above the city with a steerable ram-air parachute, shrinking storm ring, and 5-slot 3D weapon loadout (*M4 Carbine*, *Scattergun*, *AWM Sniper*, *Minigun*, *Rocket RPG*).
+### Battle Royale — High-Altitude Parachute Sky-Drop
+Deploy above Midtown Boulevard toward the Golden Gate Bridge with steerable parachute, shrinking storm ring, and AI opponents dropping alongside you.
 
 ![Battle Royale Parachute Sky-Drop](docs/screenshots/04-battle-royale-skydrop.jpg)
 
@@ -91,6 +105,7 @@ Captain the **Oasis Cruise Ship**, **Cigarette Racing Powerboat**, **Royal Tall 
 Fly the **Bell VIP Helicopter**, **Gulfstream G700 Jet**, **Mustang Strike Fighter**, **Twin Regional Turboprop**, **Boeing 737 Airliner**, or **Heavy Strategic Cargo Jet** through the city skyline.
 
 ![Bell VIP Helicopter over Midtown Skyline](docs/screenshots/10-aviation-helicopter.jpg)
+![Gulfstream G700 Jet over Coastal Horizon](docs/screenshots/10b-aviation-gulfstream-coast.jpg)
 
 ### Live 3D Character & Wardrobe Studio (`C`)
 Swing the camera into a 3/4 portrait studio view to customize your character's preset, base human rig, jacket color & finish (*Matte / Satin / Leather*), pants, shoes, skin tone, cap, beard, eyewear (*Aviators / Cyber Visor*), and tactical backpack in real time.
@@ -99,12 +114,13 @@ Swing the camera into a 3/4 portrait studio view to customize your character's p
 
 ---
 
-## 5. Mobile & Touch-Screen Gameplay (`390×844`)
+## 5. Mobile Lobby & Touch-Screen Gameplay (`390×844`)
 
-Full native touch-screen support with `100dvh` viewport locking, auto-detected touch UI (plus a one-tap **Touch** toggle on any device), a **360° virtual analog thumb joystick**, ergonomic right-thumb action buttons (**Fire**, **Drift / Jump / Brake**, **Boost**, **Switch Vehicle**), and a compact **Teleport** dropdown.
+Full native touch-screen support with `100dvh` viewport locking, auto-detected touch UI (plus a one-tap **Touch** toggle on any device), a compact responsive portrait lobby, a **360° virtual analog thumb joystick**, ergonomic right-thumb action buttons (**Fire**, **Drift / Jump / Brake**, **Boost**, **Switch Vehicle**), and a single-pill **Warp** fast-travel menu.
 
 <p align="center">
-  <img src="docs/screenshots/12-mobile-touch-gameplay.jpg" alt="Mobile Touch Gameplay on 390x844 Viewport" width="360" />
+  <img src="docs/screenshots/12a-mobile-lobby.jpg" alt="Mobile Portrait Lobby on 390x844 Viewport" width="320" />
+  <img src="docs/screenshots/12-mobile-touch-gameplay.jpg" alt="Mobile Touch Gameplay on 390x844 Viewport" width="320" />
 </p>
 
 ---

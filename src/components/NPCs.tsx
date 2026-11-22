@@ -1220,7 +1220,7 @@ export function LivingWorldNPCs() {
                   m.receiveShadow = false;
                 }
               });
-              gunClone.rotation.set(0, Math.PI, 0);
+              gunClone.rotation.set(0, bot.gunUrl.includes('gun_sniper') ? -Math.PI / 2 : 0, 0);
               gunClone.scale.setScalar(1.15);
 
               const gunMount = botGunMountRefs.current[idx];
@@ -1358,7 +1358,7 @@ export function LivingWorldNPCs() {
       const model = citizenModelMountRefs.current[i];
       const group = citizenGroupRefs.current[i];
       const contact = canStrike && !p.impact &&
-        pedestrianContact(sweep, p.x, getTerrainHeight(p.x, p.z), p.z);
+        pedestrianContact(sweep, p.x, getTravelHeight(p.x, p.z), p.z);
       if (contact) {
         hitCivilian(p, contact.damage, contact.travelX, contact.travelZ, contact.severity, contact.side, getTravelHeight(p.x, p.z));
         if (contact.severity > 0.47 && simState.controlSettings.blood) {
@@ -1571,7 +1571,7 @@ export function LivingWorldNPCs() {
           const fx = dx / dist;
           const fz = dz / dist;
           ai.awareness -= dt;
-          const targetY = simState.playerPos.y + (simState.mode === 'FOOT' ? 1.05 : 0.74);
+          const targetY = simState.mode === 'CAR' ? simState.carPos.y + 0.74 : simState.playerPos.y + 1.05;
           if (ai.awareness <= 0) {
             ai.awareness = 0.31 + i * 0.021;
             _vecA.set(bot.x, bot.y + 1.3, bot.z);
@@ -1610,10 +1610,11 @@ export function LivingWorldNPCs() {
               ai.cooldown = 0.72;
             }
           }
-          if (canStrike && simState.carSpeed > 6 && dist < 16) {
-            const heading = (bot.x - threatX) * Math.sin(sweep.yaw) + (bot.z - threatZ) * Math.cos(sweep.yaw);
+          if (canStrike && Math.abs(simState.carSpeed) > 6 && dist < 16) {
+            const carDirSign = Math.sign(simState.carSpeed) || 1;
+            const heading = ((bot.x - threatX) * Math.sin(sweep.yaw) + (bot.z - threatZ) * Math.cos(sweep.yaw)) * carDirSign;
             const side = (bot.x - threatX) * Math.cos(sweep.yaw) - (bot.z - threatZ) * Math.sin(sweep.yaw);
-            if (heading > 0 && Math.abs(side) < 3.1 && heading < simState.carSpeed * 1.05) {
+            if (heading > 0 && Math.abs(side) < 3.1 && heading < Math.abs(simState.carSpeed) * 1.05) {
               moveX = Math.cos(sweep.yaw) * (Math.sign(side) || ai.direction);
               moveZ = -Math.sin(sweep.yaw) * (Math.sign(side) || ai.direction);
               pace = 5.9;
@@ -1714,7 +1715,7 @@ export function LivingWorldNPCs() {
           drop.position.fromArray(bot.drop);
           drop.rotation.y = bot.yaw;
           if (simState.brResult === null && simState.mode === 'FOOT' &&
-              simState.playerPos.distanceTo(drop.position) < 1.72) {
+              simState.playerPos.distanceTo(drop.position) < 1.9) {
             simState.ammo = Math.min(simState.maxAmmo, simState.ammo + 13);
             simState.playerShield = Math.min(100, simState.playerShield + 11);
             bot.drop = undefined;

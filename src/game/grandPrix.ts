@@ -73,7 +73,8 @@ export function nearestRaceProgress(position: THREE.Vector3, lap: number, checkp
   const step = GRAND_PRIX_LENGTH / 512;
   let closest = Infinity;
   let along = previous;
-  for (let i = Math.floor(previous / step); i <= Math.ceil(next / step); i++) {
+  const maxIndex = Math.min(raceSamples.length - 1, Math.ceil(next / step));
+  for (let i = Math.floor(previous / step); i <= maxIndex; i++) {
     const point = raceSamples[i];
     const distance = (point.x - position.x) ** 2 + (point.z - position.z) ** 2;
     if (distance < closest) {
