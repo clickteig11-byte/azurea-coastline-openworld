@@ -425,15 +425,22 @@ const grassFragmentShader = /* glsl */ `
   varying vec3 vWorldPos;
 
   void main() {
-    vec3 rootCol = vec3(0.04, 0.11, 0.035);
-    vec3 midCol = vec3(0.11, 0.29, 0.075);
-    vec3 tipCol = mix(vec3(0.24, 0.48, 0.11), vec3(0.45, 0.65, 0.18), clamp(vWind + vFlatten * 0.35, 0.0, 1.0));
+    float flowerHash = fract(sin(dot(floor(vWorldPos.xz * 2.2), vec2(127.1, 311.7))) * 43758.5453);
+    vec3 rootCol = vec3(0.035, 0.10, 0.03);
+    vec3 midCol = vec3(0.10, 0.28, 0.07);
+    vec3 tipBase = mix(vec3(0.24, 0.49, 0.11), vec3(0.46, 0.66, 0.18), clamp(vWind + vFlatten * 0.35, 0.0, 1.0));
+    if (flowerHash > 0.91 && vBladeH > 0.72) {
+      vec3 bloomCol = flowerHash > 0.96 ? vec3(0.96, 0.45, 0.68) : vec3(0.98, 0.84, 0.22);
+      tipBase = mix(tipBase, bloomCol, smoothstep(0.72, 0.92, vBladeH));
+    }
     vec3 albedo = mix(rootCol, midCol, smoothstep(0.0, 0.52, vBladeH));
-    albedo = mix(albedo, tipCol, smoothstep(0.42, 1.0, vBladeH));
+    albedo = mix(albedo, tipBase, smoothstep(0.42, 1.0, vBladeH));
 
-    // Ambient occlusion near soil root + chlorophyll translucency at blade tips
-    float ao = mix(0.42, 1.15, vBladeH);
-    vec3 light = uAmbientCol * 0.85 + uSunLightCol * (0.62 + 0.55 * vBladeH);
+    // Ambient occlusion near soil root + chlorophyll translucency & morning dew sparkle at blade tips
+    float ao = mix(0.42, 1.18, vBladeH);
+    vec3 viewDir = normalize(uCameraPos - vWorldPos);
+    float grazing = pow(1.0 - abs(viewDir.y), 2.4) * vBladeH;
+    vec3 light = uAmbientCol * 0.85 + uSunLightCol * (0.62 + 0.58 * vBladeH + grazing * 0.35);
     vec3 col = albedo * light * ao;
 
     float camDist = distance(vWorldPos, uCameraPos);
@@ -534,6 +541,22 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
       dummy.rotation.set(0, rand() * Math.PI * 2, 0);
       const s = 0.78 + rand() * 0.68;
       dummy.scale.set(s, s * (0.85 + rand() * 0.45), s);
+      dummy.updateMatrix();
+      mats.push(dummy.matrix.clone());
+    }
+
+    // Also populate 350 lush coastal grass tufts across Island II (approach lawns to the Wonder Ocean Pier)
+    for (let i = 0; i < 1200 && mats.length < 1800; i++) {
+      const x = (rand() - 0.5) * 180;
+      const z = -395 - rand() * 125;
+      if (Math.abs(x) < 14) continue;
+      const y = getTerrainHeight(x, z);
+      if (y < 2.0 || y > 7.2) continue;
+
+      dummy.position.set(x, y - 0.02, z);
+      dummy.rotation.set(0, rand() * Math.PI * 2, 0);
+      const s = 0.82 + rand() * 0.72;
+      dummy.scale.set(s, s * (0.9 + rand() * 0.45), s);
       dummy.updateMatrix();
       mats.push(dummy.matrix.clone());
     }

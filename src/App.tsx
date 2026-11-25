@@ -20,6 +20,7 @@ import {
 } from './components/World';
 import { VehicleDirector, triggerRouletteSpin } from './components/Vehicles';
 import { NorthBay } from './components/NorthBay';
+import { AmusementPark } from './components/AmusementPark';
 import { CoastRoad } from './components/CoastRoad';
 import { GrandPrixCourse } from './components/GrandPrix';
 import { CoastalCity } from './components/City';
@@ -175,6 +176,7 @@ const GameWorld = React.memo(function GameWorld({ onHudUpdate }: { onHudUpdate: 
       <IslandTerrain />
       <CoastRoad />
       <NorthBay />
+      <AmusementPark />
       <CoastalCity />
       <GrandPrixCourse />
       <WorldEffects />
@@ -210,6 +212,7 @@ export function App() {
   });
 
   const switchMode = useCallback((next: VehicleMode) => {
+    simState.activeRide = null;
     if (next === simState.mode) return;
     const prevPos =
       simState.mode === 'CAR'
@@ -359,7 +362,30 @@ export function App() {
         simState.orbitYaw = simState.orbitPitch = 0;
       }
       if (code === 'KeyR' && !e.repeat && !s.startMenuOpen && !(simState.mode === 'FOOT' && construction.active)) triggerRouletteSpin();
-      if (code === 'KeyE') {
+      if (code === 'KeyZ' && !e.repeat && !s.startMenuOpen && simState.mode === 'FOOT') {
+        simState.lobbyEmoteTimer = 2.6;
+        window.dispatchEvent(new CustomEvent('hud-sync'));
+      }
+      if (code === 'KeyE' && !e.repeat) {
+        if (simState.activeRide) {
+          const rideId = simState.activeRide;
+          simState.activeRide = null;
+          if (rideId === 'FERRIS') simState.playerPos.set(-14, getTravelHeight(-14, -625) + 0.08, -625);
+          else if (rideId === 'COASTER') simState.playerPos.set(14, getTravelHeight(14, -600) + 0.08, -600);
+          else if (rideId === 'CAROUSEL') simState.playerPos.set(0, getTravelHeight(0, -542) + 0.08, -542);
+          else simState.playerPos.set(0, getTravelHeight(0, -648) + 0.08, -648);
+          simState.playerVel.set(0, 0, 0);
+          window.dispatchEvent(new CustomEvent('hud-sync'));
+          return;
+        }
+        if (simState.nearbyRide) {
+          simState.activeRide = simState.nearbyRide;
+          simState.mode = 'FOOT';
+          simState.parachuting = false;
+          simState.gliding = false;
+          window.dispatchEvent(new CustomEvent('hud-sync'));
+          return;
+        }
         if (simState.mode !== 'FOOT') {
           switchMode('FOOT');
         } else {

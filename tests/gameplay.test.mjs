@@ -54,7 +54,9 @@ test('the continuous coastal road clears the runway and meets every inland conne
   }
 });
 
-test('both bridges keep clear water under the deck and the construction roadblock guards Island II', () => {
+test('both bridges keep clear water under the deck and the Wonder Ocean Pier extends Island II into the ocean', async () => {
+  const { OCEAN_AMUSEMENT_PIER, isOnOceanAmusementPier, sampleAmusementRidePose, sampleCoasterTrack } =
+    await import('../src/game/worldMath.ts');
   const bayWater = getTerrainHeight(0, -293);
   assert.ok(bayWater < -2 && getTravelHeight(0, -293, 0.3) === bayWater);
   assert.equal(getTravelHeight(0, -293, 12), getBridgeHeight(-293));
@@ -62,7 +64,19 @@ test('both bridges keep clear water under the deck and the construction roadbloc
   assert.ok(getTravelHeight(east, -95, 0) < -2.5);
   assert.ok(getTravelHeight(east, -95, 9) > 6.6);
   assert.equal(isConstructionClosed(0, NORTH_BAY_BRIDGE.gate + 0.8), false);
-  assert.equal(isConstructionClosed(0, NORTH_BAY_BRIDGE.gate - 1), true);
+  assert.equal(isConstructionClosed(0, NORTH_BAY_BRIDGE.gate - 1), false);
+  // Wonder Ocean Pier deck extends over deep ocean water at z = -620 while keeping water underneath
+  assert.ok(isOnOceanAmusementPier(0, -620));
+  assert.ok(getTerrainHeight(0, -620) < -2.0);
+  assert.equal(getTravelHeight(0, -620, 6), OCEAN_AMUSEMENT_PIER.deckY);
+  // Ridable Ferris Wheel, Roller Coaster, Carousel & Drop Tower return finite elevated poses on the pier
+  for (const rideId of ['FERRIS', 'COASTER', 'CAROUSEL', 'DROP_TOWER']) {
+    const pose = sampleAmusementRidePose(rideId, 4.2);
+    assert.ok(Number.isFinite(pose.pos.x) && Number.isFinite(pose.pos.y) && Number.isFinite(pose.pos.z));
+    assert.ok(pose.pos.y >= OCEAN_AMUSEMENT_PIER.deckY);
+  }
+  const track = sampleCoasterTrack(0.25);
+  assert.ok(track.pos.y > OCEAN_AMUSEMENT_PIER.deckY + 4 && Math.abs(track.bank) <= 0.6);
 });
 
 test('the racing line stays on pavement and rejects backward checkpoint crossings', () => {
@@ -406,4 +420,64 @@ test('4-point hull buoyancy, chassis weight transfer, and welded character norma
   wrapper.add(model);
   const rig = createHumanoidRig(wrapper, model, [makeClip('idle'), makeClip('walk'), makeClip('run'), makeClip('agree')]);
   assert.ok(rig.mixer && rig.clips.idle && rig.clips.walk && rig.clips.run && rig.clips.emote);
+});
+
+test('All 5 EMOTE_STYLES animate distinct poses and all Tripo characters are rigged GLBs', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { Bone, Group } = await import('three');
+  const { COASTAL_CHARACTERS, EMOTE_STYLES } = await import('../src/game/store.ts');
+  const { createHumanoidRig, animateHumanoid } = await import('../src/game/humanoid.ts');
+
+  assert.equal(EMOTE_STYLES.length, 5);
+  const makeRig = () => {
+    const wrapper = new Group();
+    const model = new Group();
+    const hips = new Bone(); hips.name = 'Hips';
+    const spine = new Bone(); spine.name = 'Spine';
+    const spine1 = new Bone(); spine1.name = 'Spine1';
+    const head = new Bone(); head.name = 'Head';
+    const rightArm = new Bone(); rightArm.name = 'RightArm';
+    const rightForeArm = new Bone(); rightForeArm.name = 'RightForeArm';
+    const leftArm = new Bone(); leftArm.name = 'LeftArm';
+    const leftForeArm = new Bone(); leftForeArm.name = 'LeftForeArm';
+    hips.add(spine);
+    spine.add(spine1);
+    spine1.add(head, rightArm, leftArm);
+    rightArm.add(rightForeArm);
+    leftArm.add(leftForeArm);
+    model.add(hips);
+    wrapper.add(model);
+    return createHumanoidRig(wrapper, model);
+  };
+
+  for (const style of EMOTE_STYLES) {
+    const rig = makeRig();
+    const restRight = rig.joints.RightArm.rest.clone();
+    for (let i = 0; i < 20; i++) {
+      animateHumanoid(rig, {
+        dt: 1 / 60,
+        time: i / 60,
+        phase: 0,
+        speed: 0,
+        emote: 2.0 - i / 60,
+        emoteStyle: style.id,
+      });
+    }
+    assert.ok(rig.emoteBlend > 0.5, `Expected emoteBlend > 0.5 for ${style.id}`);
+    assert.ok(rig.joints.RightArm.bone.quaternion.angleTo(restRight) > 0.25, `Expected arm pose change for ${style.id}`);
+  }
+
+  const tripoEntries = Object.entries(COASTAL_CHARACTERS).filter(([id]) => id.startsWith('TRIPO_'));
+  assert.equal(tripoEntries.length, 14);
+  for (const [id, spec] of tripoEntries) {
+    const filePath = path.resolve(process.cwd(), 'public', spec.url.replace(/^\//, ''));
+    assert.ok(fs.existsSync(filePath), `Missing rigged GLB for ${id}: ${filePath}`);
+    const buffer = fs.readFileSync(filePath);
+    assert.equal(buffer.toString('utf8', 0, 4), 'glTF');
+    const jsonLen = buffer.readUInt32LE(12);
+    const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLen));
+    assert.ok(Array.isArray(gltf.skins) && gltf.skins.length >= 1, `Expected skin in ${id}`);
+    assert.ok(gltf.skins[0].joints.length >= 20, `Expected >=20 joints in ${id}`);
+  }
 });

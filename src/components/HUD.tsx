@@ -36,6 +36,7 @@ import {
   Pickaxe,
   Boxes,
   Zap,
+  Sparkles,
 } from 'lucide-react';
 import {
   CHARACTER_PRESETS,
@@ -43,6 +44,7 @@ import {
   CharacterCustomization,
   ControlSettings,
   DEFAULT_CONTROL_SETTINGS,
+  EMOTE_STYLES,
   EyewearStyle,
   GameHudSnapshot,
   GamePlayMode,
@@ -51,7 +53,7 @@ import {
   WEAPON_SPECS,
 } from '../game/store';
 import { GRAND_PRIX_START, nearestRaceProgress } from '../game/grandPrix';
-import { coastBeachWidth, coastRoadRadius, getTerrainHeight, NORTH_BAY_BRIDGE, VehicleMode } from '../game/worldMath';
+import { AMUSEMENT_PARK_RIDES, coastBeachWidth, coastRoadRadius, getTerrainHeight, getTravelHeight, NORTH_BAY_BRIDGE, VehicleMode, type AmusementRideId } from '../game/worldMath';
 import { soundEngine } from '../game/soundEngine';
 import { MobileControls } from './MobileControls';
 
@@ -407,6 +409,22 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     spawnFootZ: 0,
   },
   {
+    id: 'wonderisland',
+    shortLabel: 'Wonder Pier Park',
+    menuLabel: 'Wonder Pier Park',
+    fullTitle: 'Azurea Wonder Ocean Pier Amusement Park',
+    cityBadge: 'OCEAN PIER PARK',
+    note: '170m Over-Ocean Amusement Pier with Ridable 46m Ferris Wheel, Over-Water Cyclone Roller Coaster, Carousel & 64m Drop Tower.',
+    isWorldWonder: true,
+    x: 0,
+    z: -600,
+    color: '#ec4899',
+    spawnCarX: -3.5,
+    spawnCarZ: -522,
+    spawnFootX: 2.5,
+    spawnFootZ: -526,
+  },
+  {
     id: 'harbor',
     shortLabel: 'Cruise Harbor',
     menuLabel: 'Cruise Harbor',
@@ -642,6 +660,7 @@ export function HUD({ hud, onSelectMode }: Props) {
   };
 
   const warpToLocation = (x: number, z: number, forceMode?: VehicleMode, destId?: string) => {
+    simState.activeRide = null;
     simState.parachuting = false;
     simState.gliding = false;
     setMobileTeleportOpen(false);
@@ -702,12 +721,12 @@ export function HUD({ hud, onSelectMode }: Props) {
       const carYaw = Math.atan2(matched.x - carX, matched.z - carZ);
       const footYaw = Math.atan2(matched.x - footX, matched.z - footZ);
 
-      const footY = Math.max(getTerrainHeight(footX, footZ), 0) + 0.08;
+      const footY = Math.max(getTravelHeight(footX, footZ), 0) + 0.08;
       simState.playerPos.set(footX, footY, footZ);
       simState.playerYaw = footYaw;
       simState.playerVel.set(0, 0, 0);
 
-      const carY = Math.max(getTerrainHeight(carX, carZ), 0) + 0.1;
+      const carY = Math.max(getTravelHeight(carX, carZ), 0) + 0.1;
       simState.carPos.set(carX, carY, carZ);
       simState.carYaw = carYaw;
       simState.carSpeed = 0;
@@ -800,7 +819,7 @@ export function HUD({ hud, onSelectMode }: Props) {
         ? (overrideMode as GamePlayMode)
         : activeGameMode;
     s.gameMode = modeToLaunch;
-    setWorldIntro(true);
+    setWorldIntro( false );
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -970,6 +989,7 @@ export function HUD({ hud, onSelectMode }: Props) {
     !controlsOpen &&
     !isCustomizerOpen &&
     !simState.parachuting &&
+    !simState.activeRide &&
     (hud.mode === 'FOOT' || (activeGameMode === 'BATTLE_ROYALE' && hud.mode === 'CAR'));
 
   const togglePickaxeTool = () => {
@@ -1390,6 +1410,48 @@ export function HUD({ hud, onSelectMode }: Props) {
               <span>Next Landmark</span>
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* AMUSEMENT PARK RIDABLE ATTRACTIONS INTERACTIVE BAR */}
+      {!isStartMenuOpen && (hud.activeRide || hud.nearbyRide || selectedLandmarkId === 'wonderisland') && (
+        <div className="pointer-events-auto fixed left-1/2 top-14 z-40 -translate-x-1/2 sm:top-16">
+          <div className="flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-pink-400/35 bg-neutral-950/90 px-3.5 py-2 text-xs text-white shadow-2xl backdrop-blur-md">
+            <span className="rounded-md bg-pink-500/20 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-pink-300">
+              Wonder Ocean Pier Rides
+            </span>
+            {AMUSEMENT_PARK_RIDES.map((ride) => {
+              const isRiding = hud.activeRide === ride.id;
+              const isNear = hud.nearbyRide === ride.id;
+              return (
+                <button
+                  key={ride.id}
+                  type="button"
+                  onClick={() => {
+                    if (isRiding) {
+                      simState.activeRide = null;
+                      simState.playerPos.set(ride.x + 8, getTravelHeight(ride.x + 8, ride.z) + 0.08, ride.z);
+                    } else {
+                      simState.activeRide = ride.id;
+                      simState.mode = 'FOOT';
+                      simState.parachuting = false;
+                      simState.gliding = false;
+                    }
+                    window.dispatchEvent(new CustomEvent('hud-sync'));
+                  }}
+                  className={`rounded-xl border px-2.5 py-1 text-[11px] font-semibold transition ${
+                    isRiding
+                      ? 'border-amber-300 bg-amber-400 text-neutral-950 shadow-md'
+                      : isNear
+                      ? 'border-pink-400/70 bg-pink-500/25 text-white'
+                      : 'border-white/12 bg-white/5 text-neutral-200 hover:bg-white/15'
+                  }`}
+                >
+                  {isRiding ? `Exit ${ride.name.split(' ')[0]} [E]` : `Ride ${ride.name.split(' ')[0]}${isNear ? ' [E]' : ''}`}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -2154,13 +2216,43 @@ export function HUD({ hud, onSelectMode }: Props) {
             )}
 
             {hud.mode === 'FOOT' && (
-              <button
-                onClick={handleToggleCustomizer}
-                className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-              >
-                <span>{custom.presetName || 'Riviera Runner'}</span>
-                <span className="text-[11px] text-neutral-400">[C] Outfit</span>
-              </button>
+              <div className="flex w-full flex-col gap-1">
+                <button
+                  onClick={handleToggleCustomizer}
+                  className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
+                >
+                  <span>{custom.presetName || 'Riviera Runner'}</span>
+                  <span className="text-[11px] text-neutral-400">[C] Outfit</span>
+                </button>
+                <div className="flex w-full items-center gap-1">
+                  <button
+                    onClick={() => {
+                      simState.lobbyEmoteTimer = 2.6;
+                      window.dispatchEvent(new CustomEvent('hud-sync'));
+                    }}
+                    className="flex flex-1 items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <Sparkles className="h-3 w-3 text-amber-300" />
+                      {EMOTE_STYLES.find((item) => item.id === simState.activeEmote)?.label ?? 'Riviera Wave'}
+                    </span>
+                    <span className="text-[11px] text-neutral-400">[Z]</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      const idx = EMOTE_STYLES.findIndex((item) => item.id === simState.activeEmote);
+                      const next = EMOTE_STYLES[(idx + 1) % EMOTE_STYLES.length] ?? EMOTE_STYLES[0];
+                      simState.activeEmote = next.id;
+                      simState.lobbyEmoteTimer = 2.6;
+                      window.dispatchEvent(new CustomEvent('hud-sync'));
+                    }}
+                    title="Cycle Emote"
+                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-medium text-neutral-300 transition hover:bg-white/10 hover:text-white"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

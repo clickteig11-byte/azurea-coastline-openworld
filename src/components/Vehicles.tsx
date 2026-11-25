@@ -10,7 +10,7 @@ import { useFrame } from '@react-three/fiber';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { simState, GameHudSnapshot, WEAPON_SPECS, freshAircraftDamage, COASTAL_CHARACTERS, type AircraftDamageStage, type CoastalCharacter, type CharacterCustomization } from '../game/store';
-import { getTerrainHeight, getTravelHeight, getWaveHeight, sampleHullBuoyancy, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome } from '../game/worldMath';
+import { getTerrainHeight, getTravelHeight, getWaveHeight, sampleHullBuoyancy, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome, AMUSEMENT_PARK_RIDES, sampleAmusementRidePose, type AmusementRideId } from '../game/worldMath';
 import { fixedWingStep } from '../game/flight';
 import { crossesRaceGate } from '../game/grandPrix';
 import { soundEngine } from '../game/soundEngine';
@@ -1824,20 +1824,27 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     let tirePressure = 0;
     simState.carSweep.speed = 0;
 
-    // 1. ON-FOOT + BATTLE ROYALE PARACHUTE SKY-DROP + FORTNITE GLIDER + CUSTOMIZER TURNTABLE
+    // 1. ON-FOOT + AMUSEMENT PARK RIDES + BATTLE ROYALE PARACHUTE SKY-DROP + FORTNITE GLIDER + CUSTOMIZER TURNTABLE
     if (simState.mode === 'FOOT' && !isStartMenuOpen) {
       const player = simState.playerPos;
       previous.copy(player);
       footStart.current.copy(player);
-      const aim = !isCustomizerOpen && (simState.cameraView === 1 || aiming.ads || construction.pickaxe || construction.active || simState.firingTimer > 0 ||
+      const aim = !isCustomizerOpen && !simState.activeRide && (simState.cameraView === 1 || aiming.ads || construction.pickaxe || construction.active || simState.firingTimer > 0 ||
         simState.gameMode === 'BATTLE_ROYALE' && !simState.gliding && !simState.parachuting);
       const motion = footMotion.current;
       const velocity = simState.playerVel;
       const verticalBefore = velocity.y;
       let groundY = walkingSurface(player) + 0.08;
-      if (simState.parachuting) motion.swim = false;
+      if (simState.parachuting || simState.activeRide) motion.swim = false;
 
-      if (simState.parachuting) {
+      if (simState.activeRide) {
+        const ridePose = sampleAmusementRidePose(simState.activeRide, t);
+        const rideMoved = player.distanceTo(ridePose.pos);
+        player.copy(ridePose.pos);
+        velocity.set(0, 0, 0);
+        simState.playerYaw = ridePose.yaw;
+        speedKmh = Math.round(Math.min(138, (rideMoved / Math.max(dt, 0.001)) * 3.6));
+      } else if (simState.parachuting) {
         const turn = (left - right) * 2.5 * dt;
         simState.playerYaw += turn;
         const dirX = Math.sin(simState.playerYaw);
@@ -2000,8 +2007,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
       activePos = simState.playerPos;
       activeYaw = simState.playerYaw;
+      if (simState.lobbyEmoteTimer > 0) {
+        simState.lobbyEmoteTimer = Math.max(0, simState.lobbyEmoteTimer - dt);
+      }
 
-      const groundedNow = !motion.swim && player.y <= groundY + 0.18 && velocity.y <= 0.1;
+      const groundedNow = Boolean(simState.activeRide) || (!motion.swim && player.y <= groundY + 0.18 && velocity.y <= 0.1);
       if (groundedNow && motion.airborne && verticalBefore < -2) {
         motion.landing = Math.max(motion.landing, THREE.MathUtils.clamp(-verticalBefore / 13, 0.16, 1));
       }
@@ -2011,7 +2021,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const movedX = player.x - footStart.current.x;
       const movedZ = player.z - footStart.current.z;
       const travel = Math.hypot(movedX, movedZ);
-      const stepSpeed = !isCustomizerOpen && groundedNow ? Math.min(8, travel / Math.max(0.001, dt)) : 0;
+      const stepSpeed = !isCustomizerOpen && !simState.activeRide && groundedNow ? Math.min(8, travel / Math.max(0.001, dt)) : 0;
       motion.speed = THREE.MathUtils.damp(motion.speed, stepSpeed, stepSpeed > motion.speed ? 13 : 19, dt);
       if (travel > 0.004 && stepSpeed > 0) {
         const sampleX = (movedX * Math.cos(activeYaw) - movedZ * Math.sin(activeYaw)) / travel;
@@ -2033,9 +2043,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           simState.gliding ? 'glide' as const : motion.airborne ? 'jump' as const : undefined,
         fallSpeed: simState.playerVel.y, landing: motion.landing, aim: aim && groundedNow ? 1 : 0,
         recoil: simState.firingTimer / 0.13,
+        emote: simState.lobbyEmoteTimer,
+        emoteStyle: simState.activeEmote,
         harvest: aiming.pickSwing > 0 ? (1 - aiming.pickSwing / 0.5) : undefined,
         lookPitch: simState.orbitPitch, lookYaw: THREE.MathUtils.clamp(simState.orbitYaw, -0.8, 0.8),
-        ground: !isCustomizerOpen && groundedNow ? {
+        ground: !isCustomizerOpen && !simState.activeRide && groundedNow ? {
           x: motion.directionX, z: motion.directionZ,
           heightAt: (x: number, z: number) => {
             const cover = getTravelHeight(x, z, player.y);
@@ -2880,7 +2892,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           .find((candidate) => candidate?.wrapper.visible);
         if (rig) {
           animateHumanoid(rig, {
-            dt, time: t, phase: t * 0.5, speed: 0, emote: simState.lobbyEmoteTimer,
+            dt, time: t, phase: t * 0.5, speed: 0, emote: simState.lobbyEmoteTimer, emoteStyle: simState.activeEmote,
           });
         }
         if (accessoriesRootRef.current) {
@@ -2915,9 +2927,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     } else {
       const isPara = simState.mode === 'FOOT' && simState.parachuting;
+      const isRiding = simState.mode === 'FOOT' && Boolean(simState.activeRide);
       const isCruiseShip = simState.mode === 'BOAT' && activeBoatIdxRef.current === 1;
       const camDist = isPara
         ? 11.5
+        : isRiding
+        ? 8.5
         : simState.mode === 'PLANE'
         ? 18
         : simState.mode === 'CAR'
@@ -2929,6 +2944,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         : 4.4;
       const camHeight = isPara
         ? 4.4
+        : isRiding
+        ? 3.2
         : simState.mode === 'PLANE'
         ? 6.5
         : simState.mode === 'CAR'
@@ -3102,6 +3119,15 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         else if (simState.playerPos.distanceTo(simState.planePos) < 14) nearbyVehicle = 'PLANE';
       }
 
+      let nearbyRide: AmusementRideId | null = null;
+      for (const ride of AMUSEMENT_PARK_RIDES) {
+        if (Math.hypot(activePos.x - ride.x, activePos.z - ride.z) < ride.boardRadius) {
+          nearbyRide = ride.id;
+          break;
+        }
+      }
+      simState.nearbyRide = nearbyRide;
+
       let nearLandmark: string | null = null;
       for (const lm of LANDMARKS) {
         const d = Math.hypot(activePos.x - lm.position[0], activePos.z - lm.position[2]);
@@ -3127,6 +3153,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         rouletteTimer: Math.max(0, Math.ceil(simState.rouletteTimer)),
         nearbyVehicle,
         nearLandmark,
+        activeRide: simState.activeRide,
+        nearbyRide: simState.nearbyRide,
         fps: currentFps.current,
         gliding: simState.gliding,
         activeCheckpoint: simState.activeCheckpoint,

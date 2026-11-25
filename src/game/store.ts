@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { AIM_MODES, RETICLES, type AimMode, type Reticle } from './aim';
 import type { LobbyFocusId, LobbyTabId, LobbyThemeId } from './lobbyThemes';
-import { RouletteOutcome, VehicleMode } from './worldMath';
+import type { RouletteOutcome, VehicleMode, AmusementRideId } from './worldMath';
 import type { Tumble } from './motion';
 import { grandPrixGates } from './grandPrix';
 import type { VehicleSweep } from './vehicleContact';
@@ -11,6 +11,20 @@ export type GamePlayMode = 'FREE_ROAM' | 'BATTLE_ROYALE' | 'GRAND_PRIX' | 'WORLD
 export type WeaponId = 'AR' | 'SHOTGUN' | 'SNIPER' | 'MINIGUN' | 'RPG';
 
 export type CharacterArchetype =
+  | 'TRIPO_NIKE_BRUNETTE'
+  | 'TRIPO_NIKE_BLONDE'
+  | 'TRIPO_NIKE_BRUNETTE_MOTO'
+  | 'TRIPO_NIKE_BLONDE_VARSITY'
+  | 'TRIPO_SPIDER_BLONDE'
+  | 'TRIPO_SANTA_BLONDE'
+  | 'TRIPO_SANTA_BRUNETTE'
+  | 'TRIPO_CYBER_PINK'
+  | 'TRIPO_CYBER_SILVER_GIRL'
+  | 'TRIPO_RIVIERA_GOLD_GIRL'
+  | 'TRIPO_TACTICAL_BLONDE'
+  | 'TRIPO_TACTICAL_REDHEAD'
+  | 'TRIPO_ROBOT_TITANIUM'
+  | 'TRIPO_ROBOT_OBSIDIAN_GOLD'
   | 'CIVILIAN_MAN'
   | 'CIVILIAN_WOMAN'
   | 'COAST_NAVIGATOR'
@@ -23,6 +37,20 @@ export type CharacterArchetype =
   | 'MICHELLE_VIP'
   | 'VANGUARD_SOLDIER';
 export const COASTAL_CHARACTERS = {
+  TRIPO_NIKE_BRUNETTE: { label: 'Elena · Sport Pro', url: '/models/characters/tripo-nike-brunette.glb', height: 1.72 },
+  TRIPO_NIKE_BLONDE: { label: 'Chloe · Sport Pro', url: '/models/characters/tripo-nike-blonde.glb', height: 1.72 },
+  TRIPO_NIKE_BRUNETTE_MOTO: { label: 'Elena · Moto', url: '/models/characters/tripo-nike-brunette-moto.glb', height: 1.72 },
+  TRIPO_NIKE_BLONDE_VARSITY: { label: 'Chloe · Varsity', url: '/models/characters/tripo-nike-blonde-varsity.glb', height: 1.72 },
+  TRIPO_RIVIERA_GOLD_GIRL: { label: 'Sienna · Riviera', url: '/models/characters/tripo-riviera-gold-girl.glb', height: 1.72 },
+  TRIPO_CYBER_PINK: { label: 'Nova · Neon', url: '/models/characters/tripo-cyber-pink.glb', height: 1.72 },
+  TRIPO_CYBER_SILVER_GIRL: { label: 'Aria · Chrome', url: '/models/characters/tripo-cyber-silver-girl.glb', height: 1.72 },
+  TRIPO_SPIDER_BLONDE: { label: 'Vesper · Spider', url: '/models/characters/tripo-spider-blonde.glb', height: 1.72 },
+  TRIPO_TACTICAL_BLONDE: { label: 'Valkyrie · Blonde', url: '/models/characters/tripo-tactical-blonde.glb', height: 1.73 },
+  TRIPO_TACTICAL_REDHEAD: { label: 'Scarlet · Tactical', url: '/models/characters/tripo-tactical-redhead.glb', height: 1.73 },
+  TRIPO_SANTA_BLONDE: { label: 'Bella · Holiday', url: '/models/characters/tripo-santa-blonde.glb', height: 1.72 },
+  TRIPO_SANTA_BRUNETTE: { label: 'Camila · Holiday', url: '/models/characters/tripo-santa-brunette.glb', height: 1.72 },
+  TRIPO_ROBOT_TITANIUM: { label: 'Aegis · Titanium Bot', url: '/models/characters/tripo-robot-titanium.glb', height: 1.82 },
+  TRIPO_ROBOT_OBSIDIAN_GOLD: { label: 'Solstice · Gold Bot', url: '/models/characters/tripo-robot-obsidian-gold.glb', height: 1.82 },
   XBOT_CYBER: { label: 'Apex Android', url: '/models/xbot.glb', height: 1.82 },
   HIGH_ROLLER_VIP: { label: 'Executive VIP', url: '/models/human_high_roller.glb', height: 1.8 },
   COMMANDER_OPS: { label: 'Harbor Commander', url: '/models/human_commander.glb', height: 1.82 },
@@ -32,6 +60,16 @@ export const COASTAL_CHARACTERS = {
   CIVILIAN_MAN: { label: 'Quay Resident', url: '/models/characters/quaternius-man.glb', height: 1.76 },
   CIVILIAN_WOMAN: { label: 'Harbor Resident', url: '/models/characters/quaternius-woman-casual.glb', height: 1.68 },
 } as const satisfies Partial<Record<CharacterArchetype, { label: string; url: string; height: number }>>;
+
+export type EmoteId = 'WAVE' | 'DANCE' | 'SPIN' | 'FLEX' | 'SHUFFLE';
+
+export const EMOTE_STYLES: { id: EmoteId; label: string }[] = [
+  { id: 'WAVE', label: 'Riviera Wave' },
+  { id: 'DANCE', label: 'Club Groove' },
+  { id: 'SPIN', label: 'Victory Spin' },
+  { id: 'FLEX', label: 'Champion Flex' },
+  { id: 'SHUFFLE', label: 'Harbor Shuffle' },
+];
 export type CoastalCharacter = keyof typeof COASTAL_CHARACTERS;
 
 export type EyewearStyle = 'NONE' | 'AVIATOR_GOLD' | 'CYBER_VISOR';
@@ -702,6 +740,8 @@ export interface GameHudSnapshot {
   rouletteTimer: number;
   nearbyVehicle: VehicleMode | null;
   nearLandmark: string | null;
+  activeRide?: AmusementRideId | null;
+  nearbyRide?: AmusementRideId | null;
   fps: number;
   gliding: boolean;
   activeCheckpoint?: number;
@@ -865,11 +905,14 @@ export const simState = {
   lobbyTheme: 'SUNLIT_RIVIERA' as LobbyThemeId,
   lobbyAutoRotate: true,
   lobbyEmoteTimer: 0,
+  activeEmote: 'WAVE' as EmoteId,
   lobbyTab: 'PLAY' as LobbyTabId,
   lobbyFocus: 'OVERVIEW' as LobbyFocusId,
   worldTimeTheme: 'AUTO' as 'AUTO' | LobbyThemeId,
   touchControlsEnabled: false,
   tourVisitedIds: [] as string[],
+  activeRide: null as AmusementRideId | null,
+  nearbyRide: null as AmusementRideId | null,
   gliding: false,
   chips: 2500,
   multiplier: 1,

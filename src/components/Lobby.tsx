@@ -31,11 +31,13 @@ import {
   BOAT_FLEET_SPECS,
   CHARACTER_PRESETS,
   COASTAL_CHARACTERS,
+  EMOTE_STYLES,
   PLANE_FLEET_SPECS,
   WEAPON_SPECS,
   simState,
   type CharacterCustomization,
   type ControlSettings,
+  type EmoteId,
   type GamePlayMode,
 } from '../game/store';
 import { PlaySettings } from './PlaySettings';
@@ -114,13 +116,13 @@ const SKINS = [
 ] as const;
 
 const ARCHETYPES: { id: CharacterCustomization['archetype']; label: string }[] = [
-  { id: 'RPM_CUSTOM', label: 'City Runner' },
-  { id: 'MICHELLE_VIP', label: 'Michelle' },
-  { id: 'VANGUARD_SOLDIER', label: 'Vanguard' },
   ...Object.entries(COASTAL_CHARACTERS).map(([id, info]) => ({
     id: id as CharacterCustomization['archetype'],
     label: info.label,
   })),
+  { id: 'RPM_CUSTOM', label: 'City Runner' },
+  { id: 'MICHELLE_VIP', label: 'Michelle' },
+  { id: 'VANGUARD_SOLDIER', label: 'Vanguard' },
 ];
 
 const CAR_FLEET = [
@@ -393,11 +395,22 @@ export function Lobby({
     setFleetTick((n) => n + 1);
   };
 
-  const triggerEmote = () => {
+  const [activeEmote, setActiveEmote] = useState<EmoteId>(() => simState.activeEmote);
+
+  const triggerEmote = (overrideId?: EmoteId) => {
+    const id = overrideId ?? activeEmote;
+    simState.activeEmote = id;
+    setActiveEmote(id);
     simState.lobbyEmoteTimer = 2.6;
     setEmoting(true);
     clearTimeout(emoteTimer.current);
     emoteTimer.current = setTimeout(() => setEmoting(false), 2600);
+  };
+
+  const cycleEmote = () => {
+    const idx = EMOTE_STYLES.findIndex((item) => item.id === activeEmote);
+    const next = EMOTE_STYLES[(idx + 1) % EMOTE_STYLES.length] ?? EMOTE_STYLES[0];
+    triggerEmote(next.id);
   };
 
   const enter = (overrideMode?: GamePlayMode) => {
@@ -553,6 +566,21 @@ export function Lobby({
                       onClick={() => chooseArchetype(arch.id)}
                     >
                       {arch.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="wh-field-label">Emotes (Press Z in-game)</div>
+                <div className="wh-archetype-grid">
+                  {EMOTE_STYLES.map((emoteItem) => (
+                    <button
+                      key={emoteItem.id}
+                      type="button"
+                      className="wh-chip-btn"
+                      aria-pressed={activeEmote === emoteItem.id}
+                      onClick={() => triggerEmote(emoteItem.id)}
+                    >
+                      {emoteItem.label}
                     </button>
                   ))}
                 </div>
@@ -1050,11 +1078,11 @@ export function Lobby({
               type="button"
               className="wh-util-btn"
               data-active={emoting}
-              onClick={triggerEmote}
-              title="Trigger character emote"
+              onClick={cycleEmote}
+              title={`Cycle & trigger emote (${EMOTE_STYLES.find((e) => e.id === activeEmote)?.label ?? 'Emote'})`}
             >
               <Sparkles size={15} />
-              <span>EMOTE</span>
+              <span>{EMOTE_STYLES.find((e) => e.id === activeEmote)?.label ?? 'EMOTE'}</span>
             </button>
 
             <button

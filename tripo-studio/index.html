@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Horizon — Tripo 3D Character Studio</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: system-ui, -apple-system, sans-serif;
+      background: #070b12; color: #f8fafc; height: 100vh; display: grid;
+      grid-template-columns: 380px 1fr; overflow: hidden;
+    }
+    aside {
+      border-right: 1px solid rgba(255,255,255,0.1); padding: 18px;
+      display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
+      background: #0b111c;
+    }
+    h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; color: #e5c384; }
+    .sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+    .card {
+      background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.09);
+      border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 9px;
+    }
+    label { font-size: 11px; font-weight: 600; color: #cbd5e1; display: grid; gap: 4px; }
+    input, select, textarea, button {
+      font: inherit; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14);
+      background: #070b12; color: #f8fafc; padding: 8px 10px; font-size: 12px;
+    }
+    textarea { resize: vertical; min-height: 64px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .btn {
+      background: linear-gradient(135deg, #f59e0b, #ea580c); color: #0b111c;
+      font-weight: 700; border: none; cursor: pointer; padding: 10px 14px;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-ghost {
+      background: rgba(255,255,255,0.07); color: #e2e8f0; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.12); padding: 7px 10px; font-size: 11px;
+    }
+    .bal {
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 12px; padding: 8px 12px; border-radius: 10px;
+      background: rgba(229,195,132,0.1); border: 1px solid rgba(229,195,132,0.28);
+    }
+    .bal strong { color: #fde68a; font-size: 14px; }
+    .log {
+      font-family: ui-monospace, monospace; font-size: 11px; color: #94a3b8;
+      background: #05080f; border-radius: 8px; padding: 8px; max-height: 120px; overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .list { display: flex; flex-direction: column; gap: 6px; }
+    .item {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 7px 9px; border-radius: 8px; background: rgba(255,255,255,0.04);
+      font-size: 11px; cursor: pointer; border: 1px solid transparent;
+    }
+    .item:hover, .item.active { border-color: #e5c384; background: rgba(229,195,132,0.12); }
+    main { position: relative; width: 100%; height: 100%; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .hud {
+      position: absolute; top: 14px; left: 14px; background: rgba(7,11,18,0.82);
+      border: 1px solid rgba(255,255,255,0.12); padding: 8px 12px; border-radius: 10px;
+      font-size: 12px; backdrop-filter: blur(8px);
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <div>
+      <h1>TRIPO 3D STUDIO</h1>
+      <div class="sub">Localhost Character &amp; Asset Forge · Saves to <code>public/models/characters/</code></div>
+    </div>
+
+    <div class="bal">
+      <span>Tripo Credits</span>
+      <strong id="balance">Loading…</strong>
+      <button class="btn-ghost" id="refreshBal">Refresh</button>
+    </div>
+
+    <div class="card">
+      <label>Mode
+        <select id="mode">
+          <option value="image">Image → 3D Model</option>
+          <option value="text">Text Prompt → 3D Model</option>
+        </select>
+      </label>
+
+      <div id="imgWrap">
+        <label>Reference Image (A-Pose recommended for rigging)
+          <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" />
+        </label>
+      </div>
+
+      <div id="txtWrap" style="display:none">
+        <label>Prompt
+          <textarea id="promptInput" placeholder="Pretty 20yo cyberpunk racer girl in symmetrical A-pose, studio lighting..."></textarea>
+        </label>
+      </div>
+
+      <label>Model Version (Cost / Quality)
+        <select id="modelVer">
+          <option value="v2.5-20250123" selected>v2.5-20250123 · Fast &amp; Economical (~30 cr)</option>
+          <option value="v3.0-20250812">v3.0-20250812 · High Detail (~40 cr)</option>
+          <option value="v3.1-20260211">v3.1-20260211 · Ultra Flagship (~50 cr)</option>
+        </select>
+      </label>
+
+      <label class="row" style="justify-content:space-between">
+        <span>Auto-Rig Mixamo Biped (+25 cr)</span>
+        <input type="checkbox" id="autoRig" checked />
+      </label>
+
+      <label>Output GLB Filename
+        <input type="text" id="outName" placeholder="tripo-custom-hero" />
+      </label>
+
+      <label>API Key Override (optional, defaults to .env.local)
+        <input type="password" id="apiKey" placeholder="Using .env.local key" />
+      </label>
+
+      <button class="btn" id="generateBtn">Generate &amp; Save GLB</button>
+      <div class="log" id="log">Ready.</div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <strong style="font-size:12px">Saved Character GLBs</strong>
+        <button class="btn-ghost" id="refreshModels">Reload</button>
+      </div>
+      <div class="list" id="modelList"></div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="hud" id="viewerHud">Select or generate a `.glb` model to inspect in 3D</div>
+    <div id="canvasHost" style="width:100%;height:100%"></div>
+  </main>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.172.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.172.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+    const $ = (id) => document.getElementById(id);
+    const log = (msg) => {
+      const el = $('log');
+      el.textContent += `\n${msg}`;
+      el.scrollTop = el.scrollHeight;
+    };
+    const headers = () => {
+      const h = { 'Content-Type': 'application/json' };
+      const k = $('apiKey').value.trim();
+      if (k) h['X-Tripo-Key'] = k;
+      return h;
+    };
+
+    // 3D Preview Setup
+    const host = $('canvasHost');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#090e17');
+    const camera = new THREE.PerspectiveCamera(42, host.clientWidth / host.clientHeight, 0.1, 100);
+    camera.position.set(0, 1.4, 3.2);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(host.clientWidth, host.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    host.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.95, 0);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.HemisphereLight('#e2e8f0', '#1e293b', 1.4));
+    const dir = new THREE.DirectionalLight('#fff7ed', 2.2);
+    dir.position.set(3, 5, 4);
+    scene.add(dir);
+    scene.add(new THREE.GridHelper(6, 12, '#334155', '#1e293b'));
+
+    const loader = new GLTFLoader();
+    let currentObj = null;
+
+    function previewGlb(url, label) {
+      $('viewerHud').textContent = `Loading ${label}…`;
+      loader.load(url, (gltf) => {
+        if (currentObj) scene.remove(currentObj);
+        const model = gltf.scene;
+        const box = new THREE.Box3().setFromObject(model);
+        const h = Math.max(0.1, box.max.y - box.min.y);
+        const s = 1.8 / h;
+        model.scale.setScalar(s);
+        box.setFromObject(model);
+        const c = box.getCenter(new THREE.Vector3());
+        model.position.set(-c.x, -box.min.y, -c.z);
+        scene.add(model);
+        currentObj = model;
+        let bones = 0;
+        model.traverse((n) => { if (n.isBone) bones++; });
+        $('viewerHud').textContent = `${label} · ${bones > 0 ? `Rigged (${bones} bones)` : 'Static Mesh'}`;
+      });
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+    window.addEventListener('resize', () => {
+      camera.aspect = host.clientWidth / host.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(host.clientWidth, host.clientHeight);
+    });
+
+    async function refreshBalance() {
+      const r = await fetch('/api/balance', { headers: headers() }).then((x) => x.json());
+      if (r.code === 0) $('balance').textContent = `${r.data.balance} cr ($${(r.data.balance / 100).toFixed(2)})`;
+      else $('balance').textContent = 'Error';
+    }
+
+    async function refreshModels() {
+      const r = await fetch('/api/models').then((x) => x.json());
+      const list = $('modelList');
+      list.innerHTML = '';
+      for (const f of r.files || []) {
+        const div = document.createElement('div');
+        div.className = 'item';
+        div.innerHTML = `<span>${f.name}</span><span style="color:#94a3b8">${(f.bytes / 1024 / 1024).toFixed(1)} MB</span>`;
+        div.onclick = () => {
+          document.querySelectorAll('.item').forEach((x) => x.classList.remove('active'));
+          div.classList.add('active');
+          previewGlb(f.url, f.name);
+        };
+        list.appendChild(div);
+      }
+    }
+
+    $('mode').onchange = () => {
+      const isImg = $('mode').value === 'image';
+      $('imgWrap').style.display = isImg ? 'block' : 'none';
+      $('txtWrap').style.display = isImg ? 'none' : 'block';
+    };
+    $('refreshBal').onclick = refreshBalance;
+    $('refreshModels').onclick = refreshModels;
+
+    async function pollTask(id, label) {
+      while (true) {
+        const r = await fetch(`/api/task/${id}`, { headers: headers() }).then((x) => x.json());
+        if (r.code !== 0) throw new Error(JSON.stringify(r));
+        const st = r.data.status;
+        if (st === 'success') return r.data;
+        if (st === 'failed' || st === 'cancelled' || st === 'banned') throw new Error(`${label} ${st}`);
+        log(`[${label}] ${st} (${r.data.progress || 0}%)`);
+        await new Promise((res) => setTimeout(res, 2500));
+      }
+    }
+
+    $('generateBtn').onclick = async () => {
+      $('generateBtn').disabled = true;
+      $('log').textContent = 'Starting Tripo task…';
+      try {
+        const modelVersion = $('modelVer').value;
+        const doRig = $('autoRig').checked;
+        let payload;
+
+        if ($('mode').value === 'image') {
+          const file = $('fileInput').files[0];
+          if (!file) throw new Error('Please choose an image file first.');
+          const dataUrl = await new Promise((res) => {
+            const fr = new FileReader();
+            fr.onload = () => res(fr.result);
+            fr.readAsDataURL(file);
+          });
+          log('Uploading image…');
+          const up = await fetch('/api/upload', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({ dataUrl, mime: file.type }),
+          }).then((x) => x.json());
+          if (up.code !== 0) throw new Error(JSON.stringify(up));
+          payload = {
+            type: 'image_to_model',
+            model_version: modelVersion,
+            file: { type: up.ext || 'jpg', file_token: up.data.image_token },
+            texture: true,
+            pbr: true,
+            face_limit: 20000,
+          };
+        } else {
+          const prompt = $('promptInput').value.trim();
+          if (!prompt) throw new Error('Please enter a prompt.');
+          payload = {
+            type: 'text_to_model',
+            model_version: modelVersion,
+            prompt,
+            texture: true,
+            pbr: true,
+            face_limit: 20000,
+          };
+        }
+
+        const t1 = await fetch('/api/task', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify(payload),
+        }).then((x) => x.json());
+        if (t1.code !== 0) throw new Error(JSON.stringify(t1));
+        log(`Model task ${t1.data.task_id}`);
+        let finalData = await pollTask(t1.data.task_id, 'model');
+
+        if (doRig) {
+          log('Submitting Mixamo biped auto-rig…');
+          const t2 = await fetch('/api/task', {
+            method: 'POST',
+            headers: headers(),
+            body: JSON.stringify({
+              type: 'animate_rig',
+              original_model_task_id: t1.data.task_id,
+              out_format: 'glb',
+              rig_type: 'biped',
+              spec: 'mixamo',
+            }),
+          }).then((x) => x.json());
+          if (t2.code !== 0) throw new Error(JSON.stringify(t2));
+          finalData = await pollTask(t2.data.task_id, 'rig');
+        }
+
+        const glbUrl = finalData.output?.model || finalData.output?.pbr_model;
+        if (!glbUrl) throw new Error('No GLB URL in task output');
+        log('Downloading & saving GLB…');
+        const saved = await fetch('/api/save-glb', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify({ url: glbUrl, filename: $('outName').value.trim() || `tripo-${Date.now()}` }),
+        }).then((x) => x.json());
+        log(`Saved ${saved.filename} (${(saved.bytes / 1024 / 1024).toFixed(2)} MB)!`);
+        await refreshBalance();
+        await refreshModels();
+        previewGlb(saved.url, saved.filename);
+      } catch (err) {
+        log(`ERROR: ${err.message}`);
+      } finally {
+        $('generateBtn').disabled = false;
+      }
+    };
+
+    refreshBalance();
+    refreshModels();
+  </script>
+</body>
+</html>

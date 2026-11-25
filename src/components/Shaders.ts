@@ -159,9 +159,27 @@ export const skyFragmentShader = /* glsl */ `
       vec3 cloudLitNight = mix(uHorizon * 1.18, vec3(0.56, 0.76, 1.0), 0.35 + 0.65 * pow(moonDot, 4.0));
       vec3 cloudNight = mix(cloudShadowNight, cloudLitNight, mix(0.14, 1.0, moonLightEdge) * (0.35 + 0.65 * pow(moonDot, 2.2)));
 
+      // Silver-lining forward scatter & golden crepuscular rays around sun/moon
+      float forwardScatter = pow(sunDot, 10.0) * smoothstep(0.38, 0.72, c) * (1.0 - smoothstep(0.72, 0.88, c));
       vec3 cloudCol = mix(cloudDay, cloudNight, smoothstep(0.12, 0.82, uMoonVis));
+      cloudCol += mix(uSunColor, vec3(1.0, 0.55, 0.22), uSunsetWarmth) * forwardScatter * 0.65 * (1.0 - uMoonVis);
       cloudCol = mix(cloudCol, uHorizon + warmScatter, (1.0 - smoothstep(0.04, 0.22, dir.y)) * 0.55);
       col = mix(col, cloudCol, cloudAlpha * mix(0.68, 0.44, uMoonVis));
+
+      // Subtle atmospheric crepuscular sunbeams radiating through cloud gaps
+      float rayAngle = atan(dir.y - sunN.y, dot(dir.xz - sunN.xz, vec2(0.707, 0.707)));
+      float rayBands = 0.5 + 0.5 * sin(rayAngle * 14.0 + uTime * 0.22);
+      float godRay = pow(sunDot, 4.5) * (1.0 - cloudAlpha * 0.85) * rayBands * smoothstep(0.02, 0.42, dir.y);
+      col += mix(uSunColor, vec3(1.0, 0.62, 0.28), uSunsetWarmth) * godRay * 0.085 * sunMieMask;
+    }
+
+    // Nocturnal Milky Way galactic dust band when stars are visible
+    if (uStarIntensity > 0.15 && dir.y > 0.06) {
+      float galaxyPlane = abs(dot(dir, normalize(vec3(0.42, 0.68, -0.59))));
+      float galaxyBand = exp(-pow(galaxyPlane / 0.22, 2.0));
+      float dustNoise = noise(dir.xz * 4.2 + vec2(1.7, 3.1)) * 0.65 + noise(dir.xz * 11.5) * 0.35;
+      vec3 nebulaTint = mix(vec3(0.12, 0.24, 0.52), vec3(0.42, 0.20, 0.55), dustNoise);
+      col += nebulaTint * galaxyBand * smoothstep(0.28, 0.78, dustNoise) * uStarIntensity * 0.18 * smoothstep(0.06, 0.32, dir.y);
     }
 
     gl_FragColor = vec4(col, 1.0);
@@ -331,8 +349,20 @@ export const waterFragmentShader = /* glsl */ `
     vec2 crossing = p + sunN.xz * 13.0;
     float bridgeShadow = (1.0 - smoothstep(14.0, 23.0, abs(crossing.x))) *
       smoothstep(-399.0, -372.0, crossing.y) * (1.0 - smoothstep(-250.0, -224.0, crossing.y));
-    vec3 col = mix(water * (1.0 - bridgeShadow * mix(0.18, 0.37, daySun)), reflectedSky, fresnel * 0.82);
+    float pierShadow = (1.0 - smoothstep(46.0, 54.0, abs(crossing.x))) *
+      smoothstep(-692.0, -678.0, crossing.y) * (1.0 - smoothstep(-524.0, -508.0, crossing.y));
+    vec3 col = mix(water * (1.0 - max(bridgeShadow, pierShadow * 0.85) * mix(0.18, 0.37, daySun)), reflectedSky, fresnel * 0.82);
     col += uSunColor * (solarPath * 0.24 + ggxSpec * 0.045 * (0.4 + wind * 0.8) + diamondSparkle) * (0.16 + 0.84 * daySun);
+
+    // Shimmering neon Ferris Wheel & Coaster reflections on the ocean water around Wonder Pier
+    if (p.y < -490.0 && p.y > -725.0 && abs(p.x) < 110.0) {
+      float pierProximity = (1.0 - smoothstep(42.0, 105.0, abs(p.x))) *
+        smoothstep(-725.0, -675.0, p.y) * (1.0 - smoothstep(-515.0, -490.0, p.y));
+      float wheelShimmer = pow(max(0.0, sin(p.x * 0.45 + n.x * 12.0 + uTime * 2.2)), 3.0);
+      float coasterShimmer = pow(max(0.0, cos(p.y * 0.38 + n.z * 12.0 - uTime * 2.8)), 3.0);
+      vec3 neonWaterGlow = vec3(0.92, 0.28, 0.60) * wheelShimmer + vec3(0.22, 0.74, 0.98) * coasterShimmer;
+      col += neonWaterGlow * pierProximity * (0.12 + 0.24 * uMoonVis + 0.14 * uSunsetWarmth);
+    }
 
     // Moonlit silver reflection path on waves during twilight & midnight
     if (uMoonVis > 0.05) {
@@ -542,15 +572,32 @@ export const terrainFragmentShader = /* glsl */ `
 
     if (p.y < -330.0) {
       float grain = fbm(p * 1.8);
-      float grade = fbm(vec2(p.x * 0.075, p.y * 0.31));
-      float striations = smoothstep(0.72, 0.94, sin(p.x * 0.95 + p.y * 0.1)) * 0.055;
-      vec3 compacted = mix(vec3(0.27, 0.155, 0.083), vec3(0.54, 0.37, 0.22), grain * 0.55 + grade * 0.45);
-      vec3 beach = mix(vec3(0.34, 0.29, 0.19), vec3(0.63, 0.52, 0.36), grain);
-      albedo = mix(beach, compacted - striations, smoothstep(0.8, 3.7, vWorldPos.y));
-      float haulRoad = abs(p.x - sin((p.y + 400.0) * 0.027) * 9.0);
-      float tireTrack = 1.0 - smoothstep(0.38, 1.15, abs(haulRoad - 3.7));
-      if (p.y < -401.0 && p.y > -540.0) {
-        albedo = mix(albedo, compacted * (0.82 - tireTrack * 0.15), 1.0 - smoothstep(7.1, 8.6, haulRoad));
+      float macroN = fbm(p * 0.05);
+      float bladeN1 = noise(p * 18.0);
+      float bladeN2 = noise(p * 55.0);
+      float windPhase = dot(p, vec2(0.16, 0.11)) - uTime * 2.35 + macroN * 3.8;
+      float windWave = sin(windPhase) * 0.5 + 0.5;
+      windGustVal = windWave;
+
+      vec3 beach = mix(vec3(0.46, 0.36, 0.24), vec3(0.84, 0.72, 0.52), smoothstep(0.2, 1.4, vWorldPos.y));
+      vec3 parkGrass = mix(vec3(0.11, 0.34, 0.11), vec3(0.26, 0.49, 0.16), smoothstep(0.2, 0.8, macroN));
+      parkGrass = mix(parkGrass, vec3(0.42, 0.58, 0.20), windWave * 0.32);
+      parkGrass *= 0.84 + 0.28 * bladeN1;
+      float grassBlend = smoothstep(1.35, 2.35, vWorldPos.y);
+      albedo = mix(beach, parkGrass, grassBlend);
+      grassSheenMask = grassBlend;
+      n = normalize(n + vec3((bladeN2 - 0.5) * 0.22 + windWave * 0.07, 0.0, (bladeN1 - 0.5) * 0.22) * grassBlend);
+
+      // Paved Promenade Boulevard from North Bay Bridge (z = -402) to Wonder Ocean Pier Entrance (z = -520)
+      float roadDist = abs(p.x);
+      if (p.y < -395.0 && p.y > -530.0 && roadDist < 9.5) {
+        vec3 promenadeAsphalt = vec3(0.11, 0.12, 0.14) + (grain - 0.5) * 0.03;
+        if (abs(roadDist - 0.25) < 0.12) promenadeAsphalt = vec3(0.96, 0.74, 0.16);
+        else if (abs(roadDist - 8.6) < 0.16) promenadeAsphalt = vec3(0.92, 0.94, 0.96);
+        float roadMask = 1.0 - smoothstep(8.9, 9.5, roadDist);
+        albedo = mix(albedo, promenadeAsphalt, roadMask);
+        grassSheenMask *= 1.0 - roadMask;
+        specStrength = mix(0.09, 0.22, roadMask);
       }
     } else if (onRoad) {
       // Crisp dark-charcoal weathered asphalt base with mineral micro-grain sparkle

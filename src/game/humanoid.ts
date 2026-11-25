@@ -52,6 +52,7 @@ export interface Pose {
   recoil?: number;
   harvest?: number;
   emote?: number;
+  emoteStyle?: 'WAVE' | 'DANCE' | 'SPIN' | 'FLEX' | 'SHUFFLE';
   lookPitch?: number;
   lookYaw?: number;
   ground?: GroundMotion;
@@ -363,27 +364,90 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   let emoteDrop = 0;
   if (procEmoteWeight > 0.004) {
     const tEmote = rig.emoteElapsed;
+    const style = motion.emoteStyle ?? 'WAVE';
     const groove = Math.sin(tEmote * 6.2);
     const bounce = 0.5 - 0.5 * Math.cos(tEmote * 12.4);
     const wave = Math.sin(tEmote * 7.8);
-    emoteDrop = -0.042 * bounce * procEmoteWeight;
 
-    // Confident chest lift, rhythmic shoulder groove, subtle knee bounce, and raised right-arm salute/wave
-    setPose(joints.Hips, -0.04 * bounce, groove * 0.12, groove * 0.055, procEmoteWeight);
-    setPose(joints.Spine, -0.10 - 0.035 * bounce, -groove * 0.11, -groove * 0.05, procEmoteWeight);
-    setPose(joints.Spine1, -0.075, groove * 0.08, 0, procEmoteWeight);
-    setPose(joints.Head, -0.055 + 0.04 * bounce, -0.10 + groove * 0.08, groove * 0.05, procEmoteWeight);
+    if (style === 'DANCE') {
+      const beat = Math.sin(tEmote * 8.4);
+      const pulse = 0.5 - 0.5 * Math.cos(tEmote * 16.8);
+      emoteDrop = -0.065 * pulse * procEmoteWeight;
+      setPose(joints.Hips, -0.06 * pulse, beat * 0.24, beat * 0.11, procEmoteWeight);
+      setPose(joints.Spine, -0.08 - 0.05 * pulse, -beat * 0.18, -beat * 0.09, procEmoteWeight);
+      setPose(joints.Spine1, -0.06, beat * 0.14, 0, procEmoteWeight);
+      setPose(joints.Head, -0.04 + 0.06 * pulse, -beat * 0.14, beat * 0.08, procEmoteWeight);
+      for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+        const alt = Math.max(0, sign * beat);
+        setPose(joints[side + 'UpLeg'], -0.20 * pulse - 0.16 * alt, sign * 0.07, sign * 0.11, procEmoteWeight);
+        setPose(joints[side + 'Leg'], 0.38 * pulse + 0.28 * alt, 0, 0, procEmoteWeight);
+        setPose(joints[side + 'Foot'], -0.18 * pulse, sign * 0.05, -sign * 0.05, procEmoteWeight);
+        setPose(joints[side + 'Arm'], -1.35 + Math.sin(tEmote * 8.4 + sign * 1.4) * 0.42, sign * 0.22, -sign * (0.48 + 0.18 * pulse), procEmoteWeight);
+        setPose(joints[side + 'ForeArm'], -1.05 - 0.35 * Math.cos(tEmote * 8.4 + sign), 0, 0, procEmoteWeight);
+      }
+    } else if (style === 'SPIN') {
+      const spinProgress = THREE.MathUtils.smoothstep(tEmote, 0.1, 1.35);
+      const spinAngle = spinProgress * Math.PI * 2;
+      const leap = Math.sin(Math.min(1, tEmote / 1.45) * Math.PI);
+      emoteDrop = (0.14 * leap - 0.04 * (1 - leap)) * procEmoteWeight;
+      setPose(joints.Hips, -0.05 * (1 - leap), spinAngle, 0, procEmoteWeight);
+      setPose(joints.Spine, -0.14, 0, 0, procEmoteWeight);
+      setPose(joints.Head, -0.08, 0, 0, procEmoteWeight);
+      for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+        setPose(joints[side + 'UpLeg'], -0.12 * (1 - leap), sign * 0.05, sign * 0.08, procEmoteWeight);
+        setPose(joints[side + 'Leg'], 0.24 * (1 - leap), 0, 0, procEmoteWeight);
+        setPose(joints[side + 'Arm'], -2.45 + 0.12 * Math.sin(tEmote * 9), sign * 0.18, -sign * 0.52, procEmoteWeight);
+        setPose(joints[side + 'ForeArm'], -0.24, 0, 0, procEmoteWeight);
+      }
+    } else if (style === 'FLEX') {
+      const pump = 0.5 - 0.5 * Math.cos(tEmote * 5.2);
+      emoteDrop = -0.03 * pump * procEmoteWeight;
+      setPose(joints.Hips, -0.04, 0.14 * Math.sin(tEmote * 2.6), 0, procEmoteWeight);
+      setPose(joints.Spine, -0.14 - 0.04 * pump, 0, 0, procEmoteWeight);
+      setPose(joints.Spine1, -0.10, 0, 0, procEmoteWeight);
+      setPose(joints.Head, 0.04, -0.12 * Math.sin(tEmote * 2.6), 0, procEmoteWeight);
+      for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+        setPose(joints[side + 'UpLeg'], -0.10, sign * 0.10, sign * 0.15, procEmoteWeight);
+        setPose(joints[side + 'Leg'], 0.20, 0, 0, procEmoteWeight);
+        setPose(joints[side + 'Foot'], -0.10, sign * 0.05, -sign * 0.06, procEmoteWeight);
+        setPose(joints[side + 'Arm'], -1.18 - 0.14 * pump, sign * 0.22, -sign * 1.12, procEmoteWeight);
+        setPose(joints[side + 'ForeArm'], -1.88 - 0.26 * pump, sign * 0.18, 0, procEmoteWeight);
+      }
+    } else if (style === 'SHUFFLE') {
+      const step = Math.sin(tEmote * 10.5);
+      const lift = Math.abs(step);
+      emoteDrop = -0.055 * (1 - lift) * procEmoteWeight;
+      setPose(joints.Hips, -0.06, step * 0.18, -step * 0.09, procEmoteWeight);
+      setPose(joints.Spine, -0.10, -step * 0.14, step * 0.06, procEmoteWeight);
+      setPose(joints.Head, -0.04, step * 0.10, -step * 0.05, procEmoteWeight);
+      for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+        const kick = Math.max(0, sign * step);
+        setPose(joints[side + 'UpLeg'], -0.58 * kick - 0.08, sign * 0.06, sign * 0.09, procEmoteWeight);
+        setPose(joints[side + 'Leg'], 0.92 * kick + 0.14, 0, 0, procEmoteWeight);
+        setPose(joints[side + 'Foot'], -0.32 * kick, 0, 0, procEmoteWeight);
+        setPose(joints[side + 'Arm'], -0.45 + sign * step * 0.48, sign * 0.2, -sign * 0.34, procEmoteWeight);
+        setPose(joints[side + 'ForeArm'], -1.15 - 0.25 * lift, 0, 0, procEmoteWeight);
+      }
+    } else {
+      emoteDrop = -0.042 * bounce * procEmoteWeight;
 
-    for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
-      setPose(joints[side + 'UpLeg'], -0.14 * bounce, sign * 0.05, sign * 0.075, procEmoteWeight);
-      setPose(joints[side + 'Leg'], 0.28 * bounce, 0, 0, procEmoteWeight);
-      setPose(joints[side + 'Foot'], -0.14 * bounce, sign * 0.05, -sign * 0.04, procEmoteWeight);
+      // Confident chest lift, rhythmic shoulder groove, subtle knee bounce, and raised right-arm salute/wave
+      setPose(joints.Hips, -0.04 * bounce, groove * 0.12, groove * 0.055, procEmoteWeight);
+      setPose(joints.Spine, -0.10 - 0.035 * bounce, -groove * 0.11, -groove * 0.05, procEmoteWeight);
+      setPose(joints.Spine1, -0.075, groove * 0.08, 0, procEmoteWeight);
+      setPose(joints.Head, -0.055 + 0.04 * bounce, -0.10 + groove * 0.08, groove * 0.05, procEmoteWeight);
+
+      for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+        setPose(joints[side + 'UpLeg'], -0.14 * bounce, sign * 0.05, sign * 0.075, procEmoteWeight);
+        setPose(joints[side + 'Leg'], 0.28 * bounce, 0, 0, procEmoteWeight);
+        setPose(joints[side + 'Foot'], -0.14 * bounce, sign * 0.05, -sign * 0.04, procEmoteWeight);
+      }
+
+      setPose(joints.RightArm, -2.32 + wave * 0.12, 0.18, -0.56 + wave * 0.22, procEmoteWeight);
+      setPose(joints.RightForeArm, -0.52 - wave * 0.36, 0, 0.24 * wave, procEmoteWeight);
+      setPose(joints.LeftArm, -0.22 + groove * 0.12, 0.14, 0.24, procEmoteWeight);
+      setPose(joints.LeftForeArm, -0.68 - bounce * 0.12, 0.25, 0, procEmoteWeight);
     }
-
-    setPose(joints.RightArm, -2.32 + wave * 0.12, 0.18, -0.56 + wave * 0.22, procEmoteWeight);
-    setPose(joints.RightForeArm, -0.52 - wave * 0.36, 0, 0.24 * wave, procEmoteWeight);
-    setPose(joints.LeftArm, -0.22 + groove * 0.12, 0.14, 0.24, procEmoteWeight);
-    setPose(joints.LeftForeArm, -0.68 - bounce * 0.12, 0.25, 0, procEmoteWeight);
   }
 
   rig.swim = THREE.MathUtils.damp(rig.swim, swimming ? 1 : 0, 10, dt);
