@@ -383,15 +383,18 @@ const grassVertexShader = /* glsl */ `
     vBladeH = uv.y;
     vec4 worldBase = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     float dist = distance(worldBase.xyz, uCameraPos);
-    float lodScale = 1.0 - smoothstep(115.0, 175.0, dist);
+    float lodScale = 1.0 - smoothstep(78.0, 125.0, dist);
+    if (lodScale < 0.01) {
+      gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+      return;
+    }
 
-    vec3 localPos = position;
-    localPos.y *= lodScale;
+    vec3 localPos = position * lodScale;
 
     float gustPhase = dot(worldBase.xz, vec2(0.18, 0.13)) - uTime * 2.55;
     float gust = sin(gustPhase) + 0.45 * cos(gustPhase * 2.1 + worldBase.x * 0.4);
     vWind = gust * 0.5 + 0.5;
-    float bend = pow(vBladeH, 1.65) * 0.24 * lodScale;
+    float bend = pow(vBladeH, 1.65) * 0.28 * lodScale;
     localPos.x += gust * bend;
     localPos.z += cos(gustPhase * 1.3) * bend * 0.7;
 
@@ -426,26 +429,27 @@ const grassFragmentShader = /* glsl */ `
 
   void main() {
     float flowerHash = fract(sin(dot(floor(vWorldPos.xz * 2.2), vec2(127.1, 311.7))) * 43758.5453);
-    vec3 rootCol = vec3(0.035, 0.10, 0.03);
-    vec3 midCol = vec3(0.10, 0.28, 0.07);
-    vec3 tipBase = mix(vec3(0.24, 0.49, 0.11), vec3(0.46, 0.66, 0.18), clamp(vWind + vFlatten * 0.35, 0.0, 1.0));
-    if (flowerHash > 0.91 && vBladeH > 0.72) {
-      vec3 bloomCol = flowerHash > 0.96 ? vec3(0.96, 0.45, 0.68) : vec3(0.98, 0.84, 0.22);
-      tipBase = mix(tipBase, bloomCol, smoothstep(0.72, 0.92, vBladeH));
+    float patchN = sin(vWorldPos.x * 0.055) * cos(vWorldPos.z * 0.055) * 0.5 + 0.5;
+    vec3 rootCol = vec3(0.05, 0.14, 0.04);
+    vec3 midCol = mix(vec3(0.11, 0.28, 0.08), vec3(0.15, 0.34, 0.10), patchN);
+    vec3 tipBase = mix(vec3(0.24, 0.44, 0.13), vec3(0.36, 0.54, 0.17), clamp(vWind * 0.75 + vFlatten * 0.25, 0.0, 1.0));
+    if (flowerHash > 0.94 && vBladeH > 0.76) {
+      vec3 bloomCol = flowerHash > 0.975 ? vec3(0.95, 0.52, 0.70) : vec3(0.96, 0.84, 0.28);
+      tipBase = mix(tipBase, bloomCol, smoothstep(0.76, 0.95, vBladeH));
     }
     vec3 albedo = mix(rootCol, midCol, smoothstep(0.0, 0.52, vBladeH));
     albedo = mix(albedo, tipBase, smoothstep(0.42, 1.0, vBladeH));
 
-    // Ambient occlusion near soil root + chlorophyll translucency & morning dew sparkle at blade tips
-    float ao = mix(0.42, 1.18, vBladeH);
+    // Ambient occlusion near soil root + chlorophyll translucency & cloud dapple
+    float ao = mix(0.48, 1.12, vBladeH);
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
-    float grazing = pow(1.0 - abs(viewDir.y), 2.4) * vBladeH;
-    vec3 light = uAmbientCol * 0.85 + uSunLightCol * (0.62 + 0.58 * vBladeH + grazing * 0.35);
+    float grazing = pow(1.0 - abs(viewDir.y), 2.2) * vBladeH;
+    vec3 light = uAmbientCol * 0.9 + uSunLightCol * (0.64 + 0.52 * vBladeH + grazing * 0.32);
     vec3 col = albedo * light * ao;
 
     float camDist = distance(vWorldPos, uCameraPos);
-    float haze = smoothstep(110.0, 175.0, camDist);
-    col = mix(col, uHorizonCol, haze * 0.55);
+    float haze = smoothstep(82.0, 130.0, camDist);
+    col = mix(col, uHorizonCol, haze * 0.65);
 
     gl_FragColor = vec4(col, 1.0);
     #include <tonemapping_fragment>
@@ -457,29 +461,31 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
   const { bladeGeo, matrices } = useMemo(() => {
-    // 5 intersecting tapered curved blades per tuft (25 vertices total)
+    // 7 intersecting tapered curved blades per clump (35 vertices total) for lush meadow density
     const positions: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
-    const bladeCount = 5;
+    const bladeCount = 7;
     for (let b = 0; b < bladeCount; b++) {
-      const angle = (b * Math.PI) / bladeCount + (b % 2 === 0 ? 0.16 : -0.14);
+      const angle = (b * Math.PI) / bladeCount + (b % 2 === 0 ? 0.19 : -0.17);
       const cos = Math.cos(angle);
       const sin = Math.sin(angle);
-      const wBase = 0.085;
-      const wMid = 0.055;
-      const hMid = 0.24;
-      const hTop = 0.48 + (b % 2) * 0.08;
-      const lean = (b - 2) * 0.075;
+      const offX = (b - 3) * 0.06;
+      const offZ = ((b * 3) % 5 - 2) * 0.055;
+      const wBase = 0.11;
+      const wMid = 0.068;
+      const hMid = 0.23 + (b % 3) * 0.05;
+      const hTop = 0.44 + (b % 4) * 0.10;
+      const lean = (b - 3) * 0.085;
       const baseIdx = b * 5;
 
       // 0: bottom-left, 1: bottom-right, 2: mid-left, 3: mid-right, 4: tip
       positions.push(
-        -wBase * cos, 0, -wBase * sin,
-        wBase * cos, 0, wBase * sin,
-        -wMid * cos + lean * 0.4, hMid, -wMid * sin + lean * 0.4,
-        wMid * cos + lean * 0.4, hMid, wMid * sin + lean * 0.4,
-        lean, hTop, lean
+        offX - wBase * cos, 0, offZ - wBase * sin,
+        offX + wBase * cos, 0, offZ + wBase * sin,
+        offX - wMid * cos + lean * 0.4, hMid, offZ - wMid * sin + lean * 0.4,
+        offX + wMid * cos + lean * 0.4, hMid, offZ + wMid * sin + lean * 0.4,
+        offX + lean, hTop, offZ + lean
       );
       uvs.push(
         0, 0,
@@ -501,7 +507,7 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
     geo.setIndex(indices);
     geo.computeVertexNormals();
 
-    // Deterministic placement of 1,450 lush grass tufts across coastal meadows & park lawns
+    // Deterministic placement of 22,000 lush grass clumps across coastal meadows, parks & boulevards
     const dummy = new THREE.Object3D();
     const mats: THREE.Matrix4[] = [];
     let seed = 1337;
@@ -510,24 +516,24 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
       return (seed - 1) / 2147483646;
     };
 
-    for (let i = 0; i < 4200 && mats.length < 1450; i++) {
-      const r = 32 + rand() * 195;
+    for (let i = 0; i < 65000 && mats.length < 18500; i++) {
+      const r = 26 + rand() * 218;
       const theta = rand() * Math.PI * 2;
       const x = Math.cos(theta) * r;
       const z = Math.sin(theta) * r;
 
       // Keep clear of roads, sidewalks, parking bays, transit stops, runway, and canal
-      if (Math.abs(x) < 34.5) continue;
-      if (Math.abs(z) < 22.5 || Math.abs(z + 120) < 22.5 || Math.abs(z - 80) < 22.5) continue;
+      if (Math.abs(x) < 32.5) continue;
+      if (Math.abs(z) < 21.5 || Math.abs(z + 120) < 21.5 || Math.abs(z - 80) < 21.5) continue;
       if (x > -215 && x < -40 && z > 125 && z < 185) continue;
       if (x > 66 && Math.abs(z + 95) < 28) continue;
-      if (Math.abs(coastRoadOffset(x, z)) < 14.5) continue;
+      if (Math.abs(coastRoadOffset(x, z)) < 14.0) continue;
 
       // Avoid city building plots + generous sidewalk apron
       let insidePlot = false;
       for (let pIdx = 0; pIdx < cityPlots.length; pIdx++) {
         const plot = cityPlots[pIdx];
-        if (Math.abs(x - plot.x) < plot.w * 0.56 + 6.5 && Math.abs(z - plot.z) < plot.d * 0.56 + 6.5) {
+        if (Math.abs(x - plot.x) < plot.w * 0.56 + 6.0 && Math.abs(z - plot.z) < plot.d * 0.56 + 6.0) {
           insidePlot = true;
           break;
         }
@@ -535,28 +541,28 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
       if (insidePlot) continue;
 
       const y = getTerrainHeight(x, z);
-      if (y < 2.35 || y > 7.4) continue;
+      if (y < 2.2 || y > 7.8) continue;
 
-      dummy.position.set(x, y - 0.02, z);
+      dummy.position.set(x, y - 0.03, z);
       dummy.rotation.set(0, rand() * Math.PI * 2, 0);
-      const s = 0.78 + rand() * 0.68;
-      dummy.scale.set(s, s * (0.85 + rand() * 0.45), s);
+      const s = 0.85 + rand() * 0.78;
+      dummy.scale.set(s, s * (0.85 + rand() * 0.55), s);
       dummy.updateMatrix();
       mats.push(dummy.matrix.clone());
     }
 
-    // Also populate 350 lush coastal grass tufts across Island II (approach lawns to the Wonder Ocean Pier)
-    for (let i = 0; i < 1200 && mats.length < 1800; i++) {
-      const x = (rand() - 0.5) * 180;
-      const z = -395 - rand() * 125;
-      if (Math.abs(x) < 14) continue;
+    // Populate 3,500 lush coastal grass clumps across Island II (approach lawns to the Wonder Ocean Pier)
+    for (let i = 0; i < 12000 && mats.length < 22000; i++) {
+      const x = (rand() - 0.5) * 190;
+      const z = -385 - rand() * 138;
+      if (Math.abs(x) < 13) continue;
       const y = getTerrainHeight(x, z);
-      if (y < 2.0 || y > 7.2) continue;
+      if (y < 1.9 || y > 7.6) continue;
 
-      dummy.position.set(x, y - 0.02, z);
+      dummy.position.set(x, y - 0.03, z);
       dummy.rotation.set(0, rand() * Math.PI * 2, 0);
-      const s = 0.82 + rand() * 0.72;
-      dummy.scale.set(s, s * (0.9 + rand() * 0.45), s);
+      const s = 0.88 + rand() * 0.75;
+      dummy.scale.set(s, s * (0.9 + rand() * 0.55), s);
       dummy.updateMatrix();
       mats.push(dummy.matrix.clone());
     }

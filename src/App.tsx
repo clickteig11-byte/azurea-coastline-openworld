@@ -27,7 +27,7 @@ import { CoastalCity } from './components/City';
 import { WorldEffects } from './components/WorldEffects';
 import { LivingWorldNPCs } from './components/NPCs';
 import { HUD } from './components/HUD';
-import { GameHudSnapshot, simState } from './game/store';
+import { GameHudSnapshot, requestGamePointerLock, simState } from './game/store';
 import { LOBBY_THEMES } from './game/lobbyThemes';
 import { getTerrainHeight, getTravelHeight, VehicleMode } from './game/worldMath';
 
@@ -304,6 +304,14 @@ export function App() {
       s.gameMode = 'FREE_ROAM';
     }
 
+    let wasPointerLocked = Boolean(document.pointerLockElement);
+    let lastPointerUnlockAt = 0;
+    const onPointerLockChange = () => {
+      const nowLocked = Boolean(document.pointerLockElement);
+      if (wasPointerLocked && !nowLocked) lastPointerUnlockAt = Date.now();
+      wasPointerLocked = nowLocked;
+    };
+
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable)) return;
@@ -337,13 +345,32 @@ export function App() {
       if (lowerKey === 'd') simState.keys.add('KeyD');
       if (lowerKey === 'f') simState.keys.add('KeyF');
 
-      if (!e.repeat && (code === 'KeyM' || code === 'Escape')) {
+      if (!e.repeat && code === 'KeyM') {
         const nextOpen = !Boolean(s.startMenuOpen);
         s.startMenuOpen = nextOpen;
         if (nextOpen) {
           simState.customizerOpen = false;
+          simState.controlsOpen = false;
           simState.keys.clear();
+          if (document.pointerLockElement) document.exitPointerLock?.();
         }
+        window.dispatchEvent(new CustomEvent('toggle-start-menu'));
+        return;
+      }
+      if (!e.repeat && code === 'Escape') {
+        if (document.pointerLockElement || Date.now() - lastPointerUnlockAt < 300) {
+          document.exitPointerLock?.();
+          return;
+        }
+        if (simState.customizerOpen || simState.controlsOpen) {
+          simState.customizerOpen = false;
+          simState.controlsOpen = false;
+          window.dispatchEvent(new CustomEvent('hud-sync'));
+          return;
+        }
+        const nextOpen = !Boolean(s.startMenuOpen);
+        s.startMenuOpen = nextOpen;
+        if (nextOpen) simState.keys.clear();
         window.dispatchEvent(new CustomEvent('toggle-start-menu'));
         return;
       }
@@ -360,6 +387,12 @@ export function App() {
       if (code === 'KeyX' && !e.repeat) {
         simState.cameraView = (simState.cameraView + 1) % 2;
         simState.orbitYaw = simState.orbitPitch = 0;
+        if (simState.cameraView === 1) {
+          requestGamePointerLock();
+        } else if (document.pointerLockElement && simState.mode !== 'FOOT') {
+          document.exitPointerLock?.();
+        }
+        window.dispatchEvent(new CustomEvent('hud-sync'));
       }
       if (code === 'KeyR' && !e.repeat && !s.startMenuOpen && !(simState.mode === 'FOOT' && construction.active)) triggerRouletteSpin();
       if (code === 'KeyZ' && !e.repeat && !s.startMenuOpen && simState.mode === 'FOOT') {
@@ -407,10 +440,12 @@ export function App() {
     const onWindowBlur = () => {
       simState.keys.clear();
     };
+    document.addEventListener('pointerlockchange', onPointerLockChange);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onWindowBlur);
     return () => {
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onWindowBlur);

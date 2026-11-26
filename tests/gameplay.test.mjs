@@ -426,8 +426,26 @@ test('All 5 EMOTE_STYLES animate distinct poses and all Tripo characters are rig
   const fs = await import('node:fs');
   const path = await import('node:path');
   const { Bone, Group } = await import('three');
-  const { COASTAL_CHARACTERS, EMOTE_STYLES } = await import('../src/game/store.ts');
-  const { createHumanoidRig, animateHumanoid } = await import('../src/game/humanoid.ts');
+  const { COASTAL_CHARACTERS, EMOTE_STYLES, HERO_ROSTER, KIT_COLORWAYS } = await import('../src/game/store.ts');
+  const { createHumanoidRig, animateHumanoid, weldSmoothNormals } = await import('../src/game/humanoid.ts');
+
+  // Verify HERO_ROSTER groups Chloe Reed & Lola Quinn without duplicate personas and includes v3.1 male heroes
+  const chloe = HERO_ROSTER.find((h) => h.heroId === 'CHLOE_REED');
+  const lola = HERO_ROSTER.find((h) => h.heroId === 'LOLA_QUINN');
+  assert.ok(chloe && chloe.costumes.length >= 5, 'Chloe Reed must group 5+ costumes');
+  assert.ok(lola && lola.costumes.length >= 4, 'Lola Quinn must group 4+ costumes');
+  assert.ok(HERO_ROSTER.some((h) => h.heroId === 'MARCUS_VANCE' && h.gender === 'male'));
+  assert.ok(HERO_ROSTER.some((h) => h.heroId === 'LIAM_STERLING' && h.gender === 'male'));
+  assert.ok(KIT_COLORWAYS.length >= 5);
+
+  // Verify weldSmoothNormals skips recalculating normals when a normalMap is present
+  const { BoxGeometry, Mesh, MeshStandardMaterial, Texture } = await import('three');
+  const nmGeo = new BoxGeometry(1, 1, 1).toNonIndexed();
+  const customNormalX = 0.1234;
+  nmGeo.attributes.normal.setX(0, customNormalX);
+  const nmMesh = new Mesh(nmGeo, new MeshStandardMaterial({ normalMap: new Texture() }));
+  weldSmoothNormals(nmMesh);
+  assert.ok(Math.abs(nmGeo.attributes.normal.getX(0) - customNormalX) < 1e-5, 'normalMap normals must be preserved');
 
   assert.equal(EMOTE_STYLES.length, 5);
   const makeRig = () => {
@@ -481,7 +499,20 @@ test('All 5 EMOTE_STYLES animate distinct poses and all Tripo characters are rig
     assert.ok(gltf.skins[0].joints.length >= 20, `Expected >=20 joints in ${id}`);
   }
 
-  // Verify Mixamo clip retargeting onto a rotated A-pose skeleton produces valid finite clips
+  const v31Entries = Object.entries(COASTAL_CHARACTERS).filter(([, s]) => s.url.includes('-v31'));
+  assert.equal(v31Entries.length, 6);
+  for (const [id, spec] of v31Entries) {
+    const filePath = path.resolve(process.cwd(), 'public', spec.url.replace(/^\//, ''));
+    assert.ok(fs.existsSync(filePath), `Missing v3.1 rigged GLB for ${id}: ${filePath}`);
+    const buffer = fs.readFileSync(filePath);
+    assert.equal(buffer.toString('utf8', 0, 4), 'glTF');
+    const jsonLen = buffer.readUInt32LE(12);
+    const gltf = JSON.parse(buffer.toString('utf8', 20, 20 + jsonLen));
+    assert.ok(Array.isArray(gltf.skins) && gltf.skins.length >= 1, `Expected skin in ${id}`);
+    assert.ok(gltf.skins[0].joints.length >= 20, `Expected >=20 joints in ${id}`);
+  }
+
+  // Verify Mixamo clip retargeting onto a rotated A-pose skeleton with leg normalization produces valid finite clips
   const { AnimationClip, QuaternionKeyframeTrack } = await import('three');
   const { retargetMixamoClips } = await import('../src/game/humanoid.ts');
   const srcRig = makeRig();
@@ -492,12 +523,15 @@ test('All 5 EMOTE_STYLES animate distinct poses and all Tripo characters are rig
   const tgtSpine = new Bone(); tgtSpine.name = 'mixamorig:Spine';
   const tgtRightArm = new Bone(); tgtRightArm.name = 'mixamorig:RightArm';
   const tgtRightFore = new Bone(); tgtRightFore.name = 'mixamorig:RightForeArm'; tgtRightFore.position.set(0, -0.25, 0);
-  tgtHips.add(tgtSpine);
+  const tgtUpLeg = new Bone(); tgtUpLeg.name = 'mixamorig:LeftUpLeg';
+  const tgtKnee = new Bone(); tgtKnee.name = 'mixamorig:LeftLeg'; tgtKnee.position.set(0.06, -0.4, 0);
+  tgtHips.add(tgtSpine, tgtUpLeg);
+  tgtUpLeg.add(tgtKnee);
   tgtSpine.add(tgtRightArm);
   tgtRightArm.add(tgtRightFore);
   tgtModel.add(tgtHips);
   tgtWrapper.add(tgtModel);
-  const tgtRig = createHumanoidRig(tgtWrapper, tgtModel);
+  const tgtRig = createHumanoidRig(tgtWrapper, tgtModel, [], 'feminine');
   const srcClip = new AnimationClip('idle', 1, [
     new QuaternionKeyframeTrack('mixamorigRightArm.quaternion', [0, 1], [0, 0, 0, 1, 0, 0, -0.5, 0.866]),
   ]);

@@ -9,14 +9,14 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
-import { simState, GameHudSnapshot, WEAPON_SPECS, freshAircraftDamage, COASTAL_CHARACTERS, type AircraftDamageStage, type CoastalCharacter, type CharacterCustomization } from '../game/store';
+import { simState, GameHudSnapshot, WEAPON_SPECS, freshAircraftDamage, COASTAL_CHARACTERS, requestGamePointerLock, type AircraftDamageStage, type CoastalCharacter, type CharacterCustomization } from '../game/store';
 import { getTerrainHeight, getTravelHeight, getWaveHeight, sampleHullBuoyancy, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome, AMUSEMENT_PARK_RIDES, sampleAmusementRidePose, type AmusementRideId } from '../game/worldMath';
 import { fixedWingStep } from '../game/flight';
 import { crossesRaceGate } from '../game/grandPrix';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
 import { REPAIR_BAY_COORDS } from './World';
-import { animateHumanoid, createHumanoidRig, retargetMixamoClips, strideDistance, type HumanoidRig } from '../game/humanoid';
+import { animateHumanoid, createHumanoidRig, retargetMixamoClips, strideDistance, type HumanoidRig, type RigPosture } from '../game/humanoid';
 import { computeChassisWeightTransfer, rearSlip, shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
 import { injureBot, injurePlayer } from '../game/combat';
 import { blastWorld, damageWorld, emitEnvironment, traceGround, traceWorld, type WorldHit } from '../game/worldDamage';
@@ -395,8 +395,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const coastalRigs = useRef(new Map<CoastalCharacter, HumanoidRig>());
   type AvatarFinish = { fabrics: THREE.MeshStandardMaterial[]; trousers: THREE.MeshStandardMaterial[];
     hair: THREE.MeshStandardMaterial[]; skin: THREE.MeshStandardMaterial[]; shoes: THREE.MeshStandardMaterial[];
-    hat: THREE.Mesh[]; pack: THREE.Mesh[]; accents: THREE.MeshStandardMaterial[] };
+    hat: THREE.Mesh[]; pack: THREE.Mesh[]; accents: THREE.MeshStandardMaterial[];
+    kitUniforms: { value: THREE.Color }[] };
   const coastalMaterials = useRef(new Map<CoastalCharacter, AvatarFinish>());
+  const loadingCoastalRef = useRef(new Set<CoastalCharacter>());
+  const ensureCoastalCharacterRef = useRef<((arch: CoastalCharacter) => void) | null>(null);
   const soldierWrapperRef = useRef<THREE.Group | null>(null);
   const rpmMatRefs = useRef<RpmMaterialRefs>({
     skinMats: [],
@@ -498,6 +501,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       soldierWrapperRef.current.visible = cust.archetype === 'VANGUARD_SOLDIER';
     }
 
+    if (cust.archetype in COASTAL_CHARACTERS && !coastalRigs.current.has(cust.archetype as CoastalCharacter)) {
+      ensureCoastalCharacterRef.current?.(cust.archetype as CoastalCharacter);
+    }
+
     for (const [archetype, rig] of coastalRigs.current) {
       rig.wrapper.visible = cust.archetype === archetype;
       const finishes = coastalMaterials.current.get(archetype);
@@ -512,6 +519,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         for (const material of finishes.shoes) material.color.set(cust.footwearColor);
         for (const material of finishes.hair) material.color.set(cust.hairColor ?? '#372a23');
         for (const material of finishes.accents) material.color.set(cust.headwearColor);
+        for (const u of finishes.kitUniforms) u.value.set(cust.kitColorHex ?? '#ffffff');
         for (const mesh of finishes.hat) mesh.visible = cust.headwearOn;
         for (const mesh of finishes.pack) mesh.visible = cust.backpackOn;
       }
@@ -623,8 +631,26 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     simState.firingTimer = 0.13;
     simState.ammo = simState.ammo > 1 ? simState.ammo - 1 : spec.clipSize;
     soundEngine.playGunshot(spec.id);
-    const muzzle = (foot ? simState.playerPos : simState.mode === 'CAR' ? simState.carPos :
-      simState.mode === 'BOAT' ? simState.boatPos : simState.planePos).clone().addScaledVector(UP, foot ? 1.32 : 1.4);
+    const muzzle = new THREE.Vector3();
+    const gunObj =
+      !foot && simState.mode === 'CAR'
+        ? carWeaponMountRef.current
+        : simState.cameraView === 1
+        ? viewWeapon.current
+        : weaponMountRef.current;
+    if (gunObj && gunObj.visible) {
+      gunObj.updateWorldMatrix(true, false);
+      gunObj.getWorldPosition(muzzle);
+      const barrelFwd = new THREE.Vector3(0, 0, simState.cameraView === 1 ? -0.35 : 0.35).applyQuaternion(
+        gunObj.getWorldQuaternion(new THREE.Quaternion())
+      );
+      muzzle.add(barrelFwd);
+    } else {
+      muzzle.copy(foot ? simState.playerPos : simState.mode === 'CAR' ? simState.carPos :
+        simState.mode === 'BOAT' ? simState.boatPos : simState.planePos).addScaledVector(UP, foot ? 1.32 : 1.4);
+    }
+    const recoilKick = spec.id === 'SNIPER' ? 0.032 : spec.id === 'SHOTGUN' ? 0.026 : spec.id === 'RPG' ? 0.038 : 0.011;
+    simState.orbitPitch = THREE.MathUtils.clamp(simState.orbitPitch - recoilKick, -1.1, 1.02);
     const origin = aiming.origin;
     const direction = aiming.direction.clone();
     let bestBot: (typeof simState.botTargets)[number] | undefined;
@@ -682,6 +708,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     let splashHit = false;
     if (hit) {
       damageWorld(hit, spec.damage);
+      emitEnvironment('impact', to, 0.55);
       if (spec.id === 'RPG') {
         blastWorld(to, 6.2, spec.damage * 0.8, hit.section);
       }
@@ -983,10 +1010,13 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     const onPointerDown = (e: PointerEvent) => {
       if (s.startMenuOpen || s.customizerOpen || s.controlsOpen || e.pointerType !== 'mouse' ||
           (e.target as HTMLElement | null)?.tagName !== 'CANVAS') return;
+      const canvas = e.target as HTMLCanvasElement;
+      const wantsLock = simState.cameraView === 1 || simState.mode === 'FOOT';
+      const wasLocked = document.pointerLockElement === canvas;
+      if (wantsLock && !wasLocked) requestGamePointerLock();
       if (e.button === 0) {
-        const canvas = e.target as HTMLCanvasElement;
-        if (simState.cameraView === 1 && !document.pointerLockElement && canvas.requestPointerLock) {
-          try { void Promise.resolve(canvas.requestPointerLock()).catch(() => {}); } catch { /* drag remains available */ }
+        if (simState.cameraView === 1 && !wasLocked && typeof canvas.requestPointerLock === 'function') {
+          return;
         }
         mouseDownRef.current = true;
         fireActiveWeapon();
@@ -997,12 +1027,18 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     };
     const onPointerMove = (e: PointerEvent) => {
       const drag = mouseOrbitRef.current;
+      const locked = Boolean(document.pointerLockElement);
       if (s.startMenuOpen || s.customizerOpen || s.controlsOpen || e.pointerType !== 'mouse') return;
-      if (!drag && (simState.cameraView !== 1 || (!document.pointerLockElement && (e.target as HTMLElement | null)?.tagName !== 'CANVAS'))) return;
+      if (!drag && !locked && (simState.cameraView !== 1 || (e.target as HTMLElement | null)?.tagName !== 'CANVAS')) return;
       const sensitivity = 0.0042 * simState.controlSettings.mouseSensitivity * (aiming.ads ? 0.49 : 1);
-      const dx = drag ? e.clientX - drag.x : e.movementX;
-      const dy = drag ? e.clientY - drag.y : e.movementY;
-      simState.orbitYaw -= dx * sensitivity;
+      const dx = drag && !locked ? e.clientX - drag.x : e.movementX;
+      const dy = drag && !locked ? e.clientY - drag.y : e.movementY;
+      if (simState.mode === 'FOOT' && !simState.activeRide && (simState.cameraView === 1 || locked || aiming.ads)) {
+        simState.playerYaw -= dx * sensitivity;
+        simState.orbitYaw = 0;
+      } else {
+        simState.orbitYaw -= dx * sensitivity;
+      }
       simState.orbitPitch = THREE.MathUtils.clamp(simState.orbitPitch + dy * sensitivity, -1.1, 1.02);
       if (drag) { drag.x = e.clientX; drag.y = e.clientY; }
     };
@@ -1342,69 +1378,137 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     };
 
-    for (const [archetype, spec] of Object.entries(COASTAL_CHARACTERS)) {
-      gltfLoader.load(spec.url, (gltf) => {
-        if (disposed || !soldierMountRef.current) return;
-        const model = gltf.scene;
-        const materials: AvatarFinish = { fabrics: [], trousers: [], hair: [], skin: [], shoes: [], hat: [], pack: [], accents: [] };
-        const collected = new Set<THREE.MeshStandardMaterial>();
-        model.traverse((object) => {
-          const mesh = object as THREE.Mesh;
-          if (!mesh.isMesh) return;
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          mesh.frustumCulled = false;
-          if (/hat|(?:shell|trim|accent|hardware|visor)[_ ]?Head$/i.test(mesh.name)) materials.hat.push(mesh);
-          if (/attach-back-mesh|shellSpine2|hardwareSpine2/i.test(mesh.name)) materials.pack.push(mesh);
-          if (Array.isArray(mesh.material) || !(mesh.material as THREE.MeshStandardMaterial).isMeshStandardMaterial) return;
-          const finish = mesh.material as THREE.MeshStandardMaterial;
-          if (!collected.has(finish)) {
-            collected.add(finish);
-            finish.flatShading = false;
-            const isCyberArmor = /HighLimbsGeo|Joints_MAT/i.test(finish.name);
-            finish.roughness = isCyberArmor ? 0.28 : Math.max(finish.roughness, 0.72);
-            finish.metalness = isCyberArmor ? 0.62 : Math.min(finish.metalness, 0.05);
-            finish.envMapIntensity = isCyberArmor ? 1.25 : 0.58;
-            finish.needsUpdate = true;
-            if (finish.name === 'Outfit Fabric' || finish.name === 'Shirt' || /HighLimbsGeo/i.test(finish.name)) {
-              materials.fabrics.push(finish);
+    const loadCoastalCharacter = (archetype: CoastalCharacter) => {
+      if (disposed || coastalRigs.current.has(archetype) || loadingCoastalRef.current.has(archetype)) return;
+      const spec = COASTAL_CHARACTERS[archetype];
+      if (!spec) return;
+      loadingCoastalRef.current.add(archetype);
+      gltfLoader.load(
+        spec.url,
+        (gltf) => {
+          loadingCoastalRef.current.delete(archetype);
+          if (disposed || !soldierMountRef.current) return;
+          const model = gltf.scene;
+          const materials: AvatarFinish = {
+            fabrics: [], trousers: [], hair: [], skin: [], shoes: [], hat: [], pack: [], accents: [], kitUniforms: [],
+          };
+          const collected = new Set<THREE.MeshStandardMaterial>();
+          const isRobotChar = /ROBOT|XBOT/i.test(archetype);
+          const supportsKitTint = /^(?:CHLOE_REED_BASE|LOLA_QUINN_BASE|TRIPO_NIKE_BLONDE|TRIPO_NIKE_BRUNETTE)$/.test(archetype);
+          const isTripoModel = /^(?:CHLOE_|LOLA_|MARCUS_|LIAM_|KAI_|TRIPO_)/.test(archetype);
+          model.traverse((object) => {
+            const mesh = object as THREE.Mesh;
+            if (!mesh.isMesh) return;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+            mesh.frustumCulled = false;
+            if (/hat|(?:shell|trim|accent|hardware|visor)[_ ]?Head$/i.test(mesh.name)) materials.hat.push(mesh);
+            if (/attach-back-mesh|shellSpine2|hardwareSpine2/i.test(mesh.name)) materials.pack.push(mesh);
+            const meshMats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            for (const rawMat of meshMats) {
+              if (!(rawMat as THREE.MeshStandardMaterial)?.isMeshStandardMaterial) continue;
+              const finish = rawMat as THREE.MeshStandardMaterial;
+              if (collected.has(finish)) continue;
+              collected.add(finish);
+              finish.flatShading = false;
+              if (finish.map) {
+                finish.map.colorSpace = THREE.SRGBColorSpace;
+                finish.map.needsUpdate = true;
+              }
+              const isCyberArmor = isRobotChar || /HighLimbsGeo|Joints_MAT/i.test(finish.name);
+              if (isCyberArmor) {
+                finish.roughness = 0.28;
+                finish.metalness = 0.78;
+                finish.envMapIntensity = 1.35;
+              } else if (isTripoModel) {
+                // Strip overly glossy metallicRoughness from Tripo skins/clothing so skin & cotton look natural matte-satin
+                finish.roughnessMap = null;
+                finish.metalnessMap = null;
+                finish.roughness = 0.84;
+                finish.metalness = 0.02;
+                finish.envMapIntensity = 0.42;
+                if (supportsKitTint) {
+                  const kitUniform = { value: new THREE.Color('#ffffff') };
+                  materials.kitUniforms.push(kitUniform);
+                  finish.customProgramCacheKey = () => `kit-tint-${archetype}`;
+                  finish.onBeforeCompile = (shader) => {
+                    shader.uniforms.uKitTint = kitUniform;
+                    shader.fragmentShader =
+                      `uniform vec3 uKitTint;\n` +
+                      shader.fragmentShader.replace(
+                        '#include <map_fragment>',
+                        `#include <map_fragment>
+                        float kMax = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b));
+                        float kMin = min(diffuseColor.r, min(diffuseColor.g, diffuseColor.b));
+                        float kSat = (kMax - kMin) / max(kMax, 0.001);
+                        float kMask = smoothstep(0.58, 0.76, kMax) * (1.0 - smoothstep(0.08, 0.19, kSat));
+                        diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * uKitTint, kMask);`
+                      );
+                  };
+                }
+              } else {
+                finish.roughness = Math.max(finish.roughness, 0.72);
+                finish.metalness = Math.min(finish.metalness, 0.05);
+                finish.envMapIntensity = 0.58;
+              }
+              finish.needsUpdate = true;
+              if (finish.name === 'Outfit Fabric' || finish.name === 'Shirt' || /HighLimbsGeo/i.test(finish.name)) {
+                materials.fabrics.push(finish);
+              }
+              if (finish.name === 'Utility Trousers' || finish.name === 'Pants' || /Joints_MAT/i.test(finish.name)) {
+                materials.trousers.push(finish);
+              }
+              if (/^Hair(?:Base)?$/.test(finish.name)) materials.hair.push(finish);
+              if (finish.name === 'Skin') materials.skin.push(finish);
+              if (finish.name === 'Shoes') materials.shoes.push(finish);
+              if (finish.name === 'Reflective Safety Trim') materials.accents.push(finish);
             }
-            if (finish.name === 'Utility Trousers' || finish.name === 'Pants' || /Joints_MAT/i.test(finish.name)) {
-              materials.trousers.push(finish);
+          });
+          const lArm = model.getObjectByName('mixamorig:LeftArm') ?? model.getObjectByName('mixamorigLeftArm') ?? model.getObjectByName('LeftArm');
+          const rArm = model.getObjectByName('mixamorig:RightArm') ?? model.getObjectByName('mixamorigRightArm') ?? model.getObjectByName('RightArm');
+          let rotY = 0;
+          if (lArm && rArm) {
+            model.updateMatrixWorld(true);
+            const lr = lArm.getWorldPosition(new THREE.Vector3()).sub(rArm.getWorldPosition(new THREE.Vector3()));
+            if (Math.hypot(lr.x, lr.z) > 0.05) {
+              rotY = Math.atan2(lr.z, lr.x);
             }
-            if (/^Hair(?:Base)?$/.test(finish.name)) materials.hair.push(finish);
-            if (finish.name === 'Skin') materials.skin.push(finish);
-            if (finish.name === 'Shoes') materials.shoes.push(finish);
-            if (finish.name === 'Reflective Safety Trim') materials.accents.push(finish);
           }
-        });
-        const lArm = model.getObjectByName('mixamorig:LeftArm') ?? model.getObjectByName('mixamorigLeftArm') ?? model.getObjectByName('LeftArm');
-        const rArm = model.getObjectByName('mixamorig:RightArm') ?? model.getObjectByName('mixamorigRightArm') ?? model.getObjectByName('RightArm');
-        let rotY = 0;
-        if (lArm && rArm) {
-          model.updateMatrixWorld(true);
-          const lr = lArm.getWorldPosition(new THREE.Vector3()).sub(rArm.getWorldPosition(new THREE.Vector3()));
-          if (Math.hypot(lr.x, lr.z) > 0.05) {
-            rotY = Math.atan2(lr.z, lr.x);
+          const bounds = new THREE.Box3().setFromObject(model);
+          const height = bounds.max.y - bounds.min.y;
+          autoGroundAndCenter(model, spec.height / Math.max(0.2, height), rotY);
+          const wrapper = new THREE.Group();
+          wrapper.add(model);
+          wrapper.visible = (simState.customization?.archetype ?? 'CHLOE_REED_BASE') === archetype;
+          soldierMountRef.current.add(wrapper);
+          const posture: RigPosture = isRobotChar
+            ? 'robotic'
+            : /^(?:CHLOE_|LOLA_|TRIPO_SPIDER|TRIPO_SANTA|TRIPO_CYBER|TRIPO_RIVIERA|TRIPO_TACTICAL|TRIPO_NIKE|CIVILIAN_WOMAN)/.test(archetype)
+            ? 'feminine'
+            : 'athletic';
+          const rig = createHumanoidRig(wrapper, model, gltf.animations, posture);
+          coastalRigs.current.set(archetype, rig);
+          coastalMaterials.current.set(archetype, materials);
+          if (archetype === 'XBOT_CYBER') {
+            xbotSource = { rig, clips: gltf.animations };
+            for (const existingRig of coastalRigs.current.values()) applyMixamoRetarget(existingRig);
+          } else {
+            applyMixamoRetarget(rig);
           }
+          applyCharacterCustomization();
+        },
+        undefined,
+        () => {
+          loadingCoastalRef.current.delete(archetype);
         }
-        const bounds = new THREE.Box3().setFromObject(model);
-        const height = bounds.max.y - bounds.min.y;
-        autoGroundAndCenter(model, spec.height / Math.max(0.2, height), rotY);
-        const wrapper = new THREE.Group();
-        wrapper.add(model);
-        soldierMountRef.current.add(wrapper);
-        const rig = createHumanoidRig(wrapper, model, gltf.animations);
-        coastalRigs.current.set(archetype as CoastalCharacter, rig);
-        coastalMaterials.current.set(archetype as CoastalCharacter, materials);
-        if (archetype === 'XBOT_CYBER') {
-          xbotSource = { rig, clips: gltf.animations };
-          for (const existingRig of coastalRigs.current.values()) applyMixamoRetarget(existingRig);
-        } else {
-          applyMixamoRetarget(rig);
-        }
-        applyCharacterCustomization();
-      });
+      );
+    };
+
+    ensureCoastalCharacterRef.current = loadCoastalCharacter;
+    loadCoastalCharacter('XBOT_CYBER');
+    const initialArch = (simState.customization?.archetype ?? 'CHLOE_REED_BASE') as CoastalCharacter;
+    if (initialArch in COASTAL_CHARACTERS && initialArch !== 'XBOT_CYBER') {
+      loadCoastalCharacter(initialArch);
     }
 
     // 5A. High-Resolution Ready Player Me Customizable Human (/models/readyplayer_me.glb)
@@ -1601,6 +1705,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
     return () => {
       disposed = true;
+      ensureCoastalCharacterRef.current = null;
+      loadingCoastalRef.current.clear();
       dracoLoader.dispose();
     };
   }, []);
@@ -1958,6 +2064,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           const step = Math.atan2(Math.sin(heading - simState.playerYaw), Math.cos(heading - simState.playerYaw)) *
             (1 - Math.exp(-(aim && !motion.swim ? 16 : motion.swim ? 5 : 12) * dt));
           simState.playerYaw += step;
+          if (aim && !motion.swim) simState.orbitYaw -= step;
           simState.orbitYaw -= step;
         } else if (simState.gliding) simState.playerYaw += (left - right) * 1.65 * dt;
 
@@ -2115,12 +2222,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const launchDrift = !gridLocked && !isMenuOpen && !simState.vehicleWrecked && ride.grounded &&
         grip > 0.78 && oldSpeed > 11 && (space && (Math.abs(inputSteer) > 0.12 || Math.abs(ride.slip) > 0.12) ||
         oldSpeed > 22 && Math.abs(inputSteer) > 0.91 && (brake || Math.abs(ride.slip) > 0.11));
-      const steerScale = Math.min(1, Math.abs(oldSpeed) / 6.9) *
-        THREE.MathUtils.lerp(1, steerAssist ? 0.39 : 0.54, Math.min(1, Math.abs(oldSpeed) / 49));
+      const steerScale = Math.min(1, Math.abs(oldSpeed) / 2.4) *
+        THREE.MathUtils.lerp(1, steerAssist ? 0.66 : 0.78, Math.min(1, Math.abs(oldSpeed) / 58));
       const slipSteer = THREE.MathUtils.clamp(ride.slip * 0.69, -0.28, 0.28);
       const steer = gridLocked ? 0 : (inputSteer * (launchDrift ? 1.35 : 1) + slipSteer) *
-        2.55 * steerSens * steerScale * (oldSpeed >= 0 ? 1 : -1) * grip * (ride.grounded ? 1 : 0.21);
-      ride.yawRate = THREE.MathUtils.damp(ride.yawRate, steer, launchDrift ? 8.3 : 13, dt);
+        2.65 * steerSens * steerScale * (oldSpeed >= 0 ? 1 : -1) * grip * (ride.grounded ? 1 : 0.21);
+      ride.yawRate = THREE.MathUtils.damp(ride.yawRate, steer, launchDrift ? 9.5 : 16.5, dt);
       simState.carYaw += ride.yawRate * dt;
       const slip = rearSlip(oldSpeed, ride.lateral, ride.yawRate, launchDrift, grip, ride.grounded, dt);
       ride.lateral = slip.lateral;
@@ -2144,15 +2251,16 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         simState.driftScore = 0;
       }
       ride.boost = Math.max(0, ride.boost - dt);
-      const power = (simState.vehicleWrecked ? 13 : ride.boost > 0 ? 40 : boost ? 29 : 20) * integrity * throttleSens;
+      const launchTorque = 1 + 0.38 * (1 - Math.min(1, Math.abs(oldSpeed) / 18));
+      const power = (simState.vehicleWrecked ? 15 : ride.boost > 0 ? 54 : boost ? 42 : 30) * launchTorque * integrity * throttleSens;
       const engine = power * throttleInput * (ride.grounded ? grip : 0.075);
-      const braking = brake || throttleInput * oldSpeed < 0 ? (brake ? 27 : 36) : 0;
+      const braking = brake || throttleInput * oldSpeed < 0 ? (brake ? 42 : 48) : 0;
       let speed = oldSpeed + engine * dt;
       if (braking > 0) speed -= Math.sign(speed) * Math.min(Math.abs(speed), braking * dt);
-      const loss = (throttleInput === 0 ? 0.82 : 0.24) + (drifting ? 0.28 : 0) + (1 - grip) * 2.4;
+      const loss = (throttleInput === 0 ? 0.24 : 0.16) + (drifting ? 0.22 : 0) + (1 - grip) * 2.2;
       speed *= Math.exp(-loss * dt);
-      simState.carSpeed = gridLocked ? 0 : THREE.MathUtils.clamp(speed, -13,
-        simState.vehicleWrecked ? 6.8 : (ride.boost > 0 ? 69 : boost ? 56 : 47) * (0.68 + integrity * 0.32));
+      simState.carSpeed = gridLocked ? 0 : THREE.MathUtils.clamp(speed, -15,
+        simState.vehicleWrecked ? 7.5 : (ride.boost > 0 ? 76 : boost ? 64 : 54) * (0.68 + integrity * 0.32));
       const impactSpeed = simState.carSpeed;
       const yaw = simState.carYaw;
       const flow = shoreReturn(car.x, car.z, yaw, 590, 870);
@@ -2537,11 +2645,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
         muzzleFlashRef.current.position.copy(fromV);
         muzzleFlashRef.current.rotation.z = t * 42;
-        const flashScale = 0.8 + (simState.firingTimer / 0.13) * 0.7;
+        const flashScale = (simState.cameraView === 1 ? 0.45 : 0.8) + (simState.firingTimer / 0.13) * 0.45;
         muzzleFlashRef.current.scale.setScalar(flashScale);
 
         impactMeshRef.current.position.copy(toV);
-        impactMeshRef.current.scale.setScalar(0.65 + (1 - simState.firingTimer / 0.13) * 1.35);
+        const impactBase = activeWeaponSpec.id === 'RPG' ? 1.8 : 0.45;
+        impactMeshRef.current.scale.setScalar(impactBase + (1 - simState.firingTimer / 0.13) * impactBase);
 
         if (tracerMatRef.current) {
           tracerMatRef.current.color.set(activeWeaponSpec.color);
@@ -2994,7 +3103,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const yawDelta = Math.atan2(Math.sin(simState.orbitYaw - orbit.yaw), Math.cos(simState.orbitYaw - orbit.yaw));
       orbit.yaw += yawDelta * (warped ? 1 : 1 - Math.exp(-19 * dt));
       orbit.pitch = warped ? simState.orbitPitch : THREE.MathUtils.damp(orbit.pitch, simState.orbitPitch, 19, dt);
-      const yaw = activeYaw + orbit.yaw - (simState.mode === 'PLANE' ? simState.planeRoll * 0.27 : 0);
+      const carSlipCam = simState.mode === 'CAR' ? suspension.current.slip * 0.42 : 0;
+      const yaw = activeYaw - carSlipCam + orbit.yaw - (simState.mode === 'PLANE' ? simState.planeRoll * 0.27 : 0);
       const inFlight = simState.mode === 'PLANE';
       const first = simState.cameraView === 1;
       const aim = aiming.ads && !construction.active && !construction.pickaxe;
@@ -3085,7 +3195,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     const firstVehicle = !isMenuOpen && simState.cameraView === 1 && simState.mode !== 'FOOT';
     if (boatRef.current) boatRef.current.visible = !firstVehicle || simState.mode !== 'BOAT';
     if (planeRef.current) planeRef.current.visible = !firstVehicle || simState.mode !== 'PLANE';
-    if (document.pointerLockElement && (simState.cameraView !== 1 || isMenuOpen)) document.exitPointerLock();
+    if (document.pointerLockElement && (isMenuOpen || (simState.mode !== 'FOOT' && simState.cameraView !== 1))) {
+      document.exitPointerLock();
+    }
     if (cockpit.current) {
       cockpit.current.visible = firstVehicle;
       cockpit.current.position.copy(state.camera.position);
@@ -3233,11 +3345,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       <group ref={viewModel} visible={false} scale={0.72}>
         <group ref={viewWeapon} rotation={[0, Math.PI, 0]} />
         <group ref={viewPick} rotation={[0.46, 0.2, -0.54]} scale={0.62}><Pickaxe /></group>
-        <mesh position={[0.065, -0.09, 0.19]} rotation={[1.1, 0, -0.2]}>
-          <capsuleGeometry args={[0.047, 0.2, 4, 8]} /><meshStandardMaterial ref={sleeveRightMatRef} color="#254140" roughness={0.83} />
+        <mesh position={[0.085, -0.14, 0.18]} rotation={[1.15, 0, -0.22]}>
+          <capsuleGeometry args={[0.036, 0.18, 4, 8]} /><meshStandardMaterial ref={sleeveRightMatRef} color="#254140" roughness={0.83} />
         </mesh>
-        <mesh position={[-0.085, -0.078, -0.09]} rotation={[1.3, 0, 0.43]}>
-          <capsuleGeometry args={[0.041, 0.18, 4, 8]} /><meshStandardMaterial ref={sleeveLeftMatRef} color="#294649" roughness={0.82} />
+        <mesh position={[-0.095, -0.13, -0.07]} rotation={[1.3, 0, 0.43]}>
+          <capsuleGeometry args={[0.033, 0.16, 4, 8]} /><meshStandardMaterial ref={sleeveLeftMatRef} color="#294649" roughness={0.82} />
         </mesh>
       </group>
       {/* CUSTOMIZABLE HIGH-RES HUMAN PLAYER (READY PLAYER ME + MICHELLE VIP + VANGUARD SOLDIER) + 3D ACCESSORIES */}
@@ -3541,7 +3653,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
       {/* 3D BALLISTIC LASER TRACER BOLT, MUZZLE FLASH STAR & IMPACT BLAST SPHERE */}
       <mesh ref={tracerMeshRef} visible={false}>
-        <cylinderGeometry args={[0.055, 0.055, 1, 8]} />
+        <cylinderGeometry args={[0.012, 0.012, 1, 6]} />
         <meshStandardMaterial
           ref={tracerMatRef}
           color="#38bdf8"
@@ -3553,7 +3665,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       </mesh>
       <group ref={muzzleFlashRef} visible={false}>
         <mesh>
-          <octahedronGeometry args={[0.36, 0]} />
+          <octahedronGeometry args={[0.11, 0]} />
           <meshStandardMaterial
             ref={muzzleFlashMatRef}
             color="#fde047"
@@ -3563,7 +3675,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         </mesh>
       </group>
       <mesh ref={impactMeshRef} visible={false}>
-        <sphereGeometry args={[0.42, 10, 10]} />
+        <sphereGeometry args={[0.15, 10, 10]} />
         <meshStandardMaterial
           ref={impactMatRef}
           color="#f97316"

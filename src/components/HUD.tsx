@@ -48,6 +48,9 @@ import {
   EyewearStyle,
   GameHudSnapshot,
   GamePlayMode,
+  HERO_ROSTER,
+  KIT_COLORWAYS,
+  requestGamePointerLock,
   saveControlSettings,
   simState,
   WEAPON_SPECS,
@@ -529,9 +532,17 @@ export function HUD({ hud, onSelectMode }: Props) {
     );
   });
 
+  const [pointerLocked, setPointerLocked] = useState(false);
+
   useEffect(() => {
     simState.touchControlsEnabled = touchUi;
   }, [touchUi]);
+
+  useEffect(() => {
+    const onPlChange = () => setPointerLocked(Boolean(document.pointerLockElement));
+    document.addEventListener('pointerlockchange', onPlChange);
+    return () => document.removeEventListener('pointerlockchange', onPlChange);
+  }, []);
 
   useEffect(() => {
     const onSyncUi = () => setUiTick((t) => t + 1);
@@ -1157,6 +1168,12 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       )}
 
+        {!controlsOpen && !isCustomizerOpen && !touchUi && (hud.mode === 'FOOT' || simState.cameraView === 1) && !pointerLocked && (
+          <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-neutral-950/75 px-3 py-1 text-[11px] font-medium text-neutral-200 shadow-lg backdrop-blur-md">
+            Click view to lock mouse aim · [X] {simState.cameraView === 1 ? '3rd Person' : '1st Person'} · [Esc] Unlock · [M] Menu
+          </div>
+        )}
+
       {/* 2. TOP-LEFT BAR */}
       <div className="pointer-events-auto fixed left-2.5 top-2.5 z-30 flex max-w-[calc(100vw-7.8rem)] items-center gap-0.5 overflow-x-auto rounded-full border border-white/10 bg-neutral-950/75 px-1.5 py-1 shadow-lg backdrop-blur-md sm:left-3 sm:top-3 sm:max-w-none sm:gap-1 sm:px-2 sm:py-1.5">
         <button
@@ -1184,7 +1201,13 @@ export function HUD({ hud, onSelectMode }: Props) {
         </button>
 
         <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs text-neutral-200 hover:bg-white/10 sm:px-2.5"
-          onClick={() => { simState.cameraView = 1 - simState.cameraView; simState.orbitYaw = simState.orbitPitch = 0; setUiTick((n) => n + 1); }}
+          onClick={() => {
+            simState.cameraView = 1 - simState.cameraView;
+            simState.orbitYaw = simState.orbitPitch = 0;
+            if (simState.cameraView === 1) requestGamePointerLock();
+            else if (document.pointerLockElement && simState.mode !== 'FOOT') document.exitPointerLock?.();
+            setUiTick((n) => n + 1);
+          }}
           aria-label="Toggle first-person camera">{simState.cameraView === 1 ? '1st' : '3rd'}</button>
 
         <button
@@ -1740,38 +1763,80 @@ export function HUD({ hud, onSelectMode }: Props) {
               </div>
             </div>
 
-            {/* Character Model */}
+            {/* Hero & Costume Selector */}
             <div>
-              <div className="mb-1.5 text-[11px] font-medium text-neutral-400">Character</div>
-              <div className="grid grid-cols-3 gap-1.5">
-                {(
-                  [
-                    { id: 'COAST_NAVIGATOR', label: 'Navigator' },
-                    { id: 'RESCUE_PILOT', label: 'Rescue Pilot' },
-                    { id: 'RPM_CUSTOM', label: 'Standard' },
-                    { id: 'MICHELLE_VIP', label: 'VIP' },
-                    { id: 'VANGUARD_SOLDIER', label: 'Tactical' },
-                  ] as Array<{ id: CharacterArchetype; label: string }>
-                ).map((item) => {
-                  const active = custom.archetype === item.id;
+              <div className="mb-1.5 text-[11px] font-medium text-neutral-400">Hero</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {HERO_ROSTER.slice(0, 14).map((hero) => {
+                  const active = hero.costumes.some((c) => c.archetype === custom.archetype);
                   return (
                     <button
-                      key={item.id}
+                      key={hero.heroId}
                       onClick={() => {
-                        const preset = CHARACTER_PRESETS.find(({ archetype }) => archetype === item.id);
-                        if (preset) updateCustomization(preset);
+                        const first = hero.costumes[0];
+                        const preset = CHARACTER_PRESETS.find(({ archetype }) => archetype === first.archetype);
+                        updateCustomization(preset ?? { archetype: first.archetype, presetName: `${hero.name} · ${first.label}` });
                       }}
-                      className={`rounded-lg border py-1.5 text-center text-[11px] font-medium transition ${
+                      className={`rounded-lg border px-2 py-1.5 text-left text-[11px] font-medium transition ${
                         active
                           ? 'border-white bg-white/15 text-white'
                           : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10'
                       }`}
                     >
-                      {item.label}
+                      <span className="block truncate">{hero.name}</span>
                     </button>
                   );
                 })}
               </div>
+              {(() => {
+                const curHero = HERO_ROSTER.find((h) => h.costumes.some((c) => c.archetype === custom.archetype));
+                const curCostume = curHero?.costumes.find((c) => c.archetype === custom.archetype);
+                return (
+                  <>
+                    {curHero && curHero.costumes.length > 1 && (
+                      <div className="mt-2.5">
+                        <div className="mb-1.5 text-[11px] font-medium text-neutral-400">Costumes ({curHero.name})</div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {curHero.costumes.map((costume) => (
+                            <button
+                              key={costume.archetype}
+                              onClick={() => updateCustomization({ archetype: costume.archetype, presetName: `${curHero.name} · ${costume.label}` })}
+                              className={`rounded-lg border px-2 py-1 text-left text-[11px] font-medium transition ${
+                                custom.archetype === costume.archetype
+                                  ? 'border-white bg-white/15 text-white'
+                                  : 'border-white/10 bg-white/5 text-neutral-300 hover:bg-white/10'
+                              }`}
+                            >
+                              {costume.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {curCostume?.supportsKitTint && (
+                      <div className="mt-2.5">
+                        <div className="mb-1.5 text-[11px] font-medium text-neutral-400">Athletic Kit Colorway</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {KIT_COLORWAYS.map((kw) => {
+                            const active = (custom.kitColorHex ?? '#ffffff').toLowerCase() === kw.hex.toLowerCase();
+                            return (
+                              <button
+                                key={kw.hex}
+                                title={kw.name}
+                                onClick={() => updateCustomization({ kitColorHex: kw.hex })}
+                                style={{ backgroundColor: kw.hex }}
+                                className={`h-6 w-6 rounded-full border transition-transform ${
+                                  active ? 'scale-110 border-2 border-white' : 'border-white/30 hover:scale-105'
+                                }`}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
             {/* Jacket / Top Color */}

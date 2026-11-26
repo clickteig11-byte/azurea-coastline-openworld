@@ -1,29 +1,41 @@
 # World Horizon — Showcase & Feature Guide
 
-**World Horizon** (`azurea-coastline-openworld`) is a Three.js / React Three Fiber open-world coastal sandbox featuring a 4-theme rotating Pavilion Lobby, 14 custom-rigged Mixamo-biped Tripo3D characters, 5 selectable emotes, hyper-realistic Gerstner ocean waves, atmospheric sky & instanced grass, a drivable/sail-able/flyable vehicle fleet, 12 World Wonders, and the **Wonder Ocean Pier Amusement Park** extending into the sea.
+**World Horizon** (`azurea-coastline-openworld`) is a Three.js / React Three Fiber open-world coastal sandbox featuring a 4-theme rotating Pavilion Lobby, **Tripo `v3.1-20260211` HD** rigged hero characters (**Chloe Reed** with 5 costumes, **Lola Quinn** with 4 costumes, **Marcus Vance**, **Liam Sterling**, robotics, and Harbor Crew), Kit Colorways, 5 selectable emotes, 22,000-clump instanced 3D meadow grass, responsive supercar driving & pointer-lock 1st/3rd-person shooting, 12 World Wonders, and the **Wonder Ocean Pier Amusement Park**.
 
 ---
 
-## 1. Localhost Tripo 3D Studio & Rigged Character Pipeline
+## 1. Flagship `v3.1` Heroes, Costumes & Kit Colorways
+
+- **Chloe Reed (`v3.1` HD)** with 5 costumes (`Nike Pro Base`, `Emerald Club`, `Silver Spider`, `Varsity Sport`, `Holiday Velvet`) and **Lola Quinn (`v3.1` HD)** with 4 costumes (`Nike Pro Base`, `Bomber Street`, `Moto Leather`, `Holiday Velvet`), plus 7 real-time **Athletic Kit Colorways** on their Nike Pro bases (`uKitTint` shader hook).
+- **Male `v3.1` HD Heroes**: `Marcus Vance` and `Liam Sterling`.
+- **Natural Shading & Mixamo Mocap**: Preserves baked normal maps, applies matte-satin skin/cotton calibration, auto-aligns `+Z` facing, and retargets `idle`/`walk`/`run`/`SambaDance` motion capture clips across all Mixamo rigs. On-demand lazy GLB loading keeps startup fast.
+
+| Chloe Reed (Azurea Kit) | Chloe Reed (Emerald Club) | Lola Quinn (Bomber Street) | Marcus Vance & Liam Sterling |
+| --- | --- | --- | --- |
+| ![Chloe Kit](./screenshots/v31/v31-01-chloe-base-colorway.jpg) | ![Chloe Club](./screenshots/v31/v31-02-chloe-emerald-club.jpg) | ![Lola Street](./screenshots/v31/v31-03-lola-street.jpg) | ![Marcus Vance](./screenshots/v31/v31-04-marcus-vance.jpg) |
+
+---
+
+## 2. Dense 22,000-Clump 3D Grass, Supercar Driving & Pointer-Lock Shooting
+
+- **Lush 22,000-Clump 7-Blade Grass** with GPU hardware distance LOD culling (`78–125m` taper) and natural fescue/olive/soil color harmony across parks, boulevards, and Island II.
+- **Snappy Supercar Driving**: Low-speed steering response, high-speed turn authority, launch torque curve, progressive slip & drift chase camera.
+- **True Pointer-Lock 1st/3rd-Person Aim & Shooting**: Clicking locks the cursor for 1:1 mouse aim (`[Esc]` unlocks cursor without kicking to Menu), barrel-origin tracers, compact 1st-person viewmodel & muzzle flash, camera recoil kick, and 60fps reactive reticle spread.
+
+| Supercar & Lush 3D Grass | First-Person Pointer-Lock Shooting |
+| --- | --- |
+| ![Grass & Driving](./screenshots/v31/v31-06-lush-grass-driving.jpg) | ![First-Person Shooting](./screenshots/v31/v31-07-first-person-shooting.jpg) |
+
+---
+
+## 3. Localhost Tripo 3D Studio (`npm run tripo-studio`)
 
 Run `npm run tripo-studio` to launch the local Tripo3D Asset Forge at `http://127.0.0.1:4321`.
 
-- **Image-to-3D & Text-to-3D** using `v2.5-20250123` (economical 30 credits) or `v3.0-20250812` / `v3.1-20260211`.
-- **Automatic Mixamo Biped Rigging** (`animate_rig`, `spec: "mixamo"`, +25 credits) producing 23-joint skeletal `.glb` files saved directly into `public/models/characters/`.
-- **Built-in Three.js OrbitControls 3D Inspector** with bone count readout and one-click preview of all saved character `.glb` assets.
+- Defaults to **`v3.1-20260211` Flagship H3.1 HD** + `Detailed HD` textures + `36,000` face limit.
+- **Automatic Mixamo Biped Rigging** (`animate_rig`, `spec: "mixamo"`, 23 joints) saving `.glb` files directly into `public/models/characters/` with an ACES Filmic sRGB Three.js 3D previewer.
 
 ![Tripo 3D Studio](./screenshots/14-tripo-3d-studio.jpg)
-
-### 14 Rigged Tripo Characters in Wardrobe
-
-All 14 characters are Mixamo-rigged (23 joints) and driven by `createHumanoidRig()` + `animateHumanoid()` with 2-bone leg IK, procedural gait, swimming, parachuting, and emotes:
-
-- **Sport & Streetwear**: `Elena · Sport Pro`, `Chloe · Sport Pro`, `Elena · Moto`, `Chloe · Varsity`
-- **Riviera & Cyber**: `Sienna · Riviera`, `Nova · Neon`, `Aria · Chrome`, `Vesper · Spider`
-- **Tactical & Seasonal**: `Valkyrie · Blonde`, `Scarlet · Tactical`, `Bella · Holiday`, `Camila · Holiday`
-- **Sleek Robotics**: `Aegis · Titanium Bot`, `Solstice · Gold Bot`
-
-![Lobby Tripo Character & Emote](./screenshots/15-lobby-tripo-character-emote.jpg)
 
 ---
 

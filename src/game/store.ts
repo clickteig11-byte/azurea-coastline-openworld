@@ -11,6 +11,12 @@ export type GamePlayMode = 'FREE_ROAM' | 'BATTLE_ROYALE' | 'GRAND_PRIX' | 'WORLD
 export type WeaponId = 'AR' | 'SHOTGUN' | 'SNIPER' | 'MINIGUN' | 'RPG';
 
 export type CharacterArchetype =
+  | 'CHLOE_REED_BASE'
+  | 'CHLOE_REED_CLUB'
+  | 'LOLA_QUINN_BASE'
+  | 'LOLA_QUINN_STREET'
+  | 'MARCUS_VANCE'
+  | 'LIAM_STERLING'
   | 'TRIPO_NIKE_BRUNETTE'
   | 'TRIPO_NIKE_BLONDE'
   | 'TRIPO_NIKE_BRUNETTE_MOTO'
@@ -37,20 +43,26 @@ export type CharacterArchetype =
   | 'MICHELLE_VIP'
   | 'VANGUARD_SOLDIER';
 export const COASTAL_CHARACTERS = {
-  TRIPO_NIKE_BRUNETTE: { label: 'Elena · Sport Pro', url: '/models/characters/tripo-nike-brunette.glb', height: 1.72 },
-  TRIPO_NIKE_BLONDE: { label: 'Chloe · Sport Pro', url: '/models/characters/tripo-nike-blonde.glb', height: 1.72 },
-  TRIPO_NIKE_BRUNETTE_MOTO: { label: 'Elena · Moto', url: '/models/characters/tripo-nike-brunette-moto.glb', height: 1.72 },
-  TRIPO_NIKE_BLONDE_VARSITY: { label: 'Chloe · Varsity', url: '/models/characters/tripo-nike-blonde-varsity.glb', height: 1.72 },
-  TRIPO_RIVIERA_GOLD_GIRL: { label: 'Sienna · Riviera', url: '/models/characters/tripo-riviera-gold-girl.glb', height: 1.72 },
-  TRIPO_CYBER_PINK: { label: 'Nova · Neon', url: '/models/characters/tripo-cyber-pink.glb', height: 1.72 },
-  TRIPO_CYBER_SILVER_GIRL: { label: 'Aria · Chrome', url: '/models/characters/tripo-cyber-silver-girl.glb', height: 1.72 },
-  TRIPO_SPIDER_BLONDE: { label: 'Vesper · Spider', url: '/models/characters/tripo-spider-blonde.glb', height: 1.72 },
-  TRIPO_TACTICAL_BLONDE: { label: 'Valkyrie · Blonde', url: '/models/characters/tripo-tactical-blonde.glb', height: 1.73 },
-  TRIPO_TACTICAL_REDHEAD: { label: 'Scarlet · Tactical', url: '/models/characters/tripo-tactical-redhead.glb', height: 1.73 },
-  TRIPO_SANTA_BLONDE: { label: 'Bella · Holiday', url: '/models/characters/tripo-santa-blonde.glb', height: 1.72 },
-  TRIPO_SANTA_BRUNETTE: { label: 'Camila · Holiday', url: '/models/characters/tripo-santa-brunette.glb', height: 1.72 },
-  TRIPO_ROBOT_TITANIUM: { label: 'Aegis · Titanium Bot', url: '/models/characters/tripo-robot-titanium.glb', height: 1.82 },
-  TRIPO_ROBOT_OBSIDIAN_GOLD: { label: 'Solstice · Gold Bot', url: '/models/characters/tripo-robot-obsidian-gold.glb', height: 1.82 },
+  CHLOE_REED_BASE: { label: 'Chloe Reed · Nike Pro', url: '/models/characters/chloe-reed-v31-base.glb', height: 1.72 },
+  CHLOE_REED_CLUB: { label: 'Chloe Reed · Emerald Club', url: '/models/characters/chloe-reed-v31-club.glb', height: 1.72 },
+  LOLA_QUINN_BASE: { label: 'Lola Quinn · Nike Pro', url: '/models/characters/lola-quinn-v31-base.glb', height: 1.72 },
+  LOLA_QUINN_STREET: { label: 'Lola Quinn · Bomber Street', url: '/models/characters/lola-quinn-v31-street.glb', height: 1.72 },
+  MARCUS_VANCE: { label: 'Marcus Vance', url: '/models/characters/marcus-vance-v31.glb', height: 1.83 },
+  LIAM_STERLING: { label: 'Liam Sterling', url: '/models/characters/liam-sterling-v31.glb', height: 1.84 },
+  TRIPO_NIKE_BRUNETTE: { label: 'Lola Quinn · Sport Legacy', url: '/models/characters/tripo-nike-brunette.glb', height: 1.72 },
+  TRIPO_NIKE_BLONDE: { label: 'Chloe Reed · Sport Legacy', url: '/models/characters/tripo-nike-blonde.glb', height: 1.72 },
+  TRIPO_NIKE_BRUNETTE_MOTO: { label: 'Lola Quinn · Moto Leather', url: '/models/characters/tripo-nike-brunette-moto.glb', height: 1.72 },
+  TRIPO_NIKE_BLONDE_VARSITY: { label: 'Chloe Reed · Varsity', url: '/models/characters/tripo-nike-blonde-varsity.glb', height: 1.72 },
+  TRIPO_RIVIERA_GOLD_GIRL: { label: 'Sienna Laurent', url: '/models/characters/tripo-riviera-gold-girl.glb', height: 1.72 },
+  TRIPO_CYBER_PINK: { label: 'Nova Sato', url: '/models/characters/tripo-cyber-pink.glb', height: 1.72 },
+  TRIPO_CYBER_SILVER_GIRL: { label: 'Aria Voss', url: '/models/characters/tripo-cyber-silver-girl.glb', height: 1.72 },
+  TRIPO_SPIDER_BLONDE: { label: 'Chloe Reed · Silver Spider', url: '/models/characters/tripo-spider-blonde.glb', height: 1.72 },
+  TRIPO_TACTICAL_BLONDE: { label: 'Freya Lind', url: '/models/characters/tripo-tactical-blonde.glb', height: 1.73 },
+  TRIPO_TACTICAL_REDHEAD: { label: 'Scarlet Hayes', url: '/models/characters/tripo-tactical-redhead.glb', height: 1.73 },
+  TRIPO_SANTA_BLONDE: { label: 'Chloe Reed · Holiday Velvet', url: '/models/characters/tripo-santa-blonde.glb', height: 1.72 },
+  TRIPO_SANTA_BRUNETTE: { label: 'Lola Quinn · Holiday Velvet', url: '/models/characters/tripo-santa-brunette.glb', height: 1.72 },
+  TRIPO_ROBOT_TITANIUM: { label: 'Aegis-7 · Titanium Bot', url: '/models/characters/tripo-robot-titanium.glb', height: 1.82 },
+  TRIPO_ROBOT_OBSIDIAN_GOLD: { label: 'Solstice-IX · Gold Bot', url: '/models/characters/tripo-robot-obsidian-gold.glb', height: 1.82 },
   XBOT_CYBER: { label: 'Apex Android', url: '/models/xbot.glb', height: 1.82 },
   HIGH_ROLLER_VIP: { label: 'Executive VIP', url: '/models/human_high_roller.glb', height: 1.8 },
   COMMANDER_OPS: { label: 'Harbor Commander', url: '/models/human_commander.glb', height: 1.82 },
@@ -60,6 +72,164 @@ export const COASTAL_CHARACTERS = {
   CIVILIAN_MAN: { label: 'Quay Resident', url: '/models/characters/quaternius-man.glb', height: 1.76 },
   CIVILIAN_WOMAN: { label: 'Harbor Resident', url: '/models/characters/quaternius-woman-casual.glb', height: 1.68 },
 } as const satisfies Partial<Record<CharacterArchetype, { label: string; url: string; height: number }>>;
+
+export interface HeroEntry {
+  heroId: string;
+  name: string;
+  gender: 'female' | 'male' | 'robot';
+  tag: string;
+  costumes: { archetype: CharacterArchetype; label: string; supportsKitTint?: boolean }[];
+}
+
+export const HERO_ROSTER: HeroEntry[] = [
+  {
+    heroId: 'CHLOE_REED',
+    name: 'Chloe Reed',
+    gender: 'female',
+    tag: 'Flagship v3.1',
+    costumes: [
+      { archetype: 'CHLOE_REED_BASE', label: 'Nike Pro Base', supportsKitTint: true },
+      { archetype: 'CHLOE_REED_CLUB', label: 'Emerald Club' },
+      { archetype: 'TRIPO_SPIDER_BLONDE', label: 'Silver Spider' },
+      { archetype: 'TRIPO_NIKE_BLONDE_VARSITY', label: 'Varsity Sport' },
+      { archetype: 'TRIPO_SANTA_BLONDE', label: 'Holiday Velvet' },
+    ],
+  },
+  {
+    heroId: 'LOLA_QUINN',
+    name: 'Lola Quinn',
+    gender: 'female',
+    tag: 'Flagship v3.1',
+    costumes: [
+      { archetype: 'LOLA_QUINN_BASE', label: 'Nike Pro Base', supportsKitTint: true },
+      { archetype: 'LOLA_QUINN_STREET', label: 'Bomber Street' },
+      { archetype: 'TRIPO_NIKE_BRUNETTE_MOTO', label: 'Moto Leather' },
+      { archetype: 'TRIPO_SANTA_BRUNETTE', label: 'Holiday Velvet' },
+    ],
+  },
+  {
+    heroId: 'MARCUS_VANCE',
+    name: 'Marcus Vance',
+    gender: 'male',
+    tag: 'Boy Hero · v3.1',
+    costumes: [{ archetype: 'MARCUS_VANCE', label: 'Athletic Tech' }],
+  },
+  {
+    heroId: 'LIAM_STERLING',
+    name: 'Liam Sterling',
+    gender: 'male',
+    tag: 'Boy Hero · v3.1',
+    costumes: [{ archetype: 'LIAM_STERLING', label: 'Riviera Linen' }],
+  },
+  {
+    heroId: 'SIENNA_LAURENT',
+    name: 'Sienna Laurent',
+    gender: 'female',
+    tag: 'Riviera',
+    costumes: [{ archetype: 'TRIPO_RIVIERA_GOLD_GIRL', label: 'Golden Coast' }],
+  },
+  {
+    heroId: 'NOVA_SATO',
+    name: 'Nova Sato',
+    gender: 'female',
+    tag: 'Cyber',
+    costumes: [{ archetype: 'TRIPO_CYBER_PINK', label: 'Neon Ops' }],
+  },
+  {
+    heroId: 'ARIA_VOSS',
+    name: 'Aria Voss',
+    gender: 'female',
+    tag: 'Chrome',
+    costumes: [{ archetype: 'TRIPO_CYBER_SILVER_GIRL', label: 'Silver Pulse' }],
+  },
+  {
+    heroId: 'FREYA_LIND',
+    name: 'Freya Lind',
+    gender: 'female',
+    tag: 'Tactical',
+    costumes: [{ archetype: 'TRIPO_TACTICAL_BLONDE', label: 'Field Striker' }],
+  },
+  {
+    heroId: 'SCARLET_HAYES',
+    name: 'Scarlet Hayes',
+    gender: 'female',
+    tag: 'Tactical',
+    costumes: [{ archetype: 'TRIPO_TACTICAL_REDHEAD', label: 'Shadow Ops' }],
+  },
+  {
+    heroId: 'AEGIS_7',
+    name: 'Aegis-7',
+    gender: 'robot',
+    tag: 'Robotics',
+    costumes: [{ archetype: 'TRIPO_ROBOT_TITANIUM', label: 'Titanium Unit' }],
+  },
+  {
+    heroId: 'SOLSTICE_IX',
+    name: 'Solstice-IX',
+    gender: 'robot',
+    tag: 'Robotics',
+    costumes: [{ archetype: 'TRIPO_ROBOT_OBSIDIAN_GOLD', label: 'Obsidian Gold' }],
+  },
+  {
+    heroId: 'APEX_ANDROID',
+    name: 'Apex Android',
+    gender: 'robot',
+    tag: 'Robotics',
+    costumes: [{ archetype: 'XBOT_CYBER', label: 'Cyber Chassis' }],
+  },
+  {
+    heroId: 'COMMANDER_OPS',
+    name: 'Harbor Commander',
+    gender: 'male',
+    tag: 'Harbor Crew',
+    costumes: [{ archetype: 'COMMANDER_OPS', label: 'Command Kit' }],
+  },
+  {
+    heroId: 'RESCUE_PILOT',
+    name: 'Rescue Pilot',
+    gender: 'male',
+    tag: 'Harbor Crew',
+    costumes: [{ archetype: 'RESCUE_PILOT', label: 'Flight Suit' }],
+  },
+  {
+    heroId: 'HIGH_ROLLER_VIP',
+    name: 'Executive VIP',
+    gender: 'male',
+    tag: 'Harbor Crew',
+    costumes: [{ archetype: 'HIGH_ROLLER_VIP', label: 'Riviera Suit' }],
+  },
+  {
+    heroId: 'RPM_CUSTOM',
+    name: 'City Runner',
+    gender: 'male',
+    tag: 'Custom Studio',
+    costumes: [{ archetype: 'RPM_CUSTOM', label: 'Tailored Studio' }],
+  },
+  {
+    heroId: 'MICHELLE_VIP',
+    name: 'Michelle',
+    gender: 'female',
+    tag: 'Pavilion VIP',
+    costumes: [{ archetype: 'MICHELLE_VIP', label: 'Samba VIP' }],
+  },
+  {
+    heroId: 'VANGUARD_SOLDIER',
+    name: 'Vanguard',
+    gender: 'male',
+    tag: 'Tactical',
+    costumes: [{ archetype: 'VANGUARD_SOLDIER', label: 'Vanguard Ops' }],
+  },
+];
+
+export const KIT_COLORWAYS: { name: string; hex: string }[] = [
+  { name: 'Classic White', hex: '#ffffff' },
+  { name: 'Obsidian', hex: '#1e293b' },
+  { name: 'Crimson', hex: '#dc2626' },
+  { name: 'Azurea', hex: '#0284c7' },
+  { name: 'Coral', hex: '#f97316' },
+  { name: 'Violet', hex: '#7c3aed' },
+  { name: 'Emerald', hex: '#10b981' },
+];
 
 export type EmoteId = 'WAVE' | 'DANCE' | 'SPIN' | 'FLEX' | 'SHUFFLE';
 
@@ -90,6 +260,7 @@ export interface CharacterCustomization {
   beardColor: string;
   eyewear: EyewearStyle;
   backpackOn: boolean;
+  kitColorHex?: string;
 }
 
 export const SKIN_TONE_SWATCHES: string[] = [
@@ -921,7 +1092,12 @@ export const simState = {
   tideOffset: 0,
 
   // Character Customization & Active Fleet Selection
-  customization: { ...CHARACTER_PRESETS[0] } as CharacterCustomization,
+  customization: {
+    ...CHARACTER_PRESETS[0],
+    archetype: 'CHLOE_REED_BASE',
+    presetName: 'Chloe Reed · Nike Pro',
+    kitColorHex: '#ffffff',
+  } as CharacterCustomization,
   customizerOpen: false,
   customizationVersion: 1,
   activeCarIdx: 0,
@@ -1004,3 +1180,16 @@ export const simState = {
   chipNodes: INITIAL_CHIPS.map((c) => ({ ...c })),
   keys: new Set<string>(),
 };
+
+export function requestGamePointerLock() {
+  if (typeof document === 'undefined') return;
+  if (simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen || simState.touchControlsEnabled) return;
+  const canvas = document.querySelector('canvas');
+  if (canvas && document.pointerLockElement !== canvas && typeof canvas.requestPointerLock === 'function') {
+    try {
+      void Promise.resolve(canvas.requestPointerLock()).catch(() => {});
+    } catch {
+      /* drag fallback remains active */
+    }
+  }
+}

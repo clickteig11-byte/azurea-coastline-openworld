@@ -100,9 +100,16 @@
 
       <label>Model Version (Cost / Quality)
         <select id="modelVer">
-          <option value="v2.5-20250123" selected>v2.5-20250123 · Fast &amp; Economical (~30 cr)</option>
+          <option value="v3.1-20260211" selected>v3.1-20260211 · Flagship H3.1 HD (~50 cr)</option>
           <option value="v3.0-20250812">v3.0-20250812 · High Detail (~40 cr)</option>
-          <option value="v3.1-20260211">v3.1-20260211 · Ultra Flagship (~50 cr)</option>
+          <option value="v2.5-20250123">v2.5-20250123 · Fast &amp; Economical (~30 cr)</option>
+        </select>
+      </label>
+
+      <label>Texture Quality
+        <select id="texQual">
+          <option value="detailed" selected>Detailed HD (Best faces &amp; fabric)</option>
+          <option value="standard">Standard</option>
         </select>
       </label>
 
@@ -173,16 +180,21 @@
     renderer.setSize(host.clientWidth, host.clientHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     host.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 0.95, 0);
     controls.enableDamping = true;
 
-    scene.add(new THREE.HemisphereLight('#e2e8f0', '#1e293b', 1.4));
-    const dir = new THREE.DirectionalLight('#fff7ed', 2.2);
-    dir.position.set(3, 5, 4);
+    scene.add(new THREE.HemisphereLight('#f1f5f9', '#1e293b', 1.25));
+    const dir = new THREE.DirectionalLight('#fff7ed', 1.65);
+    dir.position.set(2.8, 4.6, 3.8);
     scene.add(dir);
+    const rim = new THREE.DirectionalLight('#cbd5e1', 0.9);
+    rim.position.set(-3.0, 2.5, -3.5);
+    scene.add(rim);
     scene.add(new THREE.GridHelper(6, 12, '#334155', '#1e293b'));
 
     const loader = new GLTFLoader();
@@ -303,7 +315,8 @@
             file: { type: up.ext || 'jpg', file_token: up.data.image_token },
             texture: true,
             pbr: true,
-            face_limit: 20000,
+            texture_quality: $('texQual').value,
+            face_limit: 36000,
           };
         } else {
           const prompt = $('promptInput').value.trim();
@@ -314,7 +327,8 @@
             prompt,
             texture: true,
             pbr: true,
-            face_limit: 20000,
+            texture_quality: $('texQual').value,
+            face_limit: 36000,
           };
         }
 

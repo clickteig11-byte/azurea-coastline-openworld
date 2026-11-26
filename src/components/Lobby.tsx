@@ -32,6 +32,8 @@ import {
   CHARACTER_PRESETS,
   COASTAL_CHARACTERS,
   EMOTE_STYLES,
+  HERO_ROSTER,
+  KIT_COLORWAYS,
   PLANE_FLEET_SPECS,
   WEAPON_SPECS,
   simState,
@@ -323,6 +325,18 @@ export function Lobby({
     update(preset ?? { archetype, presetName: label });
   };
 
+  const activeHero =
+    HERO_ROSTER.find((h) => h.costumes.some((c) => c.archetype === character.archetype)) ?? HERO_ROSTER[0];
+  const activeCostume =
+    activeHero.costumes.find((c) => c.archetype === character.archetype) ?? activeHero.costumes[0];
+
+  const selectHero = (heroId: string) => {
+    const hero = HERO_ROSTER.find((h) => h.heroId === heroId);
+    if (!hero) return;
+    const costume = hero.costumes[0];
+    chooseArchetype(costume.archetype);
+  };
+
   const purchase = (skin: (typeof SKINS)[number]) => {
     if (!owned.includes(skin.name)) {
       if (simState.chips < skin.cost) return;
@@ -555,20 +569,69 @@ export function Lobby({
           <div className="wh-drawer-body" key={tab}>
             {tab === 'LOCKER' && (
               <div className="wh-locker-stack">
-                <div className="wh-field-label">3D Character Model</div>
+                <div className="wh-field-label">Select Hero</div>
                 <div className="wh-archetype-grid">
-                  {ARCHETYPES.map((arch) => (
+                  {HERO_ROSTER.map((hero) => (
                     <button
-                      key={arch.id}
+                      key={hero.heroId}
                       type="button"
                       className="wh-chip-btn"
-                      aria-pressed={character.archetype === arch.id}
-                      onClick={() => chooseArchetype(arch.id)}
+                      aria-pressed={activeHero.heroId === hero.heroId}
+                      onClick={() => selectHero(hero.heroId)}
                     >
-                      {arch.label}
+                      {hero.name}
                     </button>
                   ))}
                 </div>
+
+                {activeHero.costumes.length > 1 && (
+                  <>
+                    <div className="wh-field-label">Costumes &amp; Styles ({activeHero.name})</div>
+                    <div className="wh-archetype-grid">
+                      {activeHero.costumes.map((costume) => (
+                        <button
+                          key={costume.archetype}
+                          type="button"
+                          className="wh-chip-btn"
+                          aria-pressed={character.archetype === costume.archetype}
+                          onClick={() => chooseArchetype(costume.archetype)}
+                        >
+                          {costume.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {activeCostume?.supportsKitTint && (
+                  <>
+                    <div className="wh-field-label">Athletic Kit Colorway</div>
+                    <div className="wh-archetype-grid">
+                      {KIT_COLORWAYS.map((kw) => (
+                        <button
+                          key={kw.hex}
+                          type="button"
+                          className="wh-chip-btn"
+                          aria-pressed={(character.kitColorHex ?? '#ffffff').toLowerCase() === kw.hex.toLowerCase()}
+                          onClick={() => update({ kitColorHex: kw.hex })}
+                        >
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: 9,
+                              height: 9,
+                              borderRadius: 999,
+                              background: kw.hex,
+                              marginRight: 6,
+                              border: '1px solid rgba(255,255,255,0.45)',
+                            }}
+                          />
+                          {kw.name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
 
                 <div className="wh-field-label">Emotes (Press Z in-game)</div>
                 <div className="wh-archetype-grid">

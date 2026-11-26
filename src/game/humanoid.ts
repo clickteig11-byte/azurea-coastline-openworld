@@ -8,9 +8,12 @@ interface Joint {
   tPoseBasis: THREE.Quaternion;
 }
 
+export type RigPosture = 'feminine' | 'athletic' | 'robotic';
+
 export interface HumanoidRig {
   wrapper: THREE.Group;
   model: THREE.Object3D;
+  posture: RigPosture;
   joints: Record<string, Joint>;
   legs: LegRig[];
   gait: number;
@@ -65,11 +68,16 @@ export function weldSmoothNormals(model: THREE.Object3D) {
   model.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
     if (!mesh.isMesh || !mesh.geometry || mesh.geometry.userData?.smoothWelded) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    if (mats.some((m) => Boolean((m as THREE.MeshStandardMaterial | undefined)?.normalMap))) {
+      mesh.geometry.userData.smoothWelded = true;
+      return;
+    }
     const geo = mesh.geometry;
     const pos = geo.attributes.position;
     if (!pos) return;
     geo.userData.smoothWelded = true;
-    if (pos.count > 18000) return;
+    if (pos.count > 18000 || (geo.attributes.normal && pos.count > 3500)) return;
     geo.computeVertexNormals();
     const norm = geo.attributes.normal;
     if (!norm) return;
@@ -111,9 +119,14 @@ interface GroundMotion {
   heightAt: (x: number, z: number) => number;
 }
 
-export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, animations: THREE.AnimationClip[] = []): HumanoidRig {
+export function createHumanoidRig(
+  wrapper: THREE.Group,
+  model: THREE.Object3D,
+  animations: THREE.AnimationClip[] = [],
+  posture: RigPosture = 'athletic'
+): HumanoidRig {
   const rig: HumanoidRig = {
-    wrapper, model, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0,
+    wrapper, model, posture, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0,
     emoteElapsed: 0, emoteBlend: 0, clips: {}, legs: [],
   };
   weldSmoothNormals(model);
@@ -159,19 +172,33 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
   // Snapshot T-pose quaternions & world bases for retargeting before relaxing A/T-pose arms.
   wrapper.getWorldQuaternion(root).invert();
   const tPoseMap = new Map<string, { rest: THREE.Quaternion; basis: THREE.Quaternion }>();
-  const savedArmQuats = new Map<string, THREE.Quaternion>();
+  const savedPoseQuats = new Map<string, THREE.Quaternion>();
   for (const side of ['Left', 'Right']) {
     const arm = bones[side + 'Arm'];
     const elbow = bones[side + 'ForeArm'];
-    if (!arm || !elbow) continue;
-    savedArmQuats.set(side + 'Arm', arm.quaternion.clone());
-    elbow.getWorldPosition(armDirection).sub(arm.getWorldPosition(new THREE.Vector3())).applyQuaternion(root).normalize();
-    const sign = Math.sign(armDirection.x) || (side === 'Left' ? 1 : -1);
-    const raise = Math.atan2(-armDirection.y, Math.abs(armDirection.x));
-    const parentBasis = arm.parent!.getWorldQuaternion(new THREE.Quaternion()).premultiply(root);
-    correction.setFromEuler(anatomical.set(0, 0, sign * raise));
-    rootInverse.copy(parentBasis).invert();
-    arm.quaternion.premultiply(rootInverse.multiply(correction).multiply(parentBasis));
+    if (arm && elbow) {
+      savedPoseQuats.set(side + 'Arm', arm.quaternion.clone());
+      elbow.getWorldPosition(armDirection).sub(arm.getWorldPosition(new THREE.Vector3())).applyQuaternion(root).normalize();
+      const sign = Math.sign(armDirection.x) || (side === 'Left' ? 1 : -1);
+      const raise = Math.atan2(-armDirection.y, Math.abs(armDirection.x));
+      const parentBasis = arm.parent!.getWorldQuaternion(new THREE.Quaternion()).premultiply(root);
+      correction.setFromEuler(anatomical.set(0, 0, sign * raise));
+      rootInverse.copy(parentBasis).invert();
+      arm.quaternion.premultiply(rootInverse.multiply(correction).multiply(parentBasis));
+    }
+    const hip = bones[side + 'UpLeg'];
+    const knee = bones[side + 'Leg'];
+    if (hip && knee && hip.parent) {
+      savedPoseQuats.set(side + 'UpLeg', hip.quaternion.clone());
+      knee.getWorldPosition(armDirection).sub(hip.getWorldPosition(new THREE.Vector3())).applyQuaternion(root).normalize();
+      const legSplay = Math.atan2(armDirection.x, Math.max(0.15, -armDirection.y));
+      if (Math.abs(legSplay) > 0.01) {
+        const parentBasis = hip.parent.getWorldQuaternion(new THREE.Quaternion()).premultiply(root);
+        correction.setFromEuler(anatomical.set(0, 0, -legSplay));
+        rootInverse.copy(parentBasis).invert();
+        hip.quaternion.premultiply(rootInverse.multiply(correction).multiply(parentBasis));
+      }
+    }
   }
   wrapper.updateWorldMatrix(true, true);
   for (const [name, bone] of Object.entries(bones)) {
@@ -180,7 +207,7 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
       basis: bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(root),
     });
   }
-  for (const [key, q] of savedArmQuats) {
+  for (const [key, q] of savedPoseQuats) {
     bones[key].quaternion.copy(q);
   }
   wrapper.updateWorldMatrix(true, true);
@@ -232,6 +259,8 @@ const retargetSrcRestInv = new THREE.Quaternion();
 const retargetSrcBasisInv = new THREE.Quaternion();
 const retargetTgtBasisInv = new THREE.Quaternion();
 
+const retargetIdent = new THREE.Quaternion();
+
 /**
  * Retargets Mixamo skeletal AnimationClips (idle, walk, run, SambaDance) from a
  * source HumanoidRig onto any Mixamo-rigged target HumanoidRig using T-pose world-space deltas.
@@ -250,6 +279,8 @@ export function retargetMixamoClips(
     const clipKey = srcClip.name.toLowerCase();
     const matched = names.find((n) => clipKey === n.toLowerCase() || clipKey.endsWith('_' + n.toLowerCase()));
     if (!matched || !wanted.has(matched.toLowerCase())) continue;
+    const isIdle = matched.toLowerCase() === 'idle';
+    const isHuman = targetRig.posture !== 'robotic';
 
     const newTracks: THREE.KeyframeTrack[] = [];
     for (const track of srcClip.tracks) {
@@ -263,6 +294,12 @@ export function retargetMixamoClips(
       retargetSrcBasisInv.copy(srcJoint.tPoseBasis).invert();
       retargetTgtBasisInv.copy(tgtJoint.tPoseBasis).invert();
 
+      // Attenuate xbot's wide robot hip/shoulder stance on human characters during idle/walk
+      const isLegOrShoulder = /UpLeg|Shoulder/.test(rawBone);
+      const humanGain = isHuman && isIdle && isLegOrShoulder
+        ? (targetRig.posture === 'feminine' ? 0.52 : 0.72)
+        : 1.0;
+
       const times = track.times;
       const values = new Float32Array(track.values.length);
       for (let i = 0; i < times.length; i++) {
@@ -270,6 +307,9 @@ export function retargetMixamoClips(
         retargetSrcDelta.set(track.values[o], track.values[o + 1], track.values[o + 2], track.values[o + 3]);
         retargetSrcDelta.premultiply(retargetSrcRestInv);
         retargetWorldDelta.copy(srcJoint.tPoseBasis).multiply(retargetSrcDelta).multiply(retargetSrcBasisInv);
+        if (humanGain < 0.999) {
+          retargetWorldDelta.slerp(retargetIdent, 1 - humanGain);
+        }
         retargetTgtQuat.copy(retargetTgtBasisInv).multiply(retargetWorldDelta).multiply(tgtJoint.tPoseBasis);
         retargetTgtQuat.premultiply(tgtJoint.tPoseRest).normalize();
         values[o] = retargetTgtQuat.x;

@@ -580,9 +580,9 @@ export const terrainFragmentShader = /* glsl */ `
       windGustVal = windWave;
 
       vec3 beach = mix(vec3(0.46, 0.36, 0.24), vec3(0.84, 0.72, 0.52), smoothstep(0.2, 1.4, vWorldPos.y));
-      vec3 parkGrass = mix(vec3(0.11, 0.34, 0.11), vec3(0.26, 0.49, 0.16), smoothstep(0.2, 0.8, macroN));
-      parkGrass = mix(parkGrass, vec3(0.42, 0.58, 0.20), windWave * 0.32);
-      parkGrass *= 0.84 + 0.28 * bladeN1;
+      vec3 parkGrass = mix(vec3(0.09, 0.25, 0.07), vec3(0.18, 0.38, 0.12), smoothstep(0.2, 0.8, macroN));
+      parkGrass = mix(parkGrass, vec3(0.30, 0.46, 0.16), windWave * 0.28);
+      parkGrass *= 0.86 + 0.24 * bladeN1;
       float grassBlend = smoothstep(1.35, 2.35, vWorldPos.y);
       albedo = mix(beach, parkGrass, grassBlend);
       grassSheenMask = grassBlend;
@@ -806,10 +806,10 @@ export const terrainFragmentShader = /* glsl */ `
         vec3 drySand = vec3(0.89, 0.77, 0.56) + (ripple - 0.5) * 0.022 + (bladeN1 - 0.5) * 0.024 + sandSparkle;
 
         // Lush Coastal Grass & Parkland (h >= 1.85) with wind-bent fescue blades, clover & golden tips
-        vec3 meadowFescue = vec3(0.12, 0.33, 0.11);
-        vec3 oliveSage = vec3(0.24, 0.45, 0.16);
-        vec3 goldenTips = vec3(0.42, 0.55, 0.21);
-        vec3 darkLoam = vec3(0.11, 0.11, 0.07);
+        vec3 meadowFescue = vec3(0.10, 0.27, 0.08);
+        vec3 oliveSage = vec3(0.19, 0.37, 0.12);
+        vec3 goldenTips = vec3(0.33, 0.46, 0.17);
+        vec3 darkLoam = vec3(0.08, 0.10, 0.05);
 
         vec3 grassCol = mix(meadowFescue, oliveSage, smoothstep(0.22, 0.78, macroN));
         float sunCuredMask = smoothstep(0.48, 0.85, medN * 0.68 + windGustVal * 0.32);
