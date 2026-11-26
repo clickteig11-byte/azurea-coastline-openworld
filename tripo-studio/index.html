@@ -193,6 +193,17 @@
       loader.load(url, (gltf) => {
         if (currentObj) scene.remove(currentObj);
         const model = gltf.scene;
+        const lArm = model.getObjectByName('mixamorig:LeftArm') || model.getObjectByName('LeftArm');
+        const rArm = model.getObjectByName('mixamorig:RightArm') || model.getObjectByName('RightArm');
+        if (lArm && rArm) {
+          model.updateMatrixWorld(true);
+          const lPos = lArm.getWorldPosition(new THREE.Vector3());
+          const rPos = rArm.getWorldPosition(new THREE.Vector3());
+          const lr = lPos.sub(rPos);
+          if (Math.hypot(lr.x, lr.z) > 0.05) {
+            model.rotation.y += Math.atan2(lr.z, lr.x);
+          }
+        }
         const box = new THREE.Box3().setFromObject(model);
         const h = Math.max(0.1, box.max.y - box.min.y);
         const s = 1.8 / h;

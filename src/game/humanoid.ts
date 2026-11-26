@@ -4,25 +4,13 @@ interface Joint {
   bone: THREE.Bone;
   rest: THREE.Quaternion;
   basis: THREE.Quaternion;
-}
-
-interface LegRig {
-  hip: Joint;
-  knee: Joint;
-  ankle: Joint;
-  home: THREE.Vector3;
-  upperLength: number;
-  lowerLength: number;
-}
-
-interface GroundMotion {
-  x: number;
-  z: number;
-  heightAt: (x: number, z: number) => number;
+  tPoseRest: THREE.Quaternion;
+  tPoseBasis: THREE.Quaternion;
 }
 
 export interface HumanoidRig {
   wrapper: THREE.Group;
+  model: THREE.Object3D;
   joints: Record<string, Joint>;
   legs: LegRig[];
   gait: number;
@@ -108,9 +96,24 @@ export function weldSmoothNormals(model: THREE.Object3D) {
   });
 }
 
+interface LegRig {
+  hip: Joint;
+  knee: Joint;
+  ankle: Joint;
+  home: THREE.Vector3;
+  upperLength: number;
+  lowerLength: number;
+}
+
+interface GroundMotion {
+  x: number;
+  z: number;
+  heightAt: (x: number, z: number) => number;
+}
+
 export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, animations: THREE.AnimationClip[] = []): HumanoidRig {
   const rig: HumanoidRig = {
-    wrapper, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0,
+    wrapper, model, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, stroke: 0,
     emoteElapsed: 0, emoteBlend: 0, clips: {}, legs: [],
   };
   weldSmoothNormals(model);
@@ -153,15 +156,43 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
     rig.mixer = new THREE.AnimationMixer(model);
     rig.clips.emote = rig.mixer.clipAction(emote).setEffectiveWeight(0).play();
   }
-  // Use the same anatomical axes on glTF skeletons whose local bone axes differ.
+  // Snapshot T-pose quaternions & world bases for retargeting before relaxing A/T-pose arms.
   wrapper.getWorldQuaternion(root).invert();
+  const tPoseMap = new Map<string, { rest: THREE.Quaternion; basis: THREE.Quaternion }>();
+  const savedArmQuats = new Map<string, THREE.Quaternion>();
+  for (const side of ['Left', 'Right']) {
+    const arm = bones[side + 'Arm'];
+    const elbow = bones[side + 'ForeArm'];
+    if (!arm || !elbow) continue;
+    savedArmQuats.set(side + 'Arm', arm.quaternion.clone());
+    elbow.getWorldPosition(armDirection).sub(arm.getWorldPosition(new THREE.Vector3())).applyQuaternion(root).normalize();
+    const sign = Math.sign(armDirection.x) || (side === 'Left' ? 1 : -1);
+    const raise = Math.atan2(-armDirection.y, Math.abs(armDirection.x));
+    const parentBasis = arm.parent!.getWorldQuaternion(new THREE.Quaternion()).premultiply(root);
+    correction.setFromEuler(anatomical.set(0, 0, sign * raise));
+    rootInverse.copy(parentBasis).invert();
+    arm.quaternion.premultiply(rootInverse.multiply(correction).multiply(parentBasis));
+  }
+  wrapper.updateWorldMatrix(true, true);
+  for (const [name, bone] of Object.entries(bones)) {
+    tPoseMap.set(name, {
+      rest: bone.quaternion.clone(),
+      basis: bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(root),
+    });
+  }
+  for (const [key, q] of savedArmQuats) {
+    bones[key].quaternion.copy(q);
+  }
+  wrapper.updateWorldMatrix(true, true);
+
+  // Drop A/T-pose arms into a relaxed, natural standing hang.
   for (const side of ['Left', 'Right']) {
     const arm = bones[side + 'Arm'];
     const elbow = bones[side + 'ForeArm'];
     if (!arm || !elbow) continue;
     elbow.getWorldPosition(armDirection).sub(arm.getWorldPosition(new THREE.Vector3())).applyQuaternion(root).normalize();
-    const sign = Math.sign(armDirection.x);
-    const drop = Math.max(0, Math.acos(THREE.MathUtils.clamp(-armDirection.y, -1, 1)) - 0.11);
+    const sign = Math.sign(armDirection.x) || (side === 'Left' ? 1 : -1);
+    const drop = Math.max(0, Math.acos(THREE.MathUtils.clamp(-armDirection.y, -1, 1)) - 0.16);
     const parentBasis = arm.parent!.getWorldQuaternion(new THREE.Quaternion()).premultiply(root);
     correction.setFromEuler(anatomical.set(0, 0, -sign * drop));
     rootInverse.copy(parentBasis).invert();
@@ -169,7 +200,14 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
   }
   wrapper.updateWorldMatrix(true, true);
   for (const [name, bone] of Object.entries(bones)) {
-    rig.joints[name] = { bone, rest: bone.quaternion.clone(), basis: bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(root) };
+    const tp = tPoseMap.get(name)!;
+    rig.joints[name] = {
+      bone,
+      rest: bone.quaternion.clone(),
+      basis: bone.getWorldQuaternion(new THREE.Quaternion()).premultiply(root),
+      tPoseRest: tp.rest,
+      tPoseBasis: tp.basis,
+    };
   }
   for (const side of ['Left', 'Right']) {
     const hip = rig.joints[side + 'UpLeg'];
@@ -185,6 +223,86 @@ export function createHumanoidRig(wrapper: THREE.Group, model: THREE.Object3D, a
     });
   }
   return rig;
+}
+
+const retargetSrcDelta = new THREE.Quaternion();
+const retargetWorldDelta = new THREE.Quaternion();
+const retargetTgtQuat = new THREE.Quaternion();
+const retargetSrcRestInv = new THREE.Quaternion();
+const retargetSrcBasisInv = new THREE.Quaternion();
+const retargetTgtBasisInv = new THREE.Quaternion();
+
+/**
+ * Retargets Mixamo skeletal AnimationClips (idle, walk, run, SambaDance) from a
+ * source HumanoidRig onto any Mixamo-rigged target HumanoidRig using T-pose world-space deltas.
+ */
+export function retargetMixamoClips(
+  targetRig: HumanoidRig,
+  sourceRig: HumanoidRig,
+  sourceClips: THREE.AnimationClip[],
+  names: string[] = ['idle', 'walk', 'run', 'SambaDance']
+) {
+  if (!sourceClips.length || !Object.keys(targetRig.joints).length) return;
+  const wanted = new Set(names.map((n) => n.toLowerCase()));
+  const built: THREE.AnimationClip[] = [];
+
+  for (const srcClip of sourceClips) {
+    const clipKey = srcClip.name.toLowerCase();
+    const matched = names.find((n) => clipKey === n.toLowerCase() || clipKey.endsWith('_' + n.toLowerCase()));
+    if (!matched || !wanted.has(matched.toLowerCase())) continue;
+
+    const newTracks: THREE.KeyframeTrack[] = [];
+    for (const track of srcClip.tracks) {
+      if (!track.name.endsWith('.quaternion')) continue;
+      const rawBone = track.name.split('.')[0].replace(/^mixamorig:?/, '').replace(/[.]/g, '');
+      const srcJoint = sourceRig.joints[rawBone];
+      const tgtJoint = targetRig.joints[rawBone];
+      if (!srcJoint || !tgtJoint) continue;
+
+      retargetSrcRestInv.copy(srcJoint.tPoseRest).invert();
+      retargetSrcBasisInv.copy(srcJoint.tPoseBasis).invert();
+      retargetTgtBasisInv.copy(tgtJoint.tPoseBasis).invert();
+
+      const times = track.times;
+      const values = new Float32Array(track.values.length);
+      for (let i = 0; i < times.length; i++) {
+        const o = i * 4;
+        retargetSrcDelta.set(track.values[o], track.values[o + 1], track.values[o + 2], track.values[o + 3]);
+        retargetSrcDelta.premultiply(retargetSrcRestInv);
+        retargetWorldDelta.copy(srcJoint.tPoseBasis).multiply(retargetSrcDelta).multiply(retargetSrcBasisInv);
+        retargetTgtQuat.copy(retargetTgtBasisInv).multiply(retargetWorldDelta).multiply(tgtJoint.tPoseBasis);
+        retargetTgtQuat.premultiply(tgtJoint.tPoseRest).normalize();
+        values[o] = retargetTgtQuat.x;
+        values[o + 1] = retargetTgtQuat.y;
+        values[o + 2] = retargetTgtQuat.z;
+        values[o + 3] = retargetTgtQuat.w;
+      }
+      newTracks.push(new THREE.QuaternionKeyframeTrack(`${tgtJoint.bone.uuid}.quaternion`, times, values));
+    }
+
+    if (newTracks.length > 0) {
+      built.push(new THREE.AnimationClip(matched, srcClip.duration, newTracks));
+    }
+  }
+
+  if (!built.length) return;
+  if (!targetRig.mixer) {
+    targetRig.mixer = new THREE.AnimationMixer(targetRig.model);
+  }
+  for (const clip of built) {
+    const lower = clip.name.toLowerCase();
+    if (lower === 'idle' || lower === 'walk' || lower === 'run') {
+      if (!targetRig.clips[lower]) {
+        const action = targetRig.mixer.clipAction(clip).setEffectiveWeight(lower === 'idle' ? 1 : 0).play();
+        if (lower !== 'idle') action.time = ((targetRig.wrapper.id % 13) / 13) * clip.duration;
+        targetRig.clips[lower] = action;
+      }
+    } else if (lower === 'sambadance' || lower === 'agree') {
+      if (!targetRig.clips.emote) {
+        targetRig.clips.emote = targetRig.mixer.clipAction(clip).setEffectiveWeight(0).play();
+      }
+    }
+  }
 }
 
 const rigOrigin = new THREE.Vector3();
@@ -297,10 +415,11 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
   const idleStance = (1 - rig.gait) * groundBlend * (1 - rig.aim);
   const response = 1 - Math.exp(-20 * dt);
 
+  const useEmoteClip = Boolean(rig.clips.emote && (motion.emoteStyle === undefined || motion.emoteStyle === 'DANCE'));
   if (animated) {
     const emoteClip = rig.clips.emote;
-    const clipEmoteW = emoteClip ? emoteWeight : 0;
-    rig.clips.idle!.setEffectiveWeight((1 - rig.gait) * (1 - clipEmoteW));
+    const clipEmoteW = useEmoteClip ? emoteWeight : 0;
+    rig.clips.idle!.setEffectiveWeight((1 - rig.gait) * (1 - emoteWeight));
     rig.clips.walk!.setEffectiveWeight(rig.gait * (1 - run)).setEffectiveTimeScale(
       (reverse ? -1 : 1) * THREE.MathUtils.clamp(speed / 1.5, 0.56, 1.9));
     rig.clips.run!.setEffectiveWeight(rig.gait * run).setEffectiveTimeScale(THREE.MathUtils.clamp(speed / 5.1, 0.7, 1.4));
@@ -315,11 +434,11 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
       }
     }
     rig.mixer!.update(dt);
-  } else if (rig.mixer && rig.clips.emote && emoteWeight > 0.004) {
+  } else if (rig.mixer && rig.clips.emote && useEmoteClip && emoteWeight > 0.004) {
     rig.clips.emote.setEffectiveWeight(emoteWeight);
     rig.mixer.update(dt);
   }
-  const procEmoteWeight = rig.clips.emote ? 0 : emoteWeight;
+  const procEmoteWeight = useEmoteClip ? 0 : emoteWeight;
   const authored = !animated || center > 0.13;
   const baseBlend = authored ? response : 0;
   const overlay = Math.max(baseBlend, rig.air, landing * 0.85, procEmoteWeight);

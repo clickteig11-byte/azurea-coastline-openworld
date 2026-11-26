@@ -16,7 +16,7 @@ import { crossesRaceGate } from '../game/grandPrix';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
 import { REPAIR_BAY_COORDS } from './World';
-import { animateHumanoid, createHumanoidRig, strideDistance, type HumanoidRig } from '../game/humanoid';
+import { animateHumanoid, createHumanoidRig, retargetMixamoClips, strideDistance, type HumanoidRig } from '../game/humanoid';
 import { computeChassisWeightTransfer, rearSlip, shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
 import { injureBot, injurePlayer } from '../game/combat';
 import { blastWorld, damageWorld, emitEnvironment, traceGround, traceWorld, type WorldHit } from '../game/worldDamage';
@@ -1330,6 +1330,18 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       });
     });
 
+    let xbotSource: { rig: HumanoidRig; clips: THREE.AnimationClip[] } | null = null;
+    let michelleSource: { rig: HumanoidRig; clips: THREE.AnimationClip[] } | null = null;
+
+    const applyMixamoRetarget = (targetRig: HumanoidRig) => {
+      if (xbotSource && (!targetRig.clips.idle || !targetRig.clips.walk || !targetRig.clips.run)) {
+        retargetMixamoClips(targetRig, xbotSource.rig, xbotSource.clips, ['idle', 'walk', 'run']);
+      }
+      if (michelleSource && !targetRig.clips.emote) {
+        retargetMixamoClips(targetRig, michelleSource.rig, michelleSource.clips, ['SambaDance']);
+      }
+    };
+
     for (const [archetype, spec] of Object.entries(COASTAL_CHARACTERS)) {
       gltfLoader.load(spec.url, (gltf) => {
         if (disposed || !soldierMountRef.current) return;
@@ -1366,14 +1378,31 @@ export function VehicleDirector({ onHudUpdate }: Props) {
             if (finish.name === 'Reflective Safety Trim') materials.accents.push(finish);
           }
         });
+        const lArm = model.getObjectByName('mixamorig:LeftArm') ?? model.getObjectByName('mixamorigLeftArm') ?? model.getObjectByName('LeftArm');
+        const rArm = model.getObjectByName('mixamorig:RightArm') ?? model.getObjectByName('mixamorigRightArm') ?? model.getObjectByName('RightArm');
+        let rotY = 0;
+        if (lArm && rArm) {
+          model.updateMatrixWorld(true);
+          const lr = lArm.getWorldPosition(new THREE.Vector3()).sub(rArm.getWorldPosition(new THREE.Vector3()));
+          if (Math.hypot(lr.x, lr.z) > 0.05) {
+            rotY = Math.atan2(lr.z, lr.x);
+          }
+        }
         const bounds = new THREE.Box3().setFromObject(model);
         const height = bounds.max.y - bounds.min.y;
-        autoGroundAndCenter(model, spec.height / Math.max(0.2, height));
+        autoGroundAndCenter(model, spec.height / Math.max(0.2, height), rotY);
         const wrapper = new THREE.Group();
         wrapper.add(model);
         soldierMountRef.current.add(wrapper);
-        coastalRigs.current.set(archetype as CoastalCharacter, createHumanoidRig(wrapper, model, gltf.animations));
+        const rig = createHumanoidRig(wrapper, model, gltf.animations);
+        coastalRigs.current.set(archetype as CoastalCharacter, rig);
         coastalMaterials.current.set(archetype as CoastalCharacter, materials);
+        if (archetype === 'XBOT_CYBER') {
+          xbotSource = { rig, clips: gltf.animations };
+          for (const existingRig of coastalRigs.current.values()) applyMixamoRetarget(existingRig);
+        } else {
+          applyMixamoRetarget(rig);
+        }
         applyCharacterCustomization();
       });
     }
@@ -1490,6 +1519,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
       michelleBodyMatsRef.current = bodyMats;
       michelleRigRef.current = createHumanoidRig(wrapper, model, gltf.animations);
+      michelleSource = { rig: michelleRigRef.current, clips: gltf.animations };
+      for (const existingRig of coastalRigs.current.values()) applyMixamoRetarget(existingRig);
 
       applyCharacterCustomization();
     });

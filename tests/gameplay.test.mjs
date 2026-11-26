@@ -480,4 +480,29 @@ test('All 5 EMOTE_STYLES animate distinct poses and all Tripo characters are rig
     assert.ok(Array.isArray(gltf.skins) && gltf.skins.length >= 1, `Expected skin in ${id}`);
     assert.ok(gltf.skins[0].joints.length >= 20, `Expected >=20 joints in ${id}`);
   }
+
+  // Verify Mixamo clip retargeting onto a rotated A-pose skeleton produces valid finite clips
+  const { AnimationClip, QuaternionKeyframeTrack } = await import('three');
+  const { retargetMixamoClips } = await import('../src/game/humanoid.ts');
+  const srcRig = makeRig();
+  const tgtWrapper = new Group();
+  const tgtModel = new Group();
+  tgtModel.rotation.y = -Math.PI / 2;
+  const tgtHips = new Bone(); tgtHips.name = 'mixamorig:Hips';
+  const tgtSpine = new Bone(); tgtSpine.name = 'mixamorig:Spine';
+  const tgtRightArm = new Bone(); tgtRightArm.name = 'mixamorig:RightArm';
+  const tgtRightFore = new Bone(); tgtRightFore.name = 'mixamorig:RightForeArm'; tgtRightFore.position.set(0, -0.25, 0);
+  tgtHips.add(tgtSpine);
+  tgtSpine.add(tgtRightArm);
+  tgtRightArm.add(tgtRightFore);
+  tgtModel.add(tgtHips);
+  tgtWrapper.add(tgtModel);
+  const tgtRig = createHumanoidRig(tgtWrapper, tgtModel);
+  const srcClip = new AnimationClip('idle', 1, [
+    new QuaternionKeyframeTrack('mixamorigRightArm.quaternion', [0, 1], [0, 0, 0, 1, 0, 0, -0.5, 0.866]),
+  ]);
+  retargetMixamoClips(tgtRig, srcRig, [srcClip], ['idle']);
+  assert.ok(tgtRig.mixer && tgtRig.clips.idle, 'Expected retargeted idle clip');
+  animateHumanoid(tgtRig, { dt: 1 / 60, time: 0.5, phase: 0, speed: 0 });
+  assert.ok(Number.isFinite(tgtRig.joints.RightArm.bone.quaternion.x));
 });
