@@ -355,18 +355,56 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 export const COAST_ROAD_HALF_WIDTH = 8.8;
 const NORTH_BAY_APPROACH = -205;
 const AIRPORT_CENTERLINE_ANGLE = -0.82;
-const AIRPORT_BYPASS_WIDTH = 0.49;
+const AIRPORT_BYPASS_WIDTH = 0.45;
+
+export const MAIN_ISLAND_BOUNDS = {
+  maxRoadRadius: 312,
+  maxShoreRadius: 368,
+  maxShelfRadius: 435,
+  terrainCutoffRadius: 460,
+  recommendedTerrainWidth: 980,
+  recommendedTerrainDepth: 1180,
+  recommendedTerrainCenterZ: -140,
+} as const;
+
+function rawCoastRoadRadius(bearing: number): number {
+  const absSin = Math.abs(Math.sin(bearing));
+  // Expanded coastal plateau (~30% larger usable land inside ring road) with sculpted headlands,
+  // smoothly curving back at South Promenade Harbor (angle = 0) and North Bay Bridge (angle = PI).
+  const flankExpansion = 52 * Math.pow(absSin, 1.85);
+  const eastHeadland = 16 * Math.exp(-(((bearing - 1.62) / 0.52) ** 2));
+  const northeastHeadland = 15 * Math.exp(-(((bearing - 2.34) / 0.44) ** 2));
+  const southeastHeadland = 18 * Math.exp(-(((bearing - 0.78) / 0.44) ** 2));
+  const westHeadland = 18 * Math.exp(-(((bearing + 1.88) / 0.52) ** 2));
+  const northwestHeadland = 14 * Math.exp(-(((bearing + 2.42) / 0.42) ** 2));
+  const airport = (bearing - AIRPORT_CENTERLINE_ANGLE) / AIRPORT_BYPASS_WIDTH;
+  const airportBypass = 50 * Math.exp(-airport * airport);
+  return (
+    228 +
+    flankExpansion +
+    eastHeadland +
+    northeastHeadland +
+    southeastHeadland +
+    westHeadland +
+    northwestHeadland +
+    airportBypass
+  );
+}
+
+const NORTH_PINCH_DELTA = rawCoastRoadRadius(Math.PI) + NORTH_BAY_APPROACH;
 
 export function coastRoadRadius(angle: number): number {
   const bearing = Math.abs(angle) <= Math.PI ? angle : Math.atan2(Math.sin(angle), Math.cos(angle));
-  const airport = (bearing - AIRPORT_CENTERLINE_ANGLE) / AIRPORT_BYPASS_WIDTH;
-  const north = Math.cos(angle);
-  return 228 + 62 * Math.exp(-airport * airport) -
-    (228 + NORTH_BAY_APPROACH) * Math.pow(Math.max(0, -north), 16);
+  const north = Math.cos(bearing);
+  return rawCoastRoadRadius(bearing) - NORTH_PINCH_DELTA * Math.pow(Math.max(0, -north), 14);
 }
 
 export function coastBeachWidth(angle: number): number {
-  return 41 + 6 * Math.cos(angle * 3) - 4 * Math.sin(angle * 5);
+  const northFactor = Math.pow(Math.max(0, -Math.cos(angle)), 10);
+  const southRiviera = 18 * Math.pow(Math.max(0, Math.cos(angle)), 6);
+  const headlands = 9 * Math.cos(angle * 3 - 0.3) - 5.5 * Math.sin(angle * 5 + 0.4) + 5 * Math.cos(angle * 2);
+  // Wider golden Riviera beachfront promenades (~44-79m) tapering cleanly to ~32m at the North Bay channel
+  return (50 + southRiviera + headlands) * (1 - 0.34 * northFactor);
 }
 
 export function coastRoadOffset(x: number, z: number): number {
@@ -391,8 +429,8 @@ export function coastJunction(x: number, z: number, clearance = 0): boolean {
 
 export function coastConnectorEnd(z: number, side: number, offset = 0): number {
   let inner = 0;
-  let outer = 310;
-  for (let i = 0; i < 20; i++) {
+  let outer = 420;
+  for (let i = 0; i < 24; i++) {
     const middle = (inner + outer) / 2;
     if (coastRoadOffset(middle * side, z) > offset) outer = middle;
     else inner = middle;
@@ -406,7 +444,24 @@ export function coastConnectorHeight(x: number, z: number): number {
 
 export const STUNT_RAMPS = [
   { x: 29, z: 202, yaw: 0.14, length: 14, width: 7, height: 2.7 },
-  { x: -238, z: -64, yaw: -Math.PI / 2, length: 13, width: 6, height: 2.4 },
+  { x: -264, z: -58, yaw: -Math.PI / 2, length: 13, width: 6, height: 2.5 },
+  { x: 262, z: 42, yaw: Math.PI * 0.42, length: 13, width: 6.5, height: 2.6 },
+];
+
+export interface CoastalOverlookDef {
+  id: string;
+  name: string;
+  angle: number;
+  offset: number;
+  width: number;
+  depth: number;
+}
+
+export const COASTAL_OVERLOOKS: CoastalOverlookDef[] = [
+  { id: 'east-headland', name: 'Azurea East Bluff Overlook', angle: 1.40, offset: 22, width: 16, depth: 11 },
+  { id: 'se-riviera', name: 'Riviera Point Terrace', angle: 0.78, offset: 23, width: 18, depth: 12 },
+  { id: 'sw-sunset', name: 'Sunset Runway Bluff', angle: -1.18, offset: 22, width: 16, depth: 11 },
+  { id: 'nw-harbor', name: 'Northwest Bay Overlook', angle: -2.26, offset: 21, width: 16, depth: 11 },
 ];
 
 export function stuntRampHeight(x: number, z: number, feetY: number): number {
@@ -427,15 +482,52 @@ export function stuntRampHeight(x: number, z: number, feetY: number): number {
 
 function getMainIslandHeight(x: number, z: number): number {
   const radius = Math.hypot(x, z);
-  if (radius > 389) return -6.5;
+  if (radius > MAIN_ISLAND_BOUNDS.terrainCutoffRadius) return -6.5;
+
+  const angle = Math.atan2(x, z);
+  const roadR = coastRoadRadius(angle);
+  const offset = radius - roadR;
+  const beach = coastBeachWidth(angle);
+
   let ground = 3.2;
-  if (radius > 210) {
-    const angle = Math.atan2(x, z);
-    const offset = radius - coastRoadRadius(angle);
-    const beach = coastBeachWidth(angle);
-    ground *= 1 - smoothstep(12, beach + 3, offset);
-    ground -= 6.5 * smoothstep(beach - 5, beach + 50, offset);
+
+  // Gentle terraced resort elevation in outer coastal districts (strictly clear of avenues, connectors, coast road, runway & canal)
+  if (radius > 160 && offset < -14) {
+    const clearGrandAve = smoothstep(26, 44, Math.abs(x));
+    const clearCross =
+      smoothstep(18, 34, Math.abs(z)) *
+      smoothstep(17, 32, Math.abs(z + 120)) *
+      smoothstep(17, 32, Math.abs(z - 80));
+    const clearRoadInner = 1 - smoothstep(-34, -15, offset);
+    const radialEnvelope = smoothstep(162, 198, radius) * clearRoadInner;
+    const gentleTerrace =
+      (0.55 + 0.45 * Math.sin(angle * 3 - 0.5) * Math.cos(radius * 0.025)) *
+      radialEnvelope *
+      clearGrandAve *
+      clearCross;
+    ground += gentleTerrace * 0.95;
   }
+
+  // Coastal slope & scenic headland bluffs outside the coastal ring road
+  if (radius > 195) {
+    ground *= 1 - smoothstep(14, beach + 4, offset);
+    ground -= 6.5 * smoothstep(beach - 5, beach + 52, offset);
+
+    // Sculpted coastal headland dunes & bluff overlooks between promenade (+16m) and upper beach (beach - 12m)
+    const northClear = 1 - Math.pow(Math.max(0, -Math.cos(angle)), 6);
+    const bluffBand = smoothstep(15, 24, offset) * (1 - smoothstep(beach - 20, beach - 6, offset)) * northClear;
+    if (bluffBand > 0.001) {
+      const headlandPeak =
+        1.75 * Math.exp(-(((angle - 1.40) / 0.34) ** 2)) +
+        1.95 * Math.exp(-(((angle - 0.78) / 0.36) ** 2)) +
+        1.85 * Math.exp(-(((angle + 1.18) / 0.36) ** 2)) +
+        1.65 * Math.exp(-(((angle + 2.26) / 0.34) ** 2)) +
+        0.55 * (0.5 + 0.5 * Math.sin(angle * 5 + 0.4)) +
+        0.35 * Math.cos(x * 0.045 - z * 0.038);
+      ground += headlandPeak * bluffBand;
+    }
+  }
+
   const canal = x > 69 && Math.abs(z + 95) < 38 ?
     Math.exp(-(((z + 95) / 15.25) ** 4)) * smoothstep(69, 84, x) : 0;
   const runway = smoothstep(-223, -210, x) * (1 - smoothstep(-45, -34, x)) *

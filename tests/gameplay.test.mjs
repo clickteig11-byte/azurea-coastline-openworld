@@ -575,3 +575,168 @@ test('on-foot strafe matches true Three.js screen-right (D right, A left) and co
   }
   assert.ok(Math.max(...speeds) - Math.min(...speeds) >= 25, 'Coaster speed should accelerate strongly on drops');
 });
+
+test('expanded main island bounds, coastal headlands, and overlook invariants hold', async () => {
+  const {
+    MAIN_ISLAND_BOUNDS,
+    COASTAL_OVERLOOKS,
+    STUNT_RAMPS,
+    coastRoadRadius: roadR,
+    coastBeachWidth: beachW,
+    getTerrainHeight: terrainH,
+    getTravelHeight: travelH,
+  } = await import('../src/game/worldMath.ts');
+
+  assert.ok(MAIN_ISLAND_BOUNDS.maxRoadRadius >= 300, 'Expected expanded road radius >= 300m');
+  assert.ok(MAIN_ISLAND_BOUNDS.maxShoreRadius >= 350, 'Expected expanded shore radius >= 350m');
+  assert.ok(MAIN_ISLAND_BOUNDS.terrainCutoffRadius >= 450, 'Expected cutoff radius >= 450m');
+
+  const steps = 360;
+  const dTheta = (Math.PI * 2) / steps;
+  let plateauArea = 0;
+  let dryFootprintArea = 0;
+  let measuredMaxRoad = 0;
+  let measuredMaxShore = 0;
+  for (let i = 0; i < steps; i++) {
+    const a = i * dTheta;
+    const r = roadR(a);
+    const shore = r + beachW(a);
+    plateauArea += 0.5 * r * r * dTheta;
+    dryFootprintArea += 0.5 * shore * shore * dTheta;
+    measuredMaxRoad = Math.max(measuredMaxRoad, r);
+    measuredMaxShore = Math.max(measuredMaxShore, shore);
+  }
+  assert.ok(plateauArea > 215000, `Expected expanded plateau area > 215k m^2, got ${Math.round(plateauArea)}`);
+  assert.ok(dryFootprintArea > 305000, `Expected expanded dry footprint > 305k m^2, got ${Math.round(dryFootprintArea)}`);
+  assert.ok(measuredMaxRoad <= MAIN_ISLAND_BOUNDS.maxRoadRadius + 1);
+  assert.ok(measuredMaxShore <= MAIN_ISLAND_BOUNDS.maxShoreRadius + 1);
+
+  assert.ok(COASTAL_OVERLOOKS.length >= 4);
+  for (const overlook of COASTAL_OVERLOOKS) {
+    const r = roadR(overlook.angle) + overlook.offset;
+    const x = Math.sin(overlook.angle) * r;
+    const z = Math.cos(overlook.angle) * r;
+    const h = terrainH(x, z);
+    assert.ok(Number.isFinite(h) && h > 1.5, `Overlook ${overlook.id} should sit on dry headland (got y=${h})`);
+  }
+
+  for (const ramp of STUNT_RAMPS) {
+    const baseH = terrainH(ramp.x, ramp.z);
+    assert.ok(baseH > 2.5, `Stunt ramp at (${ramp.x},${ramp.z}) should sit on dry land`);
+    const topX = ramp.x + Math.sin(ramp.yaw) * (ramp.length * 0.9);
+    const topZ = ramp.z + Math.cos(ramp.yaw) * (ramp.length * 0.9);
+    assert.ok(travelH(topX, topZ, baseH + ramp.height) > baseH + 1.5);
+  }
+
+  // Deep ocean shelf outside expanded terrain cutoff
+  for (const [ox, oz] of [[470, 0], [-470, 0], [0, 470]]) {
+    assert.equal(terrainH(ox, oz), -6.5);
+  }
+});
+
+test('two-state swimming animation produces distinct finite treading and freestyle poses and fades clips', async () => {
+  const { AnimationClip, Bone, Group, QuaternionKeyframeTrack } = await import('three');
+  const { createHumanoidRig, animateHumanoid } = await import('../src/game/humanoid.ts');
+
+  const buildFullRig = (withClips = false) => {
+    const wrapper = new Group();
+    const model = new Group();
+    const hips = new Bone(); hips.name = 'Hips';
+    const spine = new Bone(); spine.name = 'Spine';
+    const spine1 = new Bone(); spine1.name = 'Spine1';
+    const spine2 = new Bone(); spine2.name = 'Spine2';
+    const neck = new Bone(); neck.name = 'Neck';
+    const head = new Bone(); head.name = 'Head';
+    hips.add(spine);
+    spine.add(spine1);
+    spine1.add(spine2);
+    spine2.add(neck);
+    neck.add(head);
+
+    for (const [side, sx] of [['Left', 1], ['Right', -1]]) {
+      const shoulder = new Bone(); shoulder.name = `${side}Shoulder`; shoulder.position.set(sx * 0.08, 0.2, 0);
+      const arm = new Bone(); arm.name = `${side}Arm`; arm.position.set(sx * 0.14, 0, 0);
+      const foreArm = new Bone(); foreArm.name = `${side}ForeArm`; foreArm.position.set(0, -0.28, 0);
+      const hand = new Bone(); hand.name = `${side}Hand`; hand.position.set(0, -0.24, 0);
+      spine2.add(shoulder);
+      shoulder.add(arm);
+      arm.add(foreArm);
+      foreArm.add(hand);
+
+      const upLeg = new Bone(); upLeg.name = `${side}UpLeg`; upLeg.position.set(sx * 0.11, -0.08, 0);
+      const leg = new Bone(); leg.name = `${side}Leg`; leg.position.set(0, -0.42, 0);
+      const foot = new Bone(); foot.name = `${side}Foot`; foot.position.set(0, -0.40, 0);
+      const toe = new Bone(); toe.name = `${side}ToeBase`; toe.position.set(0, -0.05, 0.12);
+      hips.add(upLeg);
+      upLeg.add(leg);
+      leg.add(foot);
+      foot.add(toe);
+    }
+    model.add(hips);
+    wrapper.add(model);
+
+    const clips = withClips
+      ? ['idle', 'walk', 'run'].map((name) => new AnimationClip(name, 1.0, [
+          new QuaternionKeyframeTrack('Hips.quaternion', [0, 1], [0, 0, 0, 1, 0, 0.05, 0, 0.998]),
+          new QuaternionKeyframeTrack('RightArm.quaternion', [0, 1], [0, 0, 0, 1, 0.1, 0, 0, 0.995]),
+        ]))
+      : [];
+    return createHumanoidRig(wrapper, model, clips);
+  };
+
+  const assertAllJointsFinite = (rig) => {
+    for (const [name, joint] of Object.entries(rig.joints)) {
+      const q = joint.bone.quaternion;
+      assert.ok(
+        Number.isFinite(q.x) && Number.isFinite(q.y) && Number.isFinite(q.z) && Number.isFinite(q.w),
+        `Non-finite quaternion on ${name}`
+      );
+    }
+    assert.ok(Number.isFinite(rig.wrapper.rotation.x) && Number.isFinite(rig.wrapper.rotation.z));
+    assert.ok(Number.isFinite(rig.wrapper.position.y) && Number.isFinite(rig.wrapper.position.z));
+  };
+
+  // 1. Idle treading water (upright sculling & cycling legs)
+  const treadRig = buildFullRig(true);
+  const restArm = treadRig.joints.RightArm.rest.clone();
+  const restLeg = treadRig.joints.LeftUpLeg.rest.clone();
+  for (let i = 0; i < 60; i++) {
+    animateHumanoid(treadRig, { dt: 1 / 60, time: i / 60, phase: 0, speed: 0, swimming: true, swimSpeed: 0.05 });
+  }
+  assertAllJointsFinite(treadRig);
+  assert.ok(treadRig.swim > 0.9, `Expected rig.swim > 0.9, got ${treadRig.swim}`);
+  assert.ok(treadRig.freestyle < 0.05, `Expected rig.freestyle < 0.05 while treading, got ${treadRig.freestyle}`);
+  assert.ok(treadRig.wrapper.rotation.x < 0.35, `Treading should remain upright, got pitch ${treadRig.wrapper.rotation.x}`);
+  assert.ok(treadRig.joints.RightArm.bone.quaternion.angleTo(restArm) > 0.35, 'Treading arm should scull away from rest');
+  assert.ok(treadRig.joints.LeftUpLeg.bone.quaternion.angleTo(restLeg) > 0.15, 'Treading leg should cycle');
+  assert.ok(treadRig.clips.idle.getEffectiveWeight() < 0.1, 'Mixamo idle clip should fade out during swim');
+
+  const treadArmSnap = treadRig.joints.RightArm.bone.quaternion.clone();
+  const treadLegSnap = treadRig.joints.LeftUpLeg.bone.quaternion.clone();
+  const treadTorsoSnap = treadRig.joints.Spine.bone.quaternion.clone();
+
+  // 2. Active freestyle front-crawl (prone horizontal pitch, alternating arms, opposing flutter kick)
+  const freeRig = buildFullRig(true);
+  for (let i = 0; i < 60; i++) {
+    animateHumanoid(freeRig, { dt: 1 / 60, time: i / 60, phase: i * 0.12, speed: 3.6, swimming: true, swimSpeed: 3.6 });
+  }
+  assertAllJointsFinite(freeRig);
+  assert.ok(freeRig.swim > 0.9 && freeRig.freestyle > 0.9);
+  assert.ok(freeRig.wrapper.rotation.x > 1.1, `Freestyle should pitch prone > 1.1 rad, got ${freeRig.wrapper.rotation.x}`);
+  assert.ok(freeRig.joints.RightArm.bone.quaternion.angleTo(treadArmSnap) > 0.4, 'Freestyle arm must differ from treading');
+  assert.ok(freeRig.joints.LeftUpLeg.bone.quaternion.angleTo(treadLegSnap) > 0.25, 'Freestyle leg must differ from treading');
+  assert.ok(freeRig.joints.Spine.bone.quaternion.angleTo(treadTorsoSnap) > 0.1, 'Freestyle torso must roll/extend differently from treading');
+  assert.ok(
+    freeRig.joints.LeftArm.bone.quaternion.angleTo(freeRig.joints.RightArm.bone.quaternion) > 0.5,
+    'Freestyle left and right arms should alternate'
+  );
+
+  // 3. Sprint freestyle increases stroke cadence
+  const normalStrokeBefore = freeRig.stroke;
+  animateHumanoid(freeRig, { dt: 1 / 60, time: 1.05, phase: 7, speed: 3.6, swimming: true, swimSpeed: 3.6, sprinting: false });
+  const normalDelta = ((freeRig.stroke - normalStrokeBefore) + Math.PI * 2) % (Math.PI * 2);
+  const sprintStrokeBefore = freeRig.stroke;
+  animateHumanoid(freeRig, { dt: 1 / 60, time: 1.07, phase: 7, speed: 5.0, swimming: true, swimSpeed: 5.0, sprinting: true });
+  const sprintDelta = ((freeRig.stroke - sprintStrokeBefore) + Math.PI * 2) % (Math.PI * 2);
+  assert.ok(sprintDelta > normalDelta * 1.25, 'Sprint swimming must increase stroke cadence');
+});

@@ -21,7 +21,16 @@ import {
   createModernConcreteSteelPBR,
 } from './Textures';
 import { VegasLandmarks } from './Landmarks';
-import { coastRoadRadius, coastRoadOffset, getTerrainHeight, LANDMARKS, NORTH_BAY_BRIDGE } from '../game/worldMath';
+import {
+  COAST_ROAD_HALF_WIDTH,
+  COASTAL_OVERLOOKS,
+  coastRoadRadius,
+  coastRoadOffset,
+  getTerrainHeight,
+  LANDMARKS,
+  MAIN_ISLAND_BOUNDS,
+  NORTH_BAY_BRIDGE,
+} from '../game/worldMath';
 import { cityPlots } from './City';
 import { DamageableProp } from './WorldSections';
 import { registerWorldSection } from '../game/worldDamage';
@@ -95,10 +104,10 @@ export function resolveAtmosphereTarget(out: AtmosphereTarget): AtmosphereTarget
   out.moonVisibility = theme.moonVisibility;
   out.starIntensity = theme.starIntensity;
   out.envIntensity =
-    themeId === 'SUNLIT_RIVIERA' ? 1.0
-    : themeId === 'SUNSET_BOARDWALK' ? 0.78
-    : themeId === 'TACTICAL_OVERLOOK' ? 0.48
-    : 0.34;
+    themeId === 'SUNLIT_RIVIERA' ? 1.12
+    : themeId === 'SUNSET_BOARDWALK' ? 0.88
+    : themeId === 'TACTICAL_OVERLOOK' ? 0.56
+    : 0.42;
 
   if (!simState.startMenuOpen) {
     if (simState.roulette === 'RED') {
@@ -246,11 +255,11 @@ export function StylizedOcean() {
   );
 
   const geometry = useMemo(() => {
-    const mesh = new THREE.PlaneGeometry(2, 2, 156, 156);
+    const mesh = new THREE.PlaneGeometry(2, 2, 180, 180);
     mesh.rotateX(-Math.PI / 2);
     const vertices = mesh.attributes.position;
-    // Concentrate vertices around the playable coastline and stretch the outer ocean to the horizon.
-    const spread = (v: number) => Math.sign(v) * (Math.abs(v) * 610 + Math.abs(v) ** 15 * 4490);
+    // Concentrate high-res Gerstner vertices across the expanded coastline, North Bay & Wonder Pier.
+    const spread = (v: number) => Math.sign(v) * (Math.abs(v) * 740 + Math.abs(v) ** 15 * 4560);
     for (let i = 0; i < vertices.count; i++) vertices.setXYZ(i, spread(vertices.getX(i)), 0, spread(vertices.getZ(i)) - 140);
     mesh.computeBoundingSphere();
     return mesh;
@@ -293,6 +302,49 @@ export function StylizedOcean() {
   );
 }
 
+function WorldRimLighting() {
+  const rimRef = useRef<THREE.DirectionalLight>(null);
+  const bounceRef = useRef<THREE.DirectionalLight>(null);
+  const target = useMemo(createAtmosphereTarget, []);
+  const rimCol = useMemo(() => new THREE.Color('#bae6fd'), []);
+  const bounceCol = useMemo(() => new THREE.Color('#fde68a'), []);
+
+  useFrame((_, dt) => {
+    resolveAtmosphereTarget(target);
+    const damp = 1 - Math.exp(-5.0 * Math.min(dt, 0.1));
+    const { theme } = target;
+    if (rimRef.current) {
+      // Counter-sun rim light sculpts architecture, palms, vehicles & silhouettes cleanly
+      rimRef.current.position.set(-target.sunDir.x * 160, 68, -target.sunDir.z * 160);
+      rimCol.set(theme.rimLightColor);
+      rimRef.current.color.lerp(rimCol, damp);
+      const targetIntensity =
+        theme.id === 'SUNLIT_RIVIERA' ? 0.42
+        : theme.id === 'SUNSET_BOARDWALK' ? 0.52
+        : theme.id === 'TACTICAL_OVERLOOK' ? 0.34
+        : 0.30;
+      rimRef.current.intensity = THREE.MathUtils.lerp(rimRef.current.intensity, targetIntensity, damp);
+    }
+    if (bounceRef.current) {
+      // Warm coastal sand/water upward fill reduces harsh black underside shadows
+      bounceCol.set(theme.sunsetWarmth > 0.4 ? '#fdba74' : theme.moonVisibility > 0.45 ? '#38bdf8' : '#e0f2fe');
+      bounceRef.current.color.lerp(bounceCol, damp);
+      const targetBounce =
+        theme.id === 'SUNLIT_RIVIERA' ? 0.24
+        : theme.id === 'SUNSET_BOARDWALK' ? 0.26
+        : 0.16;
+      bounceRef.current.intensity = THREE.MathUtils.lerp(bounceRef.current.intensity, targetBounce, damp);
+    }
+  });
+
+  return (
+    <>
+      <directionalLight ref={rimRef} position={[110, 68, 95]} intensity={0.42} color="#bae6fd" />
+      <directionalLight ref={bounceRef} position={[45, -30, 80]} intensity={0.24} color="#e0f2fe" />
+    </>
+  );
+}
+
 export function IslandTerrain() {
   const initialTheme = LOBBY_THEMES.SUNLIT_RIVIERA;
   const target = useMemo(createAtmosphereTarget, []);
@@ -302,8 +354,8 @@ export function IslandTerrain() {
     () => THREE.UniformsUtils.merge([THREE.UniformsLib.lights, {
       uSunDir: { value: new THREE.Vector3(...initialTheme.sunDir).normalize() },
       uHorizonCol: { value: new THREE.Color(initialTheme.skyHorizon) },
-      uSunLightCol: { value: new THREE.Color(initialTheme.dirColor).multiplyScalar(initialTheme.dirIntensity * 0.46) },
-      uAmbientCol: { value: new THREE.Color(initialTheme.hemiSky).multiplyScalar(initialTheme.hemiIntensity * 0.54) },
+      uSunLightCol: { value: new THREE.Color(initialTheme.dirColor).multiplyScalar(initialTheme.dirIntensity * 0.50) },
+      uAmbientCol: { value: new THREE.Color(initialTheme.hemiSky).multiplyScalar(initialTheme.hemiIntensity * 0.56) },
       uSunColor: { value: new THREE.Color(initialTheme.sunColor) },
       uSunsetWarmth: { value: initialTheme.sunsetWarmth },
       uMoonVis: { value: initialTheme.moonVisibility },
@@ -315,18 +367,39 @@ export function IslandTerrain() {
   );
 
   const geometry = useMemo(() => {
-    const geo = new THREE.PlaneGeometry(780, 1020, 168, 216);
+    const geo = new THREE.PlaneGeometry(
+      MAIN_ISLAND_BOUNDS.recommendedTerrainWidth,
+      MAIN_ISLAND_BOUNDS.recommendedTerrainDepth,
+      248,
+      292
+    );
     geo.rotateX(-Math.PI / 2);
-    geo.translate(0, 0, -153);
+    geo.translate(0, 0, MAIN_ISLAND_BOUNDS.recommendedTerrainCenterZ);
     const pos = geo.attributes.position;
+    const normals = new Float32Array(pos.count * 3);
+    const eps = 2.6;
 
+    // Sample continuous analytical C1-smooth finite-difference normals so steep banks & headlands never look faceted
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
-      pos.setY(i, getTerrainHeight(x, z));
+      const h = getTerrainHeight(x, z);
+      pos.setY(i, h);
+
+      const hL = getTerrainHeight(x - eps, z);
+      const hR = getTerrainHeight(x + eps, z);
+      const hD = getTerrainHeight(x, z - eps);
+      const hU = getTerrainHeight(x, z + eps);
+      let nx = (hL - hR) / (2 * eps);
+      let ny = 1.0;
+      let nz = (hD - hU) / (2 * eps);
+      const len = Math.hypot(nx, ny, nz) || 1;
+      normals[i * 3] = nx / len;
+      normals[i * 3 + 1] = ny / len;
+      normals[i * 3 + 2] = nz / len;
     }
 
-    geo.computeVertexNormals();
+    geo.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     return geo;
   }, []);
 
@@ -344,8 +417,8 @@ export function IslandTerrain() {
     uniforms.uActorPos.value.copy(activeActor);
     resolveAtmosphereTarget(target);
     const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
-    tmpSunLight.copy(target.dirColor).multiplyScalar(target.theme.dirIntensity * 0.46);
-    tmpAmbient.copy(target.hemiSky).multiplyScalar(target.theme.hemiIntensity * 0.54);
+    tmpSunLight.copy(target.dirColor).multiplyScalar(target.theme.dirIntensity * 0.50);
+    tmpAmbient.copy(target.hemiSky).multiplyScalar(target.theme.hemiIntensity * 0.56);
     uniforms.uSunDir.value.lerp(target.sunDir, damp).normalize();
     uniforms.uHorizonCol.value.lerp(target.horizon, damp);
     uniforms.uSunLightCol.value.lerp(tmpSunLight, damp);
@@ -357,6 +430,7 @@ export function IslandTerrain() {
 
   return (
     <>
+      <WorldRimLighting />
       <mesh geometry={geometry} receiveShadow>
         <shaderMaterial
           vertexShader={terrainVertexShader}
@@ -383,7 +457,7 @@ const grassVertexShader = /* glsl */ `
     vBladeH = uv.y;
     vec4 worldBase = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
     float dist = distance(worldBase.xyz, uCameraPos);
-    float lodScale = 1.0 - smoothstep(78.0, 125.0, dist);
+    float lodScale = 1.0 - smoothstep(88.0, 140.0, dist);
     if (lodScale < 0.01) {
       gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
       return;
@@ -433,9 +507,9 @@ const grassFragmentShader = /* glsl */ `
     vec3 rootCol = vec3(0.05, 0.14, 0.04);
     vec3 midCol = mix(vec3(0.11, 0.28, 0.08), vec3(0.15, 0.34, 0.10), patchN);
     vec3 tipBase = mix(vec3(0.24, 0.44, 0.13), vec3(0.36, 0.54, 0.17), clamp(vWind * 0.75 + vFlatten * 0.25, 0.0, 1.0));
-    if (flowerHash > 0.94 && vBladeH > 0.76) {
-      vec3 bloomCol = flowerHash > 0.975 ? vec3(0.95, 0.52, 0.70) : vec3(0.96, 0.84, 0.28);
-      tipBase = mix(tipBase, bloomCol, smoothstep(0.76, 0.95, vBladeH));
+    if (flowerHash > 0.982 && vBladeH > 0.78) {
+      vec3 bloomCol = flowerHash > 0.992 ? vec3(0.92, 0.56, 0.68) : vec3(0.92, 0.80, 0.34);
+      tipBase = mix(tipBase, bloomCol, smoothstep(0.78, 0.96, vBladeH) * 0.72);
     }
     vec3 albedo = mix(rootCol, midCol, smoothstep(0.0, 0.52, vBladeH));
     albedo = mix(albedo, tipBase, smoothstep(0.42, 1.0, vBladeH));
@@ -507,7 +581,7 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
     geo.setIndex(indices);
     geo.computeVertexNormals();
 
-    // Deterministic placement of 22,000 lush grass clumps across coastal meadows, parks & boulevards
+    // Deterministic placement of 26,000 lush grass clumps across the expanded main island & Island II
     const dummy = new THREE.Object3D();
     const mats: THREE.Matrix4[] = [];
     let seed = 1337;
@@ -516,24 +590,60 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
       return (seed - 1) / 2147483646;
     };
 
-    for (let i = 0; i < 65000 && mats.length < 18500; i++) {
-      const r = 26 + rand() * 218;
+    // Precompute Coastal Overlook world footprints so instanced grass never clips through overlook decks
+    const overlookBoxes = COASTAL_OVERLOOKS.map((ov) => {
+      const r = coastRoadRadius(ov.angle) + ov.offset;
+      return {
+        x: Math.sin(ov.angle) * r,
+        z: Math.cos(ov.angle) * r,
+        radius: Math.max(ov.width, ov.depth) * 0.75 + 5.5,
+      };
+    });
+
+    for (let i = 0; i < 88000 && mats.length < 22000; i++) {
+      const r = 26 + rand() * 320;
       const theta = rand() * Math.PI * 2;
       const x = Math.cos(theta) * r;
       const z = Math.sin(theta) * r;
 
-      // Keep clear of roads, sidewalks, parking bays, transit stops, runway, and canal
+      // Keep clear of roads, sidewalks, parking bays, transit stops, runway, canal, coastal promenade & overlooks
       if (Math.abs(x) < 32.5) continue;
       if (Math.abs(z) < 21.5 || Math.abs(z + 120) < 21.5 || Math.abs(z - 80) < 21.5) continue;
       if (x > -215 && x < -40 && z > 125 && z < 185) continue;
       if (x > 66 && Math.abs(z + 95) < 28) continue;
-      if (Math.abs(coastRoadOffset(x, z)) < 14.0) continue;
+
+      const cOff = coastRoadOffset(x, z);
+      // Exclude entire coastal ring road + seaward travertine promenade band (-15.5m to +21.5m)
+      if (cOff > -(COAST_ROAD_HALF_WIDTH + 6.7) && cOff < COAST_ROAD_HALF_WIDTH + 12.7) continue;
+
+      // Keep clear of coastal headland overlook decks
+      let nearOverlook = false;
+      for (let oIdx = 0; oIdx < overlookBoxes.length; oIdx++) {
+        const ov = overlookBoxes[oIdx];
+        if (Math.hypot(x - ov.x, z - ov.z) < ov.radius) {
+          nearOverlook = true;
+          break;
+        }
+      }
+      if (nearOverlook) continue;
+
+      // Keep clear of Central Park Fountain Plaza & major landmark plazas
+      if (Math.hypot(x + 52, z - 42) < 22) continue;
+      let nearLandmark = false;
+      for (let lIdx = 0; lIdx < LANDMARKS.length; lIdx++) {
+        const lm = LANDMARKS[lIdx];
+        if (Math.hypot(x - lm.position[0], z - lm.position[2]) < 24) {
+          nearLandmark = true;
+          break;
+        }
+      }
+      if (nearLandmark) continue;
 
       // Avoid city building plots + generous sidewalk apron
       let insidePlot = false;
       for (let pIdx = 0; pIdx < cityPlots.length; pIdx++) {
         const plot = cityPlots[pIdx];
-        if (Math.abs(x - plot.x) < plot.w * 0.56 + 6.0 && Math.abs(z - plot.z) < plot.d * 0.56 + 6.0) {
+        if (Math.abs(x - plot.x) < plot.w * 0.56 + 6.5 && Math.abs(z - plot.z) < plot.d * 0.56 + 6.5) {
           insidePlot = true;
           break;
         }
@@ -541,7 +651,7 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
       if (insidePlot) continue;
 
       const y = getTerrainHeight(x, z);
-      if (y < 2.2 || y > 7.8) continue;
+      if (y < 2.25 || y > 8.6) continue;
 
       dummy.position.set(x, y - 0.03, z);
       dummy.rotation.set(0, rand() * Math.PI * 2, 0);
@@ -551,13 +661,13 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
       mats.push(dummy.matrix.clone());
     }
 
-    // Populate 3,500 lush coastal grass clumps across Island II (approach lawns to the Wonder Ocean Pier)
-    for (let i = 0; i < 12000 && mats.length < 22000; i++) {
+    // Populate 4,000 lush coastal grass clumps across Island II (strictly clear of promenade boulevard, pergolas & Wonder Pier arch)
+    for (let i = 0; i < 14000 && mats.length < 26000; i++) {
       const x = (rand() - 0.5) * 190;
-      const z = -385 - rand() * 138;
-      if (Math.abs(x) < 13) continue;
+      const z = -388 - rand() * 114; // z in [-502, -388] -> completely clear of Wonder Pier entrance arch & apron at z <= -505!
+      if (Math.abs(x) < 19.5) continue; // Clear of Island II boulevard, curbs, and arrival promenade pergolas
       const y = getTerrainHeight(x, z);
-      if (y < 1.9 || y > 7.6) continue;
+      if (y < 2.0 || y > 7.6) continue;
 
       dummy.position.set(x, y - 0.03, z);
       dummy.rotation.set(0, rand() * Math.PI * 2, 0);
@@ -905,8 +1015,7 @@ export function VegasStripDetails() {
   }, []);
 
   const crossAsphaltTex = useMemo(() => {
-    const t = createAsphaltRoadTexture().clone();
-    t.needsUpdate = true;
+    const t = createAsphaltRoadTexture();
     t.center.set(0.5, 0.5);
     t.rotation = Math.PI / 2;
     t.repeat.set(1, 6);
@@ -920,8 +1029,7 @@ export function VegasStripDetails() {
   }, []);
 
   const crossAsphaltRough = useMemo(() => {
-    const t = createAsphaltRoughnessTexture().clone();
-    t.needsUpdate = true;
+    const t = createAsphaltRoughnessTexture();
     t.center.set(0.5, 0.5);
     t.rotation = Math.PI / 2;
     t.repeat.set(1, 6);
@@ -1313,7 +1421,7 @@ export function VegasStripDetails() {
 
       {/* 1. Grand Central Avenue between the North Bay and South Promenade junctions */}
       <mesh
-        position={[0, groundY + 0.055, (coastRoadRadius(0) + NORTH_BAY_BRIDGE.approach) / 2]}
+        position={[0, groundY + 0.068, (coastRoadRadius(0) + NORTH_BAY_BRIDGE.approach) / 2]}
         rotation={[-Math.PI / 2, 0, 0]}
         receiveShadow
       >
@@ -1321,11 +1429,11 @@ export function VegasStripDetails() {
         <meshStandardMaterial
           map={mainAsphaltTex}
           roughnessMap={mainAsphaltRough}
-          roughness={0.86}
-          metalness={0.08}
+          roughness={0.82}
+          metalness={0.05}
           polygonOffset
-          polygonOffsetFactor={1}
-          polygonOffsetUnits={1}
+          polygonOffsetFactor={-1}
+          polygonOffsetUnits={-1}
         />
       </mesh>
 
@@ -1387,7 +1495,7 @@ export function VegasStripDetails() {
           <group key={blvd.name}>
             {/* West Wing Roadway */}
             <mesh
-              position={[westCenter, by + 0.052, blvd.z]}
+              position={[westCenter, by + 0.065, blvd.z]}
               rotation={[-Math.PI / 2, 0, 0]}
               receiveShadow
             >
@@ -1395,16 +1503,16 @@ export function VegasStripDetails() {
               <meshStandardMaterial
                 map={crossAsphaltTex}
                 roughnessMap={crossAsphaltRough}
-                roughness={0.86}
-                metalness={0.08}
+                roughness={0.82}
+                metalness={0.05}
                 polygonOffset
-                polygonOffsetFactor={1}
-                polygonOffsetUnits={1}
+                polygonOffsetFactor={-1}
+                polygonOffsetUnits={-1}
               />
             </mesh>
             {/* East Wing Roadway */}
             <mesh
-              position={[eastCenter, by + 0.052, blvd.z]}
+              position={[eastCenter, by + 0.065, blvd.z]}
               rotation={[-Math.PI / 2, 0, 0]}
               receiveShadow
             >
@@ -1412,11 +1520,11 @@ export function VegasStripDetails() {
               <meshStandardMaterial
                 map={crossAsphaltTex}
                 roughnessMap={crossAsphaltRough}
-                roughness={0.86}
-                metalness={0.08}
+                roughness={0.82}
+                metalness={0.05}
                 polygonOffset
-                polygonOffsetFactor={1}
-                polygonOffsetUnits={1}
+                polygonOffsetFactor={-1}
+                polygonOffsetUnits={-1}
               />
             </mesh>
 
@@ -1467,7 +1575,7 @@ export function VegasStripDetails() {
         return (
           <mesh
             key={`crosswalk-pad-${cz}`}
-            position={[0, iy + 0.072, cz]}
+            position={[0, iy + 0.086, cz]}
             rotation={[-Math.PI / 2, 0, 0]}
             receiveShadow
           >
@@ -1475,11 +1583,11 @@ export function VegasStripDetails() {
             <meshStandardMaterial
               map={crosswalkTex}
               roughnessMap={crosswalkRough}
-              roughness={0.75}
-              metalness={0.08}
+              roughness={0.78}
+              metalness={0.05}
               polygonOffset
-              polygonOffsetFactor={-1}
-              polygonOffsetUnits={-1}
+              polygonOffsetFactor={-2}
+              polygonOffsetUnits={-2}
             />
           </mesh>
         );
@@ -1979,7 +2087,7 @@ export function VegasStripDetails() {
 
       {/* 2 Giant 7-Deck Luxury Mega-Cruise Ships: MS AZUREA ODYSSEY & MS SOLARIS ROYAL in Deep Ocean Water */}
       <LuxuryCruiseShip
-        position={[276, 0.2, -62]}
+        position={[395, 0.2, -55]}
         rotationY={-0.55}
         scale={1.08}
         name="MS AZUREA ODYSSEY"
@@ -1987,7 +2095,7 @@ export function VegasStripDetails() {
         phaseOffset={0}
       />
       <LuxuryCruiseShip
-        position={[-282, 0.2, -85]}
+        position={[-395, 0.2, -85]}
         rotationY={2.45}
         scale={1.04}
         name="MS SOLARIS ROYAL"
@@ -2069,10 +2177,10 @@ export function InstancedFoliage() {
     const palms: THREE.Matrix4[] = [];
     const dummy = new THREE.Object3D();
 
-    for (let i = 0; i < 220; i++) {
+    for (let i = 0; i < 290; i++) {
       const angle = (i * 137.5 * Math.PI) / 180;
-      const radius = i < 168 ? 58 + ((i * 29) % 185) :
-        coastRoadRadius(Math.PI / 2 - angle) + 13.5 + (i * 7 % 11);
+      const radius = i < 210 ? 58 + ((i * 37) % 275) :
+        coastRoadRadius(Math.PI / 2 - angle) + 14.5 + ((i * 7) % 16);
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = getTerrainHeight(x, z);
@@ -2082,7 +2190,7 @@ export function InstancedFoliage() {
       const nearBuilding = cityPlots.some((b) => Math.hypot(x - b.x, z - b.z) < 14);
       if (
         y > 0.7 &&
-        y < 8.5 &&
+        y < 9.2 &&
         Math.abs(x) > 32 &&
         !onCrossRoad &&
         Math.abs(coastRoadOffset(x, z)) > 13 &&
@@ -2099,7 +2207,7 @@ export function InstancedFoliage() {
       }
     }
 
-    // Coastal boulders scattered naturally along the shoreline (0.2 <= y <= 2.5)
+    // Coastal boulders scattered naturally along the expanded shoreline & headlands (0.2 <= y <= 2.6)
     const boulders: THREE.Matrix4[] = [];
     const bColors: THREE.Color[] = [];
     const rockPalette = [
@@ -2108,9 +2216,9 @@ export function InstancedFoliage() {
       new THREE.Color('#565b63'),
       new THREE.Color('#6b7078'),
     ];
-    for (let i = 0; i < 360; i++) {
+    for (let i = 0; i < 480; i++) {
       const angle = (i * 137.508 * Math.PI) / 180;
-      const radius = 185 + ((i * 37) % 85);
+      const radius = 218 + ((i * 41) % 148);
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = getTerrainHeight(x, z);
@@ -2118,7 +2226,7 @@ export function InstancedFoliage() {
       const nearCross = Math.abs(z + 120) < 18 || Math.abs(z) < 20 || Math.abs(z - 80) < 18;
       const nearRunway = x > -218 && x < -38 && z > 128 && z < 182;
       const nearCanal = x > 60 && Math.abs(z + 95) < 30;
-      if (y >= 0.2 && y <= 2.5 && !nearStrip && !nearCross && !nearRunway && !nearCanal && Math.abs(coastRoadOffset(x, z)) > 13) {
+      if (y >= 0.2 && y <= 2.6 && !nearStrip && !nearCross && !nearRunway && !nearCanal && Math.abs(coastRoadOffset(x, z)) > 13) {
         const sx = 1.05 + ((i * 13) % 17) * 0.12;
         const sy = 0.55 + ((i * 7) % 11) * 0.08;
         const sz = 0.95 + ((i * 19) % 15) * 0.11;

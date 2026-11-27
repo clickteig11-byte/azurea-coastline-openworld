@@ -144,16 +144,58 @@ export function NorthBay() {
       for (const x of [-roadX, roadX]) add('Rail post', '#cdd2c5', [x, getBridgeHeight(z) + 0.52, z], [0.2, 1.05, 0.22], 'steel', true);
     }
 
+    // Monumental South Approach Abutment Pylons on Main Island (z = approach + 2)
+    for (const x of [-17.4, 17.4]) {
+      const groundY = getTerrainHeight(x, approach + 2);
+      const deckY = getBridgeHeight(approach);
+      add('Approach plinth', '#b6ac99', [x, (groundY + deckY) * 0.5 + 0.65, approach + 2], [2.8, Math.max(1.8, deckY - groundY + 1.5), 3.6], 'concrete', true);
+      add('Approach pylon', '#bf4d35', [x, deckY + 4.6, approach + 2], [1.45, 7.8, 1.85], 'steel', true);
+      add('Approach cap', '#e16d49', [x, deckY + 8.75, approach + 2], [2.05, 0.65, 2.35], 'steel');
+    }
+
+    // Art-Deco Suspension Bridge Parapet Lamp Posts along the North Bay Crossing
+    for (let z = -222; z >= -382; z -= 24) {
+      if (Math.abs(z - towerZ[0]) < 8 || Math.abs(z - towerZ[1]) < 8) continue;
+      const dy = getBridgeHeight(z);
+      for (const side of [-1, 1]) {
+        const lx = side * (roadX + 0.28);
+        add('Bridge lamp post', '#475569', [lx, dy + 3.15, z], [0.18, 6.2, 0.18], 'steel', false);
+        add('Bridge lamp arm', '#64748b', [lx - side * 0.72, dy + 6.1, z], [1.45, 0.14, 0.14], 'steel', false);
+      }
+    }
+
     // Grand Amusement Park Gateway Arch pillars at North Bay Bridge Landing (z = gate)
     for (const x of [-14.2, 14.2]) {
       add('Gateway pillar', '#ec4899', [x, getBridgeHeight(gate) + 3.2, gate], [1.65, 6.4, 1.65], 'steel', true);
       add('Gateway plinth', '#f8fafc', [x, getBridgeHeight(gate) + 0.65, gate], [2.4, 1.3, 2.4], 'concrete', true);
+    }
+
+    // Island II Arrival Promenade Pergolas & Travertine Terrace Planters leading to Wonder Ocean Pier
+    for (const pz of [-432, -468, -498]) {
+      for (const side of [-1, 1]) {
+        const px = side * 17.5;
+        const gy = getIslandTwoHeight(px, pz);
+        if (gy < 1.4) continue;
+        add('Arrival terrace', '#d8cbb5', [px, gy - 0.12, pz], [7.6, 0.56, 11.4], 'concrete', true);
+        add('Promenade planter', '#c4b69d', [px - side * 2.8, gy + 0.42, pz], [1.3, 0.72, 9.6], 'concrete', true);
+        for (const dz of [-4.4, 0, 4.4]) {
+          for (const dx of [-2.4, 2.4]) {
+            add('Pergola column', '#7c5d41', [px + dx, gy + 1.95, pz + dz], [0.24, 3.6, 0.24], 'wood', true);
+          }
+          add('Pergola beam', '#8c6b4c', [px, gy + 3.82, pz + dz], [5.4, 0.22, 0.26], 'wood');
+        }
+        for (const dx of [-2.4, -0.8, 0.8, 2.4]) {
+          add('Pergola rafter', '#9a7756', [px + dx, gy + 4.02, pz], [0.16, 0.14, 10.2], 'wood');
+        }
+        add('Promenade bench', '#a58359', [px + side * 0.9, gy + 0.52, pz], [0.72, 0.18, 4.2], 'wood', true);
+      }
     }
     return structure;
   }, []);
   const finishes = useMemo<Record<string, WorldFinish>>(() => ({
     concrete: { material: 'masonry', roughness: 0.88 },
     steel: { material: 'metal', roughness: 0.52, metalness: 0.31 },
+    wood: { material: 'wood', roughness: 0.82 },
   }), []);
   const batches = useMemo(() => Object.entries(finishes).map(([id, finish]) => ({
     id, finish, parts: parts.filter((part) => part.finish === id),
@@ -225,7 +267,7 @@ export function NorthBay() {
 
   return (
     <group ref={bay}>
-      <instancedMesh ref={beams} args={[undefined, undefined, 600]}>
+      <instancedMesh ref={beams} args={[undefined, undefined, 1100]}>
         <boxGeometry args={[1, 1, 1]} /><meshStandardMaterial color="#ffffff" roughness={0.65} metalness={0.26} />
       </instancedMesh>
       <mesh geometry={deckSlab}><meshStandardMaterial color="#686563" roughness={0.91} side={THREE.DoubleSide} /></mesh>
@@ -245,6 +287,39 @@ export function NorthBay() {
           ))}
         </React.Fragment>
       ))}
+      {/* Warm Lantern Heads on Bridge Parapet Street Lamps & South Abutment Pylons */}
+      {[-222, -246, -270, -294, -342, -366].flatMap((z) =>
+        [-1, 1].map((side) => (
+          <mesh key={`lamp-head-${z}-${side}`} position={[side * (roadX - 1.15), getBridgeHeight(z) + 6.02, z]}>
+            <boxGeometry args={[0.72, 0.16, 0.36]} />
+            <meshStandardMaterial color="#fff3cc" emissive="#ffd98a" emissiveIntensity={1.65} roughness={0.2} />
+          </mesh>
+        ))
+      )}
+      {[-17.4, 17.4].map((px) => (
+        <mesh key={`approach-lantern-${px}`} position={[px, getBridgeHeight(approach) + 9.45, approach + 2]}>
+          <sphereGeometry args={[0.48, 12, 12]} />
+          <meshStandardMaterial color="#fef08a" emissive="#f59e0b" emissiveIntensity={2.1} roughness={0.2} />
+        </mesh>
+      ))}
+      {/* Lush Foliage Accents inside Island II Arrival Promenade Planters */}
+      {[-432, -468, -498].flatMap((pz) =>
+        [-1, 1].map((side) => {
+          const px = side * 14.7;
+          const gy = getIslandTwoHeight(px, pz);
+          if (gy < 1.4) return null;
+          return (
+            <group key={`arrival-shrub-${pz}-${side}`} position={[px, gy + 0.92, pz]}>
+              {[-3.2, 0, 3.2].map((dz) => (
+                <mesh key={dz} position={[0, 0, dz]} castShadow>
+                  <dodecahedronGeometry args={[0.78, 1]} />
+                  <meshStandardMaterial color="#4e7d44" roughness={0.86} />
+                </mesh>
+              ))}
+            </group>
+          );
+        })
+      )}
       {[[0, gate, 7.6, 22, 5.625, sign], [11, -221, 5.1, 9.6, 2.8, approachSign]].map((entry, i) => {
         const [x, z, offset, w, h, texture] = entry as [number, number, number, number, number, THREE.Texture];
         const y = getBridgeHeight(z);

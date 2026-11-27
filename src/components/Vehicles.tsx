@@ -362,11 +362,82 @@ function createOasisOfAzureaCruiseLiner(): THREE.Group {
   return ship;
 }
 
+function createSwimWaterTextures() {
+  const makeCanvas = () => {
+    const c = document.createElement('canvas');
+    c.width = 128;
+    c.height = 128;
+    return c;
+  };
+
+  // 1. Delicate feathered concentric water ripple ring (soft alpha falloff, organic wispy breakup)
+  const rippleCanvas = makeCanvas();
+  const rCtx = rippleCanvas.getContext('2d');
+  if (rCtx) {
+    const img = rCtx.createImageData(128, 128);
+    const data = img.data;
+    for (let y = 0; y < 128; y++) {
+      for (let x = 0; x < 128; x++) {
+        const dx = (x - 63.5) / 63.5;
+        const dy = (y - 63.5) / 63.5;
+        const r = Math.hypot(dx, dy);
+        const a = Math.atan2(dy, dx);
+        const rMod = r + 0.022 * Math.sin(a * 5 + 0.4) + 0.014 * Math.cos(a * 9 - 0.6);
+        const outerCrest = Math.exp(-Math.pow((rMod - 0.78) / 0.062, 2));
+        const innerHarmonic = 0.34 * Math.exp(-Math.pow((rMod - 0.56) / 0.048, 2));
+        const wisp = 0.68 + 0.32 * Math.sin(a * 6 + 0.9) * Math.cos(a * 3 - 0.5);
+        const edgeFade = Math.max(0, 1 - THREE.MathUtils.smoothstep(r, 0.88, 1.0));
+        const alpha = THREE.MathUtils.clamp((outerCrest + innerHarmonic) * wisp * edgeFade, 0, 1);
+        const idx = (y * 128 + x) * 4;
+        data[idx] = 228;
+        data[idx + 1] = 248;
+        data[idx + 2] = 255;
+        data[idx + 3] = Math.round(alpha * 255);
+      }
+    }
+    rCtx.putImageData(img, 0, 0);
+  }
+  const rippleMap = new THREE.CanvasTexture(rippleCanvas);
+  rippleMap.needsUpdate = true;
+
+  // 2. Soft frothy trailing foam wake wisp (feathered turbulent sea-foam patch, zero hard ring edge)
+  const wakeCanvas = makeCanvas();
+  const wCtx = wakeCanvas.getContext('2d');
+  if (wCtx) {
+    const img = wCtx.createImageData(128, 128);
+    const data = img.data;
+    for (let y = 0; y < 128; y++) {
+      for (let x = 0; x < 128; x++) {
+        const dx = (x - 63.5) / 63.5;
+        const dy = (y - 63.5) / 63.5;
+        const r = Math.hypot(dx, dy);
+        const radial = Math.pow(Math.max(0, 1 - r * r), 1.9);
+        const ringSoft = 0.45 + 0.55 * Math.exp(-Math.pow((r - 0.46) / 0.24, 2));
+        const foam = 0.52 + 0.48 * Math.sin(dx * 13 + Math.sin(dy * 9)) * Math.cos(dy * 11 - dx * 6);
+        const fine = 0.72 + 0.28 * Math.sin(dx * 25 - dy * 21);
+        const alpha = THREE.MathUtils.clamp(radial * ringSoft * foam * fine, 0, 1);
+        const idx = (y * 128 + x) * 4;
+        data[idx] = 236;
+        data[idx + 1] = 251;
+        data[idx + 2] = 255;
+        data[idx + 3] = Math.round(alpha * 255);
+      }
+    }
+    wCtx.putImageData(img, 0, 0);
+  }
+  const wakeMap = new THREE.CanvasTexture(wakeCanvas);
+  wakeMap.needsUpdate = true;
+
+  return { rippleMap, wakeMap };
+}
+
 export function VehicleDirector({ onHudUpdate }: Props) {
   const { gl } = useThree();
   const shadowTex = useMemo(() => createShadowTexture(), []);
   const canopyDetailTex = useMemo(() => createLimestonePBR(), []);
+  const swimWaterTex = useMemo(() => createSwimWaterTextures(), []);
   const coasterFpvCockpitRef = useRef<THREE.Group>(null);
+  const prevActiveRideRef = useRef<AmusementRideId | null>(null);
 
   const playerRef = useRef<THREE.Group>(null);
   const soldierMountRef = useRef<THREE.Group>(null);
@@ -463,16 +534,30 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const damageSmokeRefs = useRef<(THREE.Mesh | null)[]>([]);
   const damageFireRefs = useRef<(THREE.Mesh | null)[]>([]);
 
-  // Speedboat bow spray & Jet contrails
+  // Speedboat bow spray, Jet contrails & 3D Swimming Water FX (ripples, foam wake rings, sparkling droplets)
   const boatSprayRef = useRef<THREE.Group>(null);
   const contrailLeftRef = useRef<THREE.Mesh>(null);
   const contrailRightRef = useRef<THREE.Mesh>(null);
+  const playerShadowRef = useRef<THREE.Mesh>(null);
+  const swimFxGroupRef = useRef<THREE.Group>(null);
+  const swimRippleRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const swimWakeRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const swimDropletRefs = useRef<(THREE.Mesh | null)[]>([]);
+  const swimWakes = useRef(
+    Array.from({ length: 8 }, () => ({ x: 0, z: 0, yaw: 0, age: 10, maxAge: 1.35, baseScale: 0.42, active: false }))
+  );
+  const swimDroplets = useRef(
+    Array.from({ length: 14 }, () => ({
+      x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, age: 10, maxAge: 0.55, size: 0.055, active: false,
+    }))
+  );
+  const swimFxState = useRef({ wakeTimer: 0, wakeCursor: 0, dropTimer: 0, dropCursor: 0, handSide: 1 });
 
   const previousPosition = useRef(new THREE.Vector3());
   const cameraOrbit = useRef({ yaw: 0, pitch: 0 });
   const footMotion = useRef({
     phase: 0, landing: 0, airborne: false, jumpHeld: false, speed: 0, directionX: 0, directionZ: 1,
-    swim: false, splash: 0, stepTime: 0, coyote: 0, jumpBuffer: 0, airtime: 0,
+    swim: false, swimEntry: 0, swimFreestyle: 0, splash: 0, stepTime: 0, coyote: 0, jumpBuffer: 0, airtime: 0,
   });
   const rearTracks = useRef([new THREE.Vector3(), new THREE.Vector3()]);
   const suspension = useRef({ lateral: 0, driftHeld: false, driftCharge: 0, tireEffectAt: 0,
@@ -1993,6 +2078,17 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     let activeRidePose: ReturnType<typeof sampleAmusementRidePose> | null = null;
     simState.carSweep.speed = 0;
 
+    // Restore 3rd-person camera cleanly when exiting the Roller Coaster FPV ride
+    if (prevActiveRideRef.current === 'COASTER' && simState.activeRide !== 'COASTER') {
+      if (simState.cameraView === 1) {
+        simState.cameraView = 0;
+        cameraBlend.current = 0;
+        simState.orbitPitch = 0.08;
+        window.dispatchEvent(new CustomEvent('hud-sync'));
+      }
+    }
+    prevActiveRideRef.current = simState.activeRide ?? null;
+
     // 1. ON-FOOT + AMUSEMENT PARK RIDES + BATTLE ROYALE PARACHUTE SKY-DROP + FORTNITE GLIDER + CUSTOMIZER TURNTABLE
     if (simState.mode === 'FOOT' && !isStartMenuOpen) {
       const player = simState.playerPos;
@@ -2053,19 +2149,27 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         speedKmh = Math.round(Math.hypot(paraFwdSpeed, descentRate) * 3.2);
       } else {
         const wave = getWaveHeight(player.x, player.z, t) + simState.tideOffset;
-        const entering = simState.tideOffset - groundY > 0.66 && wave - groundY > 0.73 && player.y < wave - 0.27;
-        const leaving = simState.tideOffset - groundY < 0.43 || player.y > wave + 1.9;
+        const entering = simState.tideOffset - groundY > 0.64 && wave - groundY > 0.70 && player.y < wave - 0.25;
+        const leaving = simState.tideOffset - groundY < 0.44 || player.y > wave + 1.9;
         if (!motion.swim && entering) {
-          const energy = Math.min(1.9, 0.55 + Math.abs(velocity.y) * 0.065);
+          const entryHorizSpeed = Math.hypot(velocity.x, velocity.z);
+          const energy = Math.min(2.0, 0.62 + Math.abs(velocity.y) * 0.075 + entryHorizSpeed * 0.065);
           emitEnvironment('water', player.clone().setY(wave), energy, velocity.x, velocity.z);
           soundEngine.playSurface('water', energy);
           motion.swim = true;
-          motion.splash = 0.36;
+          motion.swimEntry = entryHorizSpeed > 2.2 || verticalBefore < -2.0 ? 0.52 : 0.28;
+          motion.splash = 0.22;
+          // Preserve sleek forward glide momentum on beach dive-in
+          if (entryHorizSpeed > 2.4) {
+            velocity.x *= 0.72;
+            velocity.z *= 0.72;
+          }
           simState.gliding = false;
           motion.jumpBuffer = 0;
           motion.coyote = 0;
         } else if (motion.swim && leaving) {
           motion.swim = false;
+          motion.swimEntry = 0;
           player.y = Math.max(player.y, groundY);
           velocity.y = 0;
         }
@@ -2076,10 +2180,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         const strafe = right - left;
         const travelYaw = simState.playerYaw + simState.orbitYaw;
         const waterDrag = THREE.MathUtils.smoothstep(wave - groundY, 0.15, 0.95);
-        const moveSpeed = (motion.swim ? boost ? 5.1 : 3.1 : (boost ? 9.6 : 5.0) * (1 - waterDrag * 0.36)) * throttleSens;
+        const moveSpeed = (motion.swim ? boost ? 5.65 : 3.3 : (boost ? 9.6 : 5.0) * (1 - waterDrag * 0.36)) * throttleSens;
         const onGround = !motion.swim && player.y <= groundY + 0.16 && velocity.y <= 0;
         const hasInput = Math.abs(forward) + Math.abs(strafe) > 0.015;
-        const response = motion.swim ? 6.5 : onGround ? (hasInput ? 24 : 28) : hasInput ? 3.4 : 0.65;
+        const response = motion.swim ? 6.8 : onGround ? (hasInput ? 24 : 28) : hasInput ? 3.4 : 0.65;
         const wish = computeFootWishVelocity(travelYaw, forward, strafe, moveSpeed);
         velocity.x = THREE.MathUtils.damp(velocity.x, wish.vx, response, dt);
         velocity.z = THREE.MathUtils.damp(velocity.z, wish.vz, response, dt);
@@ -2093,31 +2197,42 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           const moving = Math.hypot(velocity.x, velocity.z) > 0.28;
           const heading = aim && !motion.swim ? travelYaw : moving ? Math.atan2(velocity.x, velocity.z) : simState.playerYaw;
           const step = Math.atan2(Math.sin(heading - simState.playerYaw), Math.cos(heading - simState.playerYaw)) *
-            (1 - Math.exp(-(aim && !motion.swim ? 18 : motion.swim ? 5 : 14) * dt));
+            (1 - Math.exp(-(aim && !motion.swim ? 18 : motion.swim ? 6.5 : 14) * dt));
           simState.playerYaw += step;
           if (!document.pointerLockElement) simState.orbitYaw -= step;
         } else if (simState.gliding) simState.playerYaw += (left - right) * 1.65 * dt;
 
         if (motion.swim) {
           const surface = simState.tideOffset + getWaveHeight(player.x, player.z, t);
-          const depth = THREE.MathUtils.clamp(Math.hypot(velocity.x, velocity.z) / 4, 0, 1);
-          if (jumpPressed && simState.tideOffset - groundY < 0.95) {
+          const swimSpd = Math.hypot(velocity.x, velocity.z);
+          const freestyleRatio = THREE.MathUtils.smoothstep(swimSpd, 0.35, 1.75);
+          motion.swimFreestyle = THREE.MathUtils.damp(motion.swimFreestyle, freestyleRatio, 6.5, dt);
+          motion.swimEntry = Math.max(0, motion.swimEntry - dt);
+          const entryDip = motion.swimEntry > 0 ? Math.sin((motion.swimEntry / 0.52) * Math.PI) * 0.22 : 0;
+          const depth = THREE.MathUtils.clamp(swimSpd / 4.2, 0, 1);
+          if (jumpPressed && simState.tideOffset - groundY < 0.98) {
             motion.swim = false;
+            motion.swimEntry = 0;
             velocity.y = 5.6;
             soundEngine.playSurface('water', 0.42);
           } else {
-            const target = Math.max(groundY, surface - 1.14 - depth * 0.09 + Math.sin(t * 3.7) * 0.052);
-            velocity.y = THREE.MathUtils.damp(velocity.y, (target - player.y) * 10, 8.5, dt);
+            // Chin/shoulders right at waterline when treading; torso & legs half-submerged in water during active freestyle
+            const baseSubmerge = THREE.MathUtils.lerp(1.28, 1.27, motion.swimFreestyle);
+            const buoyBob = THREE.MathUtils.lerp(Math.sin(t * 2.35) * 0.034, Math.sin(t * 4.4) * 0.018, motion.swimFreestyle);
+            const target = Math.max(groundY, surface - baseSubmerge - entryDip + buoyBob);
+            velocity.y = THREE.MathUtils.damp(velocity.y, (target - player.y) * 12, 9.5, dt);
             player.y = Math.max(groundY, player.y + velocity.y * dt);
             motion.splash -= dt;
             if (hasInput && motion.splash <= 0) {
-              motion.splash = boost ? 0.32 : 0.57;
-              const stroke = 0.33 + depth * 0.45;
+              motion.splash = boost ? 0.26 : 0.46;
+              const stroke = 0.36 + depth * 0.5;
               emitEnvironment('water', player.clone().setY(surface + 0.07), stroke, velocity.x, velocity.z);
               soundEngine.playSurface('water', stroke * 0.52);
             }
           }
         } else {
+          motion.swimFreestyle = THREE.MathUtils.damp(motion.swimFreestyle, 0, 9, dt);
+          motion.swimEntry = 0;
           const contact = onGround && player.y <= groundY + 0.18;
           motion.coyote = contact ? 0.13 : Math.max(0, motion.coyote - dt);
           if (contact) {
@@ -2203,10 +2318,13 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         playerRef.current.rotation.y = activeYaw;
         playerRef.current.updateWorldMatrix(true, false);
       }
+      const swimWaveNow = motion.swim ? getWaveHeight(player.x, player.z, t) : 0;
+      const swimSpdNow = Math.hypot(velocity.x, velocity.z);
       const pose = {
         dt, time: t, phase: motion.phase, speed: motion.speed,
         reverse: motion.directionZ < -0.24, lateral: motion.directionX,
-        swimming: motion.swim, swimSpeed: Math.hypot(velocity.x, velocity.z),
+        swimming: motion.swim, swimSpeed: swimSpdNow,
+        sprinting: boost, swimWave: swimWaveNow,
         airborne: isCustomizerOpen || motion.swim ? undefined : simState.parachuting ? 'parachute' as const :
           simState.gliding ? 'glide' as const : motion.airborne ? 'jump' as const : undefined,
         fallSpeed: simState.playerVel.y, landing: motion.landing, aim: aim && groundedNow ? 1 : 0,
@@ -2227,7 +2345,156 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const playerRig = [rpmRigRef.current, michelleRigRef.current, soldierRigRef.current, ...coastalRigs.current.values()]
         .find((rig) => rig?.wrapper.visible);
       if (playerRig) animateHumanoid(playerRig, pose);
-      if (accessoriesRootRef.current) accessoriesRootRef.current.position.y = playerRig?.wrapper.position.y ?? 0;
+      if (accessoriesRootRef.current) {
+        accessoriesRootRef.current.position.y = playerRig?.wrapper.position.y ?? 0;
+        accessoriesRootRef.current.position.z = playerRig?.wrapper.position.z ?? 0;
+        accessoriesRootRef.current.rotation.x = playerRig?.wrapper.rotation.x ?? 0;
+      }
+      if (playerShadowRef.current) {
+        playerShadowRef.current.visible = !motion.swim && !simState.parachuting && !simState.gliding && !simState.activeRide;
+      }
+    }
+
+    // Animated 3D Swimming Water Ripples, Trailing Foam Wake Rings & Sparkling Splash Droplets
+    if (swimFxGroupRef.current) {
+      const activeSwim = !isStartMenuOpen && simState.mode === 'FOOT' && footMotion.current.swim;
+      const fx = swimFxState.current;
+      const player = simState.playerPos;
+      const swimSpd = Math.hypot(simState.playerVel.x, simState.playerVel.z);
+      const freestyleAmt = footMotion.current.swimFreestyle;
+      const waterY = simState.tideOffset + getWaveHeight(player.x, player.z, t);
+      const fwdX = Math.sin(simState.playerYaw);
+      const fwdZ = Math.cos(simState.playerYaw);
+      const rightX = Math.cos(simState.playerYaw);
+      const rightZ = -Math.sin(simState.playerYaw);
+
+      let anyActive = activeSwim;
+
+      // 1. Delicate feathered concentric surface ripple rings around swimmer's shoulders/torso
+      for (let i = 0; i < 4; i++) {
+        const ring = swimRippleRefs.current[i];
+        if (!ring) continue;
+        ring.visible = activeSwim;
+        if (!activeSwim) continue;
+        const speedMult = 0.58 + freestyleAmt * 0.48 + (boost ? 0.25 : 0);
+        const phase = (t * speedMult + i * 0.25) % 1;
+        const forwardBias = freestyleAmt * 0.14;
+        ring.position.set(
+          player.x + fwdX * forwardBias,
+          waterY + 0.032 + i * 0.002,
+          player.z + fwdZ * forwardBias
+        );
+        const radiusScale = 0.45 + phase * (0.98 + freestyleAmt * 0.36);
+        ring.scale.set(radiusScale, radiusScale * (1 + freestyleAmt * 0.22), 1);
+        ring.rotation.set(-Math.PI / 2, 0, -simState.playerYaw + i * 0.9);
+        const mat = ring.material as THREE.MeshBasicMaterial;
+        mat.opacity = Math.sin(phase * Math.PI) * (0.15 + freestyleAmt * 0.13);
+      }
+
+      // 2. Trailing world-space soft foam wake wisps behind kicking heels & stroking arms
+      if (activeSwim && swimSpd > 0.35) {
+        fx.wakeTimer -= dt;
+        const wakeInterval = boost ? 0.14 : 0.22;
+        if (fx.wakeTimer <= 0) {
+          fx.wakeTimer = wakeInterval;
+          const slot = swimWakes.current[fx.wakeCursor];
+          fx.wakeCursor = (fx.wakeCursor + 1) % swimWakes.current.length;
+          const tailOffset = 0.68 + freestyleAmt * 0.24;
+          const lateralJitter = ((fx.wakeCursor % 2 === 0 ? 1 : -1) * 0.2) * freestyleAmt;
+          slot.x = player.x - fwdX * tailOffset + rightX * lateralJitter;
+          slot.z = player.z - fwdZ * tailOffset + rightZ * lateralJitter;
+          slot.yaw = simState.playerYaw;
+          slot.age = 0;
+          slot.maxAge = boost ? 1.35 : 1.15;
+          slot.baseScale = 0.36 + freestyleAmt * 0.18;
+          slot.active = true;
+        }
+      }
+      for (let i = 0; i < swimWakes.current.length; i++) {
+        const w = swimWakes.current[i];
+        const mesh = swimWakeRefs.current[i];
+        if (!mesh) continue;
+        if (!w.active) {
+          mesh.visible = false;
+          continue;
+        }
+        w.age += dt;
+        if (w.age >= w.maxAge) {
+          w.active = false;
+          mesh.visible = false;
+          continue;
+        }
+        anyActive = true;
+        const life = w.age / w.maxAge;
+        const wy = simState.tideOffset + getWaveHeight(w.x, w.z, t) + 0.028;
+        mesh.visible = true;
+        mesh.position.set(w.x, wy, w.z);
+        mesh.rotation.set(-Math.PI / 2, 0, -w.yaw);
+        const expand = w.baseScale + life * 0.82;
+        mesh.scale.set(expand, expand * 1.25, 1);
+        const mat = mesh.material as THREE.MeshBasicMaterial;
+        mat.opacity = (1 - life) * (1 - life) * 0.26;
+      }
+
+      // 3. Fine sparkling sea-spray droplets from alternating hand entries & flutter kicks
+      if (activeSwim) {
+        fx.dropTimer -= dt;
+        const isFast = swimSpd > 0.35;
+        const dropInterval = isFast ? (boost ? 0.036 : 0.056) : 0.16;
+        if (fx.dropTimer <= 0) {
+          fx.dropTimer = dropInterval;
+          const spawnCount = isFast ? (boost ? 3 : 2) : 1;
+          for (let n = 0; n < spawnCount; n++) {
+            const d = swimDroplets.current[fx.dropCursor];
+            fx.dropCursor = (fx.dropCursor + 1) % swimDroplets.current.length;
+            fx.handSide *= -1;
+            const fromFeet = isFast && n === 1;
+            const fwdOff = fromFeet ? -0.78 : isFast ? 0.52 : 0.22;
+            const sideOff = fx.handSide * (fromFeet ? 0.16 : isFast ? 0.38 : 0.44);
+            const spread = ((fx.dropCursor * 37) % 100) / 100 - 0.5;
+            d.x = player.x + fwdX * fwdOff + rightX * (sideOff + spread * 0.14);
+            d.z = player.z + fwdZ * fwdOff + rightZ * (sideOff + spread * 0.14);
+            d.y = waterY + 0.05;
+            const kickSpeed = isFast ? (boost ? 1.25 : 0.92) : 0.38;
+            d.vx = rightX * fx.handSide * (0.55 + Math.abs(spread) * 0.75) * kickSpeed - fwdX * (fromFeet ? 1.15 : 0.38) * kickSpeed;
+            d.vz = rightZ * fx.handSide * (0.55 + Math.abs(spread) * 0.75) * kickSpeed - fwdZ * (fromFeet ? 1.15 : 0.38) * kickSpeed;
+            d.vy = (fromFeet ? 1.75 : isFast ? 2.05 : 1.05) * (0.72 + Math.abs(spread) * 0.55) * (boost ? 1.2 : 1);
+            d.age = 0;
+            d.maxAge = isFast ? 0.42 + Math.abs(spread) * 0.18 : 0.32;
+            d.size = isFast ? (boost ? 0.026 : 0.021) : 0.015;
+            d.active = true;
+          }
+        }
+      }
+      for (let i = 0; i < swimDroplets.current.length; i++) {
+        const d = swimDroplets.current[i];
+        const mesh = swimDropletRefs.current[i];
+        if (!mesh) continue;
+        if (!d.active) {
+          mesh.visible = false;
+          continue;
+        }
+        d.age += dt;
+        if (d.age >= d.maxAge) {
+          d.active = false;
+          mesh.visible = false;
+          continue;
+        }
+        anyActive = true;
+        d.vy -= 9.8 * dt;
+        d.x += d.vx * dt;
+        d.y += d.vy * dt;
+        d.z += d.vz * dt;
+        const life = d.age / d.maxAge;
+        mesh.visible = true;
+        mesh.position.set(d.x, d.y, d.z);
+        const s = d.size * (1.05 - life * 0.65);
+        mesh.scale.set(s, s * (1.05 + Math.min(0.45, Math.abs(d.vy) * 0.14)), s);
+        const mat = mesh.material as THREE.MeshStandardMaterial;
+        mat.opacity = (1 - life) * 0.62;
+      }
+
+      swimFxGroupRef.current.visible = anyActive;
     }
 
     // 2. HERO SUPERCAR FLEET (FERRARI 458 / GT3 / WEDGE / MUSCLE / VIP LIMO + DRIFT + SNAPPY PHYSICS)
@@ -3072,6 +3339,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         }
         if (accessoriesRootRef.current) {
           accessoriesRootRef.current.position.y = rig?.wrapper.position.y ?? 0;
+          accessoriesRootRef.current.position.z = 0;
+          accessoriesRootRef.current.rotation.x = 0;
+        }
+        if (playerShadowRef.current) {
+          playerShadowRef.current.visible = true;
         }
       }
     } else if (isCustomizerOpen) {
@@ -3254,7 +3526,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
       if (close > 0.005) {
         const travelForward = new THREE.Vector3(Math.sin(activeYaw), 0, Math.cos(activeYaw));
-        const eyeHeight = simState.mode === 'FOOT' ? (footMotion.current.swim ? 1.44 : 1.64) :
+        const eyeHeight = simState.mode === 'FOOT' ? (footMotion.current.swim ? 1.52 : 1.64) :
           inFlight ? (simState.activePlaneIdx === 1 ? 1.78 : 1.69) : isCruiseShip ? 7 : simState.mode === 'BOAT' ? 1.75 : 1.21;
         const cameraLead = simState.mode === 'FOOT' ? 0.07 : inFlight ? 1.15 : simState.mode === 'BOAT' ? 0.68 : 0.62;
         const verticalBob = simState.mode === 'FOOT' ? Math.sin(footMotion.current.phase * 2) * Math.min(0.033, speedKmh * 0.002) : 0;
@@ -3498,7 +3770,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       {/* CUSTOMIZABLE HIGH-RES HUMAN PLAYER (READY PLAYER ME + MICHELLE VIP + VANGUARD SOLDIER) + 3D ACCESSORIES */}
       <group ref={playerRef}>
         <group ref={worldPick} position={[0.29, 1.19, 0.36]} scale={0.89} visible={false}><Pickaxe /></group>
-        <mesh position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh ref={playerShadowRef} position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <planeGeometry args={[1.6, 1.6]} />
           <meshBasicMaterial map={shadowTex} transparent depthWrite={false} />
         </mesh>
@@ -3650,6 +3922,69 @@ export function VehicleDirector({ onHudUpdate }: Props) {
             <meshStandardMaterial color="#f43f5e" emissive="#e11d48" emissiveIntensity={0.85} />
           </mesh>
         </group>
+      </group>
+
+      {/* 3D SWIMMING WATER FX: SOFT-FEATHERED RIPPLES, FOAM WAKE WISPS & FINE SEA-SPRAY DROPLETS */}
+      <group ref={swimFxGroupRef} visible={false}>
+        {[0, 1, 2, 3].map((i) => (
+          <mesh
+            key={`swim-ripple-${i}`}
+            ref={(el) => {
+              swimRippleRefs.current[i] = el;
+            }}
+            visible={false}
+          >
+            <planeGeometry args={[2.1, 2.1]} />
+            <meshBasicMaterial
+              map={swimWaterTex.rippleMap}
+              color="#e6f7ff"
+              transparent
+              opacity={0.22}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        ))}
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+          <mesh
+            key={`swim-wake-${i}`}
+            ref={(el) => {
+              swimWakeRefs.current[i] = el;
+            }}
+            visible={false}
+          >
+            <planeGeometry args={[1.55, 2.05]} />
+            <meshBasicMaterial
+              map={swimWaterTex.wakeMap}
+              color="#eef9ff"
+              transparent
+              opacity={0.22}
+              depthWrite={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        ))}
+        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].map((i) => (
+          <mesh
+            key={`swim-drop-${i}`}
+            ref={(el) => {
+              swimDropletRefs.current[i] = el;
+            }}
+            visible={false}
+          >
+            <sphereGeometry args={[1, 6, 6]} />
+            <meshStandardMaterial
+              color="#eef9ff"
+              emissive="#bae6fd"
+              emissiveIntensity={0.45}
+              roughness={0.14}
+              metalness={0.05}
+              transparent
+              opacity={0.6}
+              depthWrite={false}
+            />
+          </mesh>
+        ))}
       </group>
 
       {/* REAL 3D GLB SWITCHABLE 5-CAR HERO FLEET */}

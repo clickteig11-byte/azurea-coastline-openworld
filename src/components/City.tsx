@@ -1,7 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { coastRoadOffset, getTerrainHeight, LANDMARKS } from '../game/worldMath';
+import {
+  COAST_CONNECTORS, coastConnectorEnd, coastRoadOffset, coastRoadRadius,
+  getTerrainHeight, LANDMARKS,
+} from '../game/worldMath';
 import { createLimestonePBR, createSidewalkCobblePBR, createRoofGravelHVACPBR } from './Textures';
 import { WorldSectionBatch, type Vec3, type WorldPart, type WorldFinish } from './WorldSections';
 import { LOBBY_THEMES, resolveActiveThemeId } from '../game/lobbyThemes';
@@ -13,6 +16,9 @@ const shops = [
   { name: 'ATELIER', color: '#3c4d68' },
   { name: 'NORTH QUAY', color: '#305a60' },
   { name: 'BOOKSHOP', color: '#77613c' },
+  { name: 'RIVIERA BISTRO', color: '#2b5968' },
+  { name: 'SOLARIS GALLERY', color: '#6b475f' },
+  { name: 'AZUREA GELATO', color: '#2d6a5d' },
 ] as const;
 
 const profiles = [
@@ -24,19 +30,28 @@ const profiles = [
   { name: 'Atrium', levels: [5, 4, 3], widths: [1, 0.91, 0.76], wall: 'aquaGlass', frame: '#729da5', bay: 3.5, floor: 3.65 },
   { name: 'Market Loft', levels: [3, 1], widths: [1, 0.66], wall: 'brick', frame: '#c49e80', bay: 3.4, floor: 3.1 },
   { name: 'Civic', levels: [4, 2, 2], widths: [1, 0.9, 0.55], wall: 'deco', frame: '#e8d5b9', bay: 3.1, floor: 3.7 },
+  { name: 'Riviera Resort', levels: [4, 3, 2, 1], widths: [1, 0.86, 0.68, 0.48], wall: 'terrace', frame: '#efe0c6', bay: 3.7, floor: 3.3 },
+  { name: 'Oceanfront Tower', levels: [6, 4, 2], widths: [1, 0.84, 0.62], wall: 'aquaGlass', frame: '#d8ece6', bay: 3.8, floor: 3.55 },
+];
+
+export const COASTAL_PLAZAS: { id: string; x: number; z: number; radius: number }[] = [
+  { id: 'east-riviera-plaza', x: 222, z: 32, radius: 19 },
+  { id: 'west-sunset-plaza', x: -214, z: -38, radius: 19 },
+  { id: 'southeast-promenade-plaza', x: 186, z: 146, radius: 18 },
 ];
 
 export const cityPlots = (() => {
   const plots: { x: number; z: number; y: number; w: number; d: number; style: number }[] = [];
   const protectedAreas = [
     ...LANDMARKS.map(({ position: [x, , z] }) => [x, z, 20]),
+    ...COASTAL_PLAZAS.map(({ x, z, radius }) => [x, z, radius + 4]),
     [-52, 42, 24], [98, -35, 32], [-105, 45, 36], [-118, -28, 30],
     [-158, -145, 23], [135, -95, 32], [148, 108, 28], [-138, 155, 25],
     [183, 173, 28],
   ];
   let index = 0;
-  for (const zBase of [-186, -166, -146, -95, -74, -53, -32, 28, 51, 105, 126, 147, 168]) {
-    for (const xBase of [-175, -154, -132, -110, -88, -66, -43, 43, 65, 87, 109, 131, 153, 175, 198]) {
+  for (const zBase of [-210, -188, -166, -146, -95, -74, -53, -32, 28, 51, 105, 126, 147, 168, 190, 210]) {
+    for (const xBase of [-262, -240, -218, -196, -175, -154, -132, -110, -88, -66, -43, 43, 65, 87, 109, 131, 153, 175, 197, 219, 241, 263]) {
       index++;
       const x = xBase + (index * 7 % 5 - 2) * 0.6;
       const z = zBase + (index * 13 % 5 - 2) * 0.7;
@@ -47,16 +62,28 @@ export const cityPlots = (() => {
       if (Math.abs(x) - hw < 23.0) continue;
       if (Math.abs(z + 120) - hd < 14.5 || Math.abs(z) - hd < 15.5 || Math.abs(z - 80) - hd < 14.5) continue;
       if ((z + hd > 123 && x - hw < -35) || (x + hw > 61 && Math.abs(z + 95) - hd < 35)) continue;
+      // Keep the entire Airport Runway & East departure climb-out corridor (z in [122, 188], x in [-240, 95]) unobstructed
+      if (z + hd > 122 && z - hd < 188 && x + hw > -245 && x - hw < 95) continue;
       if (protectedAreas.some(([px, pz, radius]) => Math.hypot(x - px, z - pz) < radius + 7)) continue;
       const corners = [-1, 1].flatMap((a) => [-1, 1].map((b): [number, number] =>
         [x + a * (w / 2 + 2), z + b * (d / 2 + 2)]));
       const offsets = corners.map(([cx, cz]) => coastRoadOffset(cx, cz));
-      if (Math.min(...offsets) < 14 && Math.max(...offsets) > -14) continue;
+      // Keep every building strictly inside the coastal ring road with generous promenade clearance
+      if (Math.max(...offsets) > -15) continue;
       const heights = corners.map(([cx, cz]) => getTerrainHeight(cx, cz));
-      if (Math.min(...heights) < 1.3 || Math.max(...heights) - Math.min(...heights) > 1.1) continue;
+      if (Math.min(...heights) < 1.35 || Math.max(...heights) - Math.min(...heights) > 1.25) continue;
       const y = Math.max(...heights);
-      const style = x > 148 || (x > 0 && z > 125) ? 4 : (index * 11 + Math.round(zBase / 30)) % 8;
-      plots.push({ x, z, y, w, d, style: (style + 8) % 8 });
+      const dist = Math.hypot(x, z);
+      const inOuterClimbZone = z + hd > 124 && z - hd < 186 && x >= 95;
+      const style =
+        inOuterClimbZone
+          ? (index % 2 === 0 ? 6 : 2)
+          : dist > 195
+            ? [4, 8, 9, 3][(index + Math.abs(Math.round(zBase / 20))) % 4]
+            : x > 148 || (x > 0 && z > 125)
+              ? (index % 2 === 0 ? 4 : 8)
+              : (index * 11 + Math.round(zBase / 30)) % 8;
+      plots.push({ x, z, y, w, d, style: (style + profiles.length) % profiles.length });
     }
   }
   return plots;
@@ -352,7 +379,7 @@ function makeCity() {
           const color = ground ? '#e2d9bf' : ['#ffffff', '#dce3df', '#f4e6cc'][(index + bay * 7 + floorNo * 11) % 3];
           add(ground ? 'Storefront glazing' : 'Façade panel', wall, color,
             at(offset, (height - 0.22) / 2), [bayWidth - 0.025, height - 0.22, 0.22], p.wall === 'brick' || p.wall === 'deco' ? 120 : 74, angle);
-          if (!ground && (style === 3 || style === 4) && (bay + index) % 3 !== 0) {
+          if (!ground && (style === 3 || style === 4 || style === 8 || style === 9) && (bay + index) % 3 !== 0) {
             add('Balcony slab', 'concrete', p.frame, at(offset, 0.1, 0.64), [bayWidth - 0.1, 0.2, 1.42], 120, angle);
             add('Balcony glazing', 'rail', '#96bcbc', at(offset, 0.58, 1.29), [bayWidth - 0.15, 0.65, 0.095], 48, angle);
           }
@@ -398,7 +425,7 @@ function makeCity() {
         levelY += p.floor;
       }
       add('Terrace coping', 'concrete', p.frame, [x + offsetX, levelY + 0.08, z + offsetZ], [w + 0.48, 0.23, d + 0.48], 160, bend);
-      if (style === 3 && tier < p.levels.length - 1) {
+      if ((style === 3 || style === 8) && tier < p.levels.length - 1) {
         for (const side of [-1, 1]) {
           const gardenX = x + offsetX + side * w * 0.47;
           add('Terrace planter', 'stone', '#bdb7a3', [gardenX, levelY + 0.22, z + offsetZ], [0.62, 0.36, d * 0.56], 100);
@@ -422,6 +449,30 @@ function makeCity() {
       for (const dx of [-0.21, 0.21]) add('Helipad marking', 'paint', '#f6e7be', [roofX + size * dx, levelY + 0.423, roofZ], [size * 0.084, 0.014, size * 0.61], 35, 0, false);
       add('Helipad marking', 'paint', '#f6e7be', [roofX, levelY + 0.423, roofZ], [size * 0.4, 0.014, size * 0.082], 35, 0, false);
       add('Vent stack', 'metal', '#899698', [roofX + roofW * 0.43, levelY + 0.71, roofZ + roofD * 0.41], [0.72, 1.2, 0.67], 105);
+    } else if (style === 8 || style === 9 || style === 4) {
+      // Rooftop Gardens, Timber Shade Pergolas & Turquoise Plunge Pools on Riviera Waterfront Towers
+      add('Rooftop terrace deck', 'wood', '#a58460', [roofX, levelY + 0.22, roofZ], [roofW * 0.84, 0.24, roofD * 0.84], 150);
+      const pw = roofW * 0.54;
+      const pd = roofD * 0.44;
+      for (const sx of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          add('Rooftop pergola post', 'wood', '#75583c', [roofX + sx * pw * 0.5, levelY + 1.48, roofZ - roofD * 0.14 + sz * pd * 0.5], [0.2, 2.35, 0.2], 70);
+        }
+        add('Rooftop planter', 'stone', '#cdc3ae', [roofX + sx * roofW * 0.36, levelY + 0.52, roofZ], [0.58, 0.48, roofD * 0.68], 95);
+        for (const gz of [-0.22, 0, 0.22]) {
+          add('Rooftop shrub', 'plant', '#597a49', [roofX + sx * roofW * 0.36, levelY + 0.94, roofZ + gz * roofD], [0.68, 0.72, 0.76], 34, 0, false);
+        }
+      }
+      for (const sz of [-1, 1]) {
+        add('Rooftop pergola beam', 'wood', '#8a6949', [roofX, levelY + 2.72, roofZ - roofD * 0.14 + sz * pd * 0.5], [pw + 0.5, 0.18, 0.2], 65);
+      }
+      for (const rx of [-0.45, -0.15, 0.15, 0.45]) {
+        add('Rooftop pergola rafter', 'wood', '#9c7856', [roofX + rx * pw, levelY + 2.86, roofZ - roofD * 0.14], [0.14, 0.12, pd + 0.65], 50);
+      }
+      if (style === 9) {
+        add('Rooftop pool coping', 'stone', '#e2d7c2', [roofX, levelY + 0.42, roofZ + roofD * 0.24], [roofW * 0.52, 0.32, roofD * 0.28], 130);
+        add('Rooftop plunge pool', 'pool', '#32b5c4', [roofX, levelY + 0.56, roofZ + roofD * 0.24], [roofW * 0.44, 0.12, roofD * 0.21], 90, 0, false);
+      }
     } else {
       for (const a of [-1, 1]) {
         add('Rooftop HVAC', 'metal', '#9faaa7', [roofX + roofW * 0.23 * a, levelY + 0.66, roofZ + 1.4], [1.62, 1.07, 2.25], 95);
@@ -437,20 +488,95 @@ function makeCity() {
     }
   });
 
+  // Curated Waterfront Coastal Plazas in the Expanded Resort Districts (Travertine Paving, Pergolas, Reflection Basins & Palms)
+  COASTAL_PLAZAS.forEach((plaza, pIdx) => {
+    owner = 'Coastal Plaza · ' + (pIdx + 1);
+    const py = getTerrainHeight(plaza.x, plaza.z);
+    if (py < 1.8) return;
+    const span = plaza.radius * 1.45;
+    add('Plaza travertine deck', 'stone', '#dfd2bc', [plaza.x, py - 0.18, plaza.z], [span, 0.58, span], 420);
+    add('Plaza reflection curb', 'stone', '#ece3d2', [plaza.x, py + 0.36, plaza.z], [7.8, 0.56, 7.8], 260);
+    add('Plaza reflection basin', 'pool', '#2eb6c9', [plaza.x, py + 0.58, plaza.z], [6.6, 0.14, 6.6], 120, 0, false);
+    add('Plaza sculpture plinth', 'concrete', '#e7decb', [plaza.x, py + 1.15, plaza.z], [1.6, 1.3, 1.6], 200);
+
+    // Corner shaded timber pergolas + limestone seating benches
+    for (const sx of [-1, 1]) {
+      const px = plaza.x + sx * (span * 0.34);
+      for (const dz of [-4.2, 0, 4.2]) {
+        for (const dx of [-1.8, 1.8]) {
+          add('Plaza pergola column', 'wood', '#7a5c40', [px + dx, py + 1.92, plaza.z + dz], [0.24, 3.55, 0.24], 100);
+        }
+        add('Plaza pergola beam', 'wood', '#8e6d4d', [px, py + 3.76, plaza.z + dz], [4.2, 0.22, 0.24], 85);
+      }
+      for (const dx of [-1.8, -0.6, 0.6, 1.8]) {
+        add('Plaza pergola rafter', 'wood', '#9e7c5a', [px + dx, py + 3.96, plaza.z], [0.14, 0.13, 9.2], 65);
+      }
+      add('Plaza bench', 'wood', '#aa8860', [px - sx * 0.4, py + 0.52, plaza.z], [0.76, 0.22, 4.2], 80);
+    }
+
+    // 4 Corner Palm Planters framing each Coastal Plaza
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const tx = plaza.x + sx * (span * 0.42);
+        const tz = plaza.z + sz * (span * 0.42);
+        add('Plaza palm planter', 'stone', '#c4b8a2', [tx, py + 0.42, tz], [2.4, 0.68, 2.4], 150);
+        add('Plaza palm trunk', 'wood', '#8d6c4d', [tx, py + 3.1, tz], [0.42, 4.9, 0.42], 95);
+        add('Plaza palm canopy', 'plant', '#4a7a42', [tx, py + 5.75, tz], [3.1, 1.45, 3.1], 45, 0, false);
+        add('Plaza planter shrub', 'plant', '#5f844e', [tx, py + 0.96, tz], [1.9, 0.62, 1.9], 35, 0, false);
+      }
+    }
+  });
+
+  // Palm-Lined Boulevard Planter Bays along the Extended East/West Coastal Connector Corridors
+  owner = 'Riviera Boulevard Promenade';
+  for (const road of COAST_CONNECTORS) {
+    for (const side of [-1, 1]) {
+      const endX = coastConnectorEnd(road.z, side, -22);
+      const startX = (road.cityEnd + 14) * side;
+      const steps = Math.floor((Math.abs(endX) - Math.abs(startX)) / 24);
+      for (let s = 0; s <= steps; s++) {
+        const bx = startX + side * s * 24;
+        if (Math.abs(bx) > Math.abs(endX) - 10) continue;
+        if (bx > 62 && Math.abs(road.z + 95) < 38) continue;
+        for (const dz of [-1, 1]) {
+          const bz = road.z + dz * (road.halfWidth + 2.8);
+          if (bz > 122 && bx < -34) continue;
+          if (cityPlots.some((p) => Math.abs(bx - p.x) < p.w * 0.5 + 3.6 && Math.abs(bz - p.z) < p.d * 0.5 + 3.6)) continue;
+          if (LANDMARKS.some((lm) => Math.hypot(bx - lm.position[0], bz - lm.position[2]) < 24)) continue;
+          const by = getTerrainHeight(bx, bz);
+          if (by < 2.2) continue;
+          add('Boulevard planter', 'stone', '#c7bca8', [bx, by + 0.32, bz], [3.6, 0.54, 1.8], 130);
+          add('Boulevard palm trunk', 'wood', '#8a6a4b', [bx, by + 2.85, bz], [0.36, 4.6, 0.36], 85);
+          add('Boulevard palm crown', 'plant', '#4d7d43', [bx, by + 5.3, bz], [2.6, 1.3, 2.6], 40, 0, false);
+          add('Boulevard hedge', 'plant', '#61844e', [bx, by + 0.78, bz], [3.1, 0.52, 1.35], 36, 0, false);
+        }
+      }
+    }
+  }
+
+  // Dynamically anchored East & West Breakwater Promenade Piers projecting cleanly from the expanded shoreline
   owner = 'Breakwater promenade';
-  for (const z of [-48, 24]) {
-    const inland = z === -48 ? 219 : 223;
-    const y = getTerrainHeight(inland, z);
-    for (let i = 0; i < 10; i++) {
-      const x = inland + 1.55 + i * 3.1;
-      add('Pier decking', 'wood', '#ac8b69', [x, y - 0.16, z], [3.08, 0.36, 5.4], 140);
+  const breakwaterSpecs: { z: number; dir: 1 | -1 }[] = [
+    { z: -48, dir: 1 },
+    { z: 24, dir: 1 },
+    { z: -24, dir: -1 },
+  ];
+  for (const { z, dir } of breakwaterSpecs) {
+    const approxAngle = Math.atan2(dir * 290, z);
+    const roadR = coastRoadRadius(approxAngle);
+    const startR = roadR + 26;
+    const inland = dir * Math.sqrt(Math.max(100, startR * startR - z * z));
+    const y = Math.max(2.35, getTerrainHeight(inland, z));
+    for (let i = 0; i < 14; i++) {
+      const x = inland + dir * (1.55 + i * 3.1);
+      add('Pier decking', 'wood', '#ac8b69', [x, y - 0.16, z], [3.08, 0.36, 5.6], 140);
       for (const side of [-1, 1]) {
         if (i % 2 === 0) {
           const seaFloor = getTerrainHeight(x, z);
-          add('Pier pile', 'wood', '#665c4a', [x, (seaFloor + y) / 2 - 0.2, z + side * 2.14],
-            [0.43, y - seaFloor + 0.9, 0.45], 110);
+          add('Pier pile', 'wood', '#665c4a', [x, (seaFloor + y) / 2 - 0.2, z + side * 2.24],
+            [0.43, Math.max(0.8, y - seaFloor + 0.9), 0.45], 110);
         }
-        add('Pier guardrail', 'metal', '#768b8c', [x, y + 0.56, z + side * 2.63], [3.09, 0.84, 0.12], 66);
+        add('Pier guardrail', 'metal', '#768b8c', [x, y + 0.56, z + side * 2.72], [3.09, 0.84, 0.12], 66);
       }
     }
     for (const dz of [-4.5, 4.5]) add('Harbor bollard', 'metal', '#526361', [inland, y + 0.33, z + dz], [0.44, 0.76, 0.46], 70);
@@ -510,6 +636,7 @@ export function CoastalCity() {
       ...buildVariants('brick', brick, 'masonry', 0.85),
       ...buildVariants('terrace', terrace, 'glass', 0.45, 0.18),
       rail: { material: 'glass', roughness: 0.27, metalness: 0.32 },
+      pool: { material: 'glass', roughness: 0.12, metalness: 0.24, emissive: '#107b8a' },
       concrete: { material: 'masonry', roughness: 0.83, map: concrete },
       stone: { material: 'masonry', roughness: 0.89, map: paving },
       roof: { material: 'masonry', roughness: 0.85, map: roof },

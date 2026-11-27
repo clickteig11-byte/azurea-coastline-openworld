@@ -1,6 +1,23 @@
 # World Horizon — Showcase & Feature Guide
 
-**World Horizon** (`azurea-coastline-openworld`) is a Three.js / React Three Fiber open-world coastal sandbox featuring a 4-theme rotating Pavilion Lobby, **Tripo `v3.1-20260211` HD** rigged hero characters (**Chloe Reed** with 5 costumes, **Lola Quinn** with 4 costumes, **Marcus Vance**, **Liam Sterling**, robotics, and Harbor Crew), Kit Colorways, 5 selectable emotes, 22,000-clump instanced 3D meadow grass, responsive supercar driving & pointer-lock 1st/3rd-person shooting, 12 World Wonders, and the **Wonder Ocean Pier Amusement Park**.
+**World Horizon** (`azurea-coastline-openworld`) is a Three.js / React Three Fiber open-world coastal sandbox featuring an expanded Riviera island (+33.8% dry coastal footprint), domain-warped turquoise ocean shaders & world fanfare, two-state AAA ocean swimming & character locomotion, a 4-theme rotating Pavilion Lobby, **Tripo `v3.1-20260211` HD** rigged hero characters (**Chloe Reed** with 5 costumes, **Lola Quinn** with 4 costumes, **Marcus Vance**, **Liam Sterling**, robotics, and Harbor Crew), Kit Colorways, 5 selectable emotes, 26,000-clump instanced 3D meadow grass, responsive supercar driving & pointer-lock 1st/3rd-person shooting, 12 World Wonders, and the animated **Wonder Ocean Pier Amusement Park**.
+
+---
+
+## AAA World Horizon Upgrade — Expanded Island, Ocean Shaders, Swimming & Animated Wonder Pier
+
+- **Expanded Main Island (+30.7% Plateau / +33.8% Coastal Footprint)**: Sculpted coastal headlands, wider golden beaches (`44–79m`), flush travertine coastal promenades, 4 headland bluff overlooks with pergolas, new waterfront resort towers with rooftop gardens/pools, unobstructed airport climb-out corridor, and Island II Arrival Promenade pergolas.
+- **AAA PBR Textures, Ocean Water Shader & World Fanfare**: Domain-warped multi-directional FBM ocean swells with crystal aquamarine-to-sapphire depth ramp, shallow caustics, and multi-band breaking shoreline surf foam; sun-weathered slate-charcoal asphalt & honed travertine textures; smooth C¹ analytical terrain normals; continuous harbor fireworks, sweeping Art-Deco premiere searchlights, celebratory fountain jets, festive bunting, and soaring seabird flocks.
+- **Fluid Two-State Ocean Swimming & Character Polish**: Horizontal prone freestyle front-crawl (high-elbow arm recovery, 6-beat flutter kick, torso roll, breathing head turn, sprint cadence) + upright treading water with soft-feathered ripple/wake textures and fine sea-spray droplets; relaxed natural standing idle, crisp walk/jog/sprint & jump/landing animation, expressive emotes, and automatic 3rd-person camera restore on coaster exit.
+- **Animated Wonder Ocean Pier Amusement Park**: Chasing Art-Deco marquee bulbs, honed travertine entrance apron, animated midway booths (`TICKETS`, `ARCADE` CRT screens, `CHURROS`, `ICE CREAM` spinning cone, `RING TOSS` prize wheel, `SKY BAR`), walkable Grand Riviera Carousel with sculpted curved steeds, Solaris Sky Wheel open-windowed panoramic cabins with coaxial spoke LEDs, Cyclone Pier Coaster FPV, and the swinging **Azurea Galleon Pendulum Ship**.
+
+| Expanded Main Island Aerial & Ocean | Midtown Boulevard & World Fanfare | Crystal Ocean Shoreline Surf Foam | Active Freestyle Ocean Swimming |
+| --- | --- | --- | --- |
+| ![Expanded Island](./screenshots/swarm/swarm-01-expanded-island-aerial.png) | ![Midtown Fanfare](./screenshots/swarm/swarm-02-midtown-boulevard-fanfare.png) | ![Ocean Surf](./screenshots/swarm/swarm-03-ocean-shoreline-surf.png) | ![Active Swimming](./screenshots/swarm/swarm-04-active-freestyle-swimming.png) |
+
+| Solaris Sky Wheel Panoramic Cabin | Wonder Pier Midway & Sculpted Carousel | Cyclone Coaster Front-Row FPV | Character Emote & Slate Boulevard |
+| --- | --- | --- | --- |
+| ![Solaris Cabin](./screenshots/swarm/swarm-05-wonder-pier-ferris-panorama.png) | ![Midway Carousel](./screenshots/swarm/swarm-06-wonder-pier-midway-carousel.png) | ![Coaster FPV](./screenshots/swarm/swarm-07-coaster-fpv-ocean.png) | ![Character Emote](./screenshots/swarm/swarm-08-character-emote-polish.png) |
 
 ---
 
