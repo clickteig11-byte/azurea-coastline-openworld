@@ -1184,12 +1184,27 @@ export const simState = {
 export function requestGamePointerLock() {
   if (typeof document === 'undefined') return;
   if (simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen || simState.touchControlsEnabled) return;
-  const canvas = document.querySelector('canvas');
+  const canvas = document.querySelector('canvas') as (HTMLCanvasElement & {
+    requestPointerLock?: (opts?: { unadjustedMovement?: boolean }) => Promise<void> | void;
+  }) | null;
   if (canvas && document.pointerLockElement !== canvas && typeof canvas.requestPointerLock === 'function') {
     try {
-      void Promise.resolve(canvas.requestPointerLock()).catch(() => {});
+      const res = canvas.requestPointerLock({ unadjustedMovement: true });
+      if (res && typeof (res as Promise<void>).catch === 'function') {
+        void (res as Promise<void>).catch(() => {
+          try {
+            void Promise.resolve(canvas.requestPointerLock?.()).catch(() => {});
+          } catch {
+            /* drag fallback remains active */
+          }
+        });
+      }
     } catch {
-      /* drag fallback remains active */
+      try {
+        void Promise.resolve(canvas.requestPointerLock()).catch(() => {});
+      } catch {
+        /* drag fallback remains active */
+      }
     }
   }
 }

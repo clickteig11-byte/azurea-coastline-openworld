@@ -416,6 +416,12 @@ export function App() {
           simState.mode = 'FOOT';
           simState.parachuting = false;
           simState.gliding = false;
+          if (simState.nearbyRide === 'COASTER') {
+            simState.cameraView = 1;
+            simState.orbitYaw = 0;
+            simState.orbitPitch = 0;
+            requestGamePointerLock();
+          }
           window.dispatchEvent(new CustomEvent('hud-sync'));
           return;
         }

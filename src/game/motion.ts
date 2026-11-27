@@ -108,3 +108,24 @@ export function computeChassisWeightTransfer(
   );
   return { squatPitch, cornerRoll, aeroDownforce, aeroDrop };
 }
+
+/**
+ * Computes world-space XZ wish velocity for on-foot movement relative to travelYaw.
+ * In Three.js right-handed coordinates (+Y up, forward = (sin(yaw), 0, cos(yaw))),
+ * screen-right is F x U = (-cos(yaw), 0, +sin(yaw)), so strafe > 0 (D) moves right
+ * and strafe < 0 (A) moves left.
+ */
+export function computeFootWishVelocity(
+  travelYaw: number,
+  forward: number,
+  strafe: number,
+  speed: number
+): { vx: number; vz: number } {
+  const dirX = Math.sin(travelYaw);
+  const dirZ = Math.cos(travelYaw);
+  const norm = 1 / Math.max(1, Math.hypot(strafe, forward));
+  return {
+    vx: (dirX * forward - dirZ * strafe) * speed * norm,
+    vz: (dirZ * forward + dirX * strafe) * speed * norm,
+  };
+}

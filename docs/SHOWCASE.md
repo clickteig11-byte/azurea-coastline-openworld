@@ -4,6 +4,22 @@
 
 ---
 
+## 0. AAA Wonder Ocean Pier, Front-Row Coaster FPV, Forza Drift & Pointer Lock
+
+- **AAA Wonder Ocean Pier Theme Park**: Sun-weathered teak boardwalk PBR planks, wooden safety railings, ornate Art-Deco **`WONDER PIER`** entrance marquee arch, 6 striped midway carnival & food booths (`TICKETS`, `ARCADE`, `CHURROS`, `ICE CREAM`, `RING TOSS`, `SKY BAR`), draped warm Edison string lights, crimson-and-cream striped Grand Carousel, radial LED Solaris Sky Wheel, and steel A-frame Cyclone Pier Coaster.
+- **True Front-Row First-Person Roller Coaster POV**: Boarding the **Cyclone Pier Coaster** (`[E]` or `Ride Cyclone`) automatically seats you in the front row with a Frenet-banked camera, sculpted glossy crimson/carbon nose hood, glowing orange-red LED strips, padded black-and-gold lap restraint bar, mouse free-look (`±55°` yaw / `±35°` pitch), dynamic `64° → 86°` speed FOV, and live telemetry HUD (`[X]` toggles 3rd-person, `[E]` exits).
+- **Forza-Grade Drift Physics, True Strafe Walking & Bulletproof Pointer Lock**: Fixed inverted `A`/`D` strafing (`computeFootWishVelocity` right-handed `F × U`), counter-steer-balanced supercar drifting with momentum preservation and turbo exit boost, and direct canvas pointer lock (`Mouse Locked · [Esc] Unlock`) with 1:1 mouse deltas on foot, in 1st-person, and on rides.
+
+| AAA Wonder Ocean Pier Boardwalk | Front-Row Coaster FPV (Banked Turn) | Front-Row Coaster FPV (Ocean Climb) |
+| --- | --- | --- |
+| ![AAA Wonder Pier](./screenshots/aaa/aaa-01-pier-park-overview.jpg) | ![Coaster FPV Bank](./screenshots/aaa/aaa-02-coaster-fpv-climb.jpg) | ![Coaster FPV Climb](./screenshots/aaa/aaa-03-coaster-fpv-drop.jpg) |
+
+| Forza-Style Supercar Handling | Pointer-Lock 1st-Person & True Strafe |
+| --- | --- |
+| ![Supercar Handling](./screenshots/aaa/aaa-04-supercar-drift.jpg) | ![Pointer-Lock 1st-Person](./screenshots/aaa/aaa-05-foot-walking-and-aim.jpg) |
+
+---
+
 ## 1. Flagship `v3.1` Heroes, Costumes & Kit Colorways
 
 - **Chloe Reed (`v3.1` HD)** with 5 costumes (`Nike Pro Base`, `Emerald Club`, `Silver Spider`, `Varsity Sport`, `Holiday Velvet`) and **Lola Quinn (`v3.1` HD)** with 4 costumes (`Nike Pro Base`, `Bomber Street`, `Moto Leather`, `Holiday Velvet`), plus 7 real-time **Athletic Kit Colorways** on their Nike Pro bases (`uKitTint` shader hook).

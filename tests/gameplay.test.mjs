@@ -540,3 +540,38 @@ test('All 5 EMOTE_STYLES animate distinct poses and all Tripo characters are rig
   animateHumanoid(tgtRig, { dt: 1 / 60, time: 0.5, phase: 0, speed: 0 });
   assert.ok(Number.isFinite(tgtRig.joints.RightArm.bone.quaternion.x));
 });
+
+test('on-foot strafe matches true Three.js screen-right (D right, A left) and coaster FPV Frenet frame is orthonormal', async () => {
+  const { computeFootWishVelocity } = await import('../src/game/motion.ts');
+  const { sampleCoasterU, sampleAmusementRidePose, OCEAN_AMUSEMENT_PIER } = await import('../src/game/worldMath.ts');
+
+  // 1. Verify screen-right D (+1) and screen-left A (-1) across 4 cardinal headings
+  for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const fwd = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
+    const expectedRight = new Vector3().crossVectors(fwd, new Vector3(0, 1, 0)).normalize();
+    const rightMove = computeFootWishVelocity(yaw, 0, 1, 5);
+    const leftMove = computeFootWishVelocity(yaw, 0, -1, 5);
+    assert.ok(Math.abs(rightMove.vx - expectedRight.x * 5) < 1e-6);
+    assert.ok(Math.abs(rightMove.vz - expectedRight.z * 5) < 1e-6);
+    assert.ok(Math.abs(leftMove.vx + expectedRight.x * 5) < 1e-6);
+    assert.ok(Math.abs(leftMove.vz + expectedRight.z * 5) < 1e-6);
+  }
+
+  // 2. Verify coaster energy-conserving progress and orthonormal FPV Frenet frame
+  const speeds = [];
+  for (let t = 0; t < 20; t += 0.8) {
+    const u = sampleCoasterU(t);
+    assert.ok(u >= 0 && u < 1);
+    const pose = sampleAmusementRidePose('COASTER', t);
+    assert.ok(pose.pos.y >= OCEAN_AMUSEMENT_PIER.deckY);
+    assert.ok(pose.tangent && pose.bankedRight && pose.bankedUp);
+    assert.ok(Math.abs(pose.tangent.length() - 1) < 1e-3);
+    assert.ok(Math.abs(pose.bankedRight.length() - 1) < 1e-3);
+    assert.ok(Math.abs(pose.bankedUp.length() - 1) < 1e-3);
+    assert.ok(Math.abs(pose.tangent.dot(pose.bankedRight)) < 1e-3);
+    assert.ok(Math.abs(pose.tangent.dot(pose.bankedUp)) < 1e-3);
+    assert.ok(typeof pose.speedKmh === 'number' && pose.speedKmh >= 38 && pose.speedKmh <= 132);
+    speeds.push(pose.speedKmh);
+  }
+  assert.ok(Math.max(...speeds) - Math.min(...speeds) >= 25, 'Coaster speed should accelerate strongly on drops');
+});

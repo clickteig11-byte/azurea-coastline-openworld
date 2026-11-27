@@ -167,37 +167,73 @@ export const AMUSEMENT_PARK_RIDES: AmusementRideStation[] = [
 export function sampleCoasterTrack(u: number): {
   pos: THREE.Vector3;
   tangent: THREE.Vector3;
+  bankedRight: THREE.Vector3;
+  bankedUp: THREE.Vector3;
   bank: number;
 } {
-  const angle = ((u % 1) + 1) % 1 * Math.PI * 2;
-  const cx = 20;
-  const cz = -608;
-  const rx = 25;
-  const rz = 56;
-  const x = cx + Math.cos(angle) * rx + Math.sin(angle * 2) * 3.5;
-  const z = cz + Math.sin(angle) * rz + Math.cos(angle * 2) * 4.5;
-  const liftHill = Math.pow(Math.max(0, Math.sin(angle - 0.35)), 2) * 19.5;
-  const camelBack = Math.sin(angle * 3 + 0.4) * 5.8 + Math.cos(angle * 2 - 0.8) * 3.6;
-  const baseGround = OCEAN_AMUSEMENT_PIER.deckY;
-  const y = baseGround + 5.2 + liftHill + Math.max(-2.2, camelBack);
+  const evalPt = (t: number) => {
+    const angle = (((t % 1) + 1) % 1) * Math.PI * 2;
+    const cx = 20;
+    const cz = -606;
+    const rx = 26;
+    const rz = 58;
+    const x = cx + Math.cos(angle) * rx + Math.sin(angle * 2) * 4.2;
+    const z = cz + Math.sin(angle) * rz + Math.cos(angle * 2) * 5.0;
+    // Dramatic 34m ocean-view first lift hill & drop + double airtime camelbacks
+    const liftHill = Math.pow(Math.max(0, Math.sin(angle - 0.3)), 2.15) * 24.5;
+    const camelBack = Math.sin(angle * 3 + 0.45) * 6.4 + Math.cos(angle * 2 - 0.75) * 3.8;
+    const baseGround = OCEAN_AMUSEMENT_PIER.deckY;
+    const y = baseGround + 5.4 + liftHill + Math.max(-1.1, camelBack);
+    return { x, y, z, angle };
+  };
 
-  const eps = 0.0025;
-  const a2 = angle + eps * Math.PI * 2;
-  const x2 = cx + Math.cos(a2) * rx + Math.sin(a2 * 2) * 3.5;
-  const z2 = cz + Math.sin(a2) * rz + Math.cos(a2 * 2) * 4.5;
-  const lift2 = Math.pow(Math.max(0, Math.sin(a2 - 0.35)), 2) * 19.5;
-  const camel2 = Math.sin(a2 * 3 + 0.4) * 5.8 + Math.cos(a2 * 2 - 0.8) * 3.6;
-  const y2 = baseGround + 5.2 + lift2 + Math.max(-2.2, camel2);
+  const p1 = evalPt(u);
+  const p2 = evalPt(u + 0.0022);
+  const tangent = new THREE.Vector3(p2.x - p1.x, p2.y - p1.y, p2.z - p1.z).normalize();
+  const bank = THREE.MathUtils.clamp(
+    Math.sin(p1.angle * 2) * 0.48 + Math.cos(p1.angle) * 0.24,
+    -0.58,
+    0.58
+  );
+  const worldUp = new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(tangent, worldUp).normalize();
+  const bankedRight = right.clone().applyAxisAngle(tangent, bank).normalize();
+  const bankedUp = new THREE.Vector3().crossVectors(bankedRight, tangent).normalize();
+  return {
+    pos: new THREE.Vector3(p1.x, p1.y, p1.z),
+    tangent,
+    bankedRight,
+    bankedUp,
+    bank,
+  };
+}
 
-  const tangent = new THREE.Vector3(x2 - x, y2 - y, z2 - z).normalize();
-  const bank = THREE.MathUtils.clamp(Math.sin(angle * 2) * 0.46 + Math.cos(angle) * 0.22, -0.58, 0.58);
-  return { pos: new THREE.Vector3(x, y, z), tangent, bank };
+/**
+ * Energy-conserving coaster progress u(t): slower suspenseful chain-lift climb up the 34m crest,
+ * surging down the first ocean drop and through the banked helix.
+ */
+export function sampleCoasterU(t: number): number {
+  const base = (((t * 0.068) % 1) + 1) % 1;
+  // Smooth monotonic warp: slows slightly on the climb (base ~ 0.1..0.32), accelerates on drop (0.35..0.75)
+  const warped = base - 0.036 * Math.sin(base * Math.PI * 2 - 0.6);
+  return ((warped % 1) + 1) % 1;
 }
 
 export function sampleAmusementRidePose(
   rideId: AmusementRideId,
   t: number
-): { pos: THREE.Vector3; yaw: number; pitch: number; roll: number; lookAt: THREE.Vector3 } {
+): {
+  pos: THREE.Vector3;
+  yaw: number;
+  pitch: number;
+  roll: number;
+  lookAt: THREE.Vector3;
+  tangent?: THREE.Vector3;
+  bankedRight?: THREE.Vector3;
+  bankedUp?: THREE.Vector3;
+  speedKmh?: number;
+  gForce?: number;
+} {
   const pierY = OCEAN_AMUSEMENT_PIER.deckY;
   if (rideId === 'FERRIS') {
     const cx = -24;
@@ -210,16 +246,32 @@ export function sampleAmusementRidePose(
     const pos = new THREE.Vector3(cx, cabY - 1.2, cabZ);
     const lookAt = new THREE.Vector3(0, 18, -120);
     const yaw = Math.atan2(lookAt.x - pos.x, lookAt.z - pos.z);
-    return { pos, yaw, pitch: -0.06, roll: 0, lookAt };
+    return { pos, yaw, pitch: -0.06, roll: 0, lookAt, speedKmh: 18, gForce: 1.0 };
   }
   if (rideId === 'COASTER') {
-    const u = (t * 0.072) % 1;
+    const u = sampleCoasterU(t);
+    const uNext = sampleCoasterU(t + 0.05);
     const sample = sampleCoasterTrack(u);
-    const pos = sample.pos.clone().add(new THREE.Vector3(0, 1.05, 0));
-    const lookAt = pos.clone().addScaledVector(sample.tangent, 18);
+    const nextSample = sampleCoasterTrack(uNext);
+    const speedMps = nextSample.pos.distanceTo(sample.pos) / 0.05;
+    const speedKmh = Math.round(THREE.MathUtils.clamp(speedMps * 3.6, 26, 138));
+    const gForce = Number(THREE.MathUtils.clamp(1.0 + Math.abs(sample.bank) * 2.1 + Math.max(0, -sample.tangent.y) * 1.4, 0.4, 3.6).toFixed(1));
+    const pos = sample.pos.clone().addScaledVector(sample.bankedUp, 1.08);
+    const lookAt = pos.clone().addScaledVector(sample.tangent, 22);
     const yaw = Math.atan2(sample.tangent.x, sample.tangent.z);
     const pitch = Math.asin(THREE.MathUtils.clamp(sample.tangent.y, -0.85, 0.85));
-    return { pos, yaw, pitch, roll: sample.bank, lookAt };
+    return {
+      pos,
+      yaw,
+      pitch,
+      roll: sample.bank,
+      lookAt,
+      tangent: sample.tangent,
+      bankedRight: sample.bankedRight,
+      bankedUp: sample.bankedUp,
+      speedKmh,
+      gForce,
+    };
   }
   if (rideId === 'CAROUSEL') {
     const cx = 0;

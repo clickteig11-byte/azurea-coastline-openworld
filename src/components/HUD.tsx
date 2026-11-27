@@ -422,10 +422,10 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
     x: 0,
     z: -600,
     color: '#ec4899',
-    spawnCarX: -3.5,
-    spawnCarZ: -522,
-    spawnFootX: 2.5,
-    spawnFootZ: -526,
+    spawnCarX: -6.0,
+    spawnCarZ: -504,
+    spawnFootX: 0,
+    spawnFootZ: -504,
   },
   {
     id: 'harbor',
@@ -1168,9 +1168,17 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       )}
 
-        {!controlsOpen && !isCustomizerOpen && !touchUi && (hud.mode === 'FOOT' || simState.cameraView === 1) && !pointerLocked && (
-          <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-white/15 bg-neutral-950/75 px-3 py-1 text-[11px] font-medium text-neutral-200 shadow-lg backdrop-blur-md">
-            Click view to lock mouse aim · [X] {simState.cameraView === 1 ? '3rd Person' : '1st Person'} · [Esc] Unlock · [M] Menu
+        {!controlsOpen && !isCustomizerOpen && !touchUi && (hud.mode === 'FOOT' || simState.cameraView === 1 || Boolean(hud.activeRide)) && (
+          <div
+            className={`pointer-events-none fixed left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border px-3 py-1 text-[11px] font-medium shadow-lg backdrop-blur-md transition ${
+              pointerLocked
+                ? 'border-emerald-400/35 bg-emerald-950/65 text-emerald-200'
+                : 'border-white/15 bg-neutral-950/80 text-neutral-100'
+            }`}
+          >
+            {pointerLocked
+              ? `Mouse Locked · [X] ${simState.cameraView === 1 ? '3rd Person' : '1st Person'} · [Esc] Unlock`
+              : `Click view to lock mouse · [X] ${simState.cameraView === 1 ? '3rd Person' : '1st Person'} · [M] Menu`}
           </div>
         )}
 
@@ -1460,6 +1468,12 @@ export function HUD({ hud, onSelectMode }: Props) {
                       simState.mode = 'FOOT';
                       simState.parachuting = false;
                       simState.gliding = false;
+                      if (ride.id === 'COASTER') {
+                        simState.cameraView = 1;
+                        simState.orbitYaw = 0;
+                        simState.orbitPitch = 0;
+                        requestGamePointerLock();
+                      }
                     }
                     window.dispatchEvent(new CustomEvent('hud-sync'));
                   }}
@@ -1475,6 +1489,49 @@ export function HUD({ hud, onSelectMode }: Props) {
                 </button>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* CYCLONE PIER COASTER FRONT-ROW FPV TELEMETRY PILL */}
+      {!isStartMenuOpen && hud.activeRide === 'COASTER' && (
+        <div className="pointer-events-auto fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
+          <div className="flex items-center gap-3 rounded-2xl border border-amber-400/40 bg-neutral-950/88 px-4 py-2 text-xs text-white shadow-2xl backdrop-blur-md">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-rose-500" />
+            <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-300">
+              Cyclone Pier Coaster
+            </span>
+            <span className="text-white/35">·</span>
+            <span className="font-mono text-[11px] font-semibold text-white">
+              {simState.cameraView === 1 ? 'Front-Row FPV' : '3rd Person'}
+            </span>
+            <span className="text-white/35">·</span>
+            <span className="font-mono text-[11px] font-bold text-sky-300">
+              {hud.speedKmh} km/h
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                simState.cameraView = simState.cameraView === 1 ? 0 : 1;
+                simState.orbitYaw = 0;
+                simState.orbitPitch = 0;
+                window.dispatchEvent(new CustomEvent('hud-sync'));
+              }}
+              className="rounded-lg border border-white/15 bg-white/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-white hover:bg-white/20"
+            >
+              [X] {simState.cameraView === 1 ? '3rd Person' : 'Front-Row FPV'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                simState.activeRide = null;
+                simState.playerPos.set(32, getTravelHeight(32, -600) + 0.08, -600);
+                window.dispatchEvent(new CustomEvent('hud-sync'));
+              }}
+              className="rounded-lg border border-rose-400/40 bg-rose-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-rose-200 hover:bg-rose-500/35"
+            >
+              [E] Exit
+            </button>
           </div>
         </div>
       )}

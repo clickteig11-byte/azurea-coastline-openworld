@@ -278,6 +278,49 @@ export function createLimestonePBR(): THREE.CanvasTexture {
   return tex;
 }
 
+export function createBoardwalkWoodPBR(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#5c3c24';
+  ctx.fillRect(0, 0, 512, 512);
+
+  const rand = makeSeededRand(404);
+  const planks = 16;
+  const ph = 512 / planks;
+  for (let p = 0; p < planks; p++) {
+    const y = p * ph;
+    const r = 112 + Math.floor(rand() * 32);
+    const g = 74 + Math.floor(rand() * 24);
+    const b = 46 + Math.floor(rand() * 16);
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.fillRect(0, y + 1, 512, ph - 2);
+    // Subtle horizontal wood grain streaks
+    for (let s = 0; s < 14; s++) {
+      ctx.fillStyle = rand() > 0.5 ? 'rgba(255,235,205,0.06)' : 'rgba(35,18,8,0.09)';
+      ctx.fillRect(0, y + 2 + rand() * (ph - 4), 512, 1 + rand() * 1.5);
+    }
+    // Plank butt joints & bolt heads
+    const seamX = Math.floor(((p * 173) % 440) + 36);
+    ctx.fillStyle = 'rgba(20,12,6,0.55)';
+    ctx.fillRect(seamX, y, 2, ph);
+    ctx.fillStyle = 'rgba(30,24,20,0.45)';
+    ctx.fillRect(seamX - 6, y + 5, 3, 3);
+    ctx.fillRect(seamX - 6, y + ph - 8, 3, 3);
+    ctx.fillRect(seamX + 5, y + 5, 3, 3);
+    ctx.fillRect(seamX + 5, y + ph - 8, 3, 3);
+  }
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(14, 24);
+  tex.anisotropy = 4;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 export function createTerrainDetailTexture(): THREE.CanvasTexture {
   const size = 512;
   const canvas = document.createElement('canvas');
