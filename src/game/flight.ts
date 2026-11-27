@@ -60,3 +60,11 @@ export function fixedWingStep(input: FixedWingInput) {
     : gravity * Math.tan(bank) / Math.max(speed, 17) + input.bankCommand * (0.15 + 0.29 * authority);
   return { speed, pitch, bank, verticalSpeed, yawRate };
 }
+
+export function aircraftPowerInput(powerUp: boolean, powerDown: boolean) {
+  return Number(powerUp) - Number(powerDown);
+}
+
+export function hoverStrafe(left: boolean, right: boolean, integrity: number) {
+  return (Number(right) - Number(left)) * 13 * integrity;
+}

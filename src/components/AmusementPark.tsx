@@ -4,32 +4,33 @@ import { useFrame } from '@react-three/fiber';
 import {
   AMUSEMENT_PARK_RIDES,
   OCEAN_AMUSEMENT_PIER,
+  WONDER_PIER_TERRACE_Y,
   getTerrainHeight,
   registerTravelSurface,
   sampleCoasterTrack,
   sampleCoasterU,
 } from '../game/worldMath';
 import { simState } from '../game/store';
+import { coastalNow } from '../game/coastalPlay';
+import { PRIZE_WHEEL } from '../game/quirky';
 import { createBoardwalkWoodPBR, createLimestonePBR } from './Textures';
-
-const ENTRANCE_TERRACE_Y = 4.76;
 
 function samplePierApronY(x: number, z: number, pierY: number): number {
   const absX = Math.abs(x);
   // 1. South road-to-terrace transition bevel (z in [-513, -509], |x| <= 18.5)
   if (z <= -509 && z > -513 && absX <= 18.5) {
     const f = THREE.MathUtils.clamp((-509 - z) / 4.0, 0, 1);
-    return THREE.MathUtils.lerp(4.61, ENTRANCE_TERRACE_Y, f);
+    return THREE.MathUtils.lerp(4.61, WONDER_PIER_TERRACE_Y, f);
   }
   // 2. Grand Travertine Welcome Terrace beneath WONDER PIER arch (z in [-529.5, -513], |x| <= 29.5)
   if (z <= -513 && z >= -529.5 && absX <= 29.5) {
-    return ENTRANCE_TERRACE_Y;
+    return WONDER_PIER_TERRACE_Y;
   }
   // 3. Smooth convex timber-and-travertine promenade ramp down to teak boardwalk (z in [-546.5, -529.5])
   if (z < -529.5 && z >= -546.5 && absX <= 15.5) {
     const f = THREE.MathUtils.clamp((z - -546.5) / 17.0, 0, 1);
     const curved = Math.min(1, f + 0.48 * f * (1 - f));
-    return pierY + 0.04 + (ENTRANCE_TERRACE_Y - (pierY + 0.04)) * curved;
+    return pierY + 0.04 + (WONDER_PIER_TERRACE_Y - (pierY + 0.04)) * curved;
   }
   return -Infinity;
 }
@@ -145,7 +146,7 @@ const MIDWAY_BOOTHS: MidwayBoothSpec[] = [
   { label: 'ARCADE', x: -34, z: 42, rotY: Math.PI / 2, stripeA: '#0284c7', stripeB: '#fef3c7', accent: '#38bdf8', neon: '#22d3ee' },
   { label: 'CHURROS', x: -34, z: 22, rotY: Math.PI / 2, stripeA: '#ea580c', stripeB: '#fef3c7', accent: '#fb923c', neon: '#fb923c' },
   { label: 'ICE CREAM', x: 34, z: 62, rotY: -Math.PI / 2, stripeA: '#ec4899', stripeB: '#fff1f2', accent: '#f472b6', neon: '#f472b6' },
-  { label: 'RING TOSS', x: 34, z: 42, rotY: -Math.PI / 2, stripeA: '#dc2626', stripeB: '#fef3c7', accent: '#fde047', neon: '#f43f5e' },
+  { label: 'RING TOSS', x: PRIZE_WHEEL.x + 5, z: PRIZE_WHEEL.z + 600, rotY: -Math.PI / 2, stripeA: '#dc2626', stripeB: '#fef3c7', accent: '#fde047', neon: '#f43f5e' },
   { label: 'SKY BAR', x: 34, z: 22, rotY: -Math.PI / 2, stripeA: '#0f766e', stripeB: '#fef3c7', accent: '#2dd4bf', neon: '#2dd4bf' },
 ];
 
@@ -158,8 +159,8 @@ interface FountainSpec {
 }
 
 const PIER_FOUNTAINS: FountainSpec[] = [
-  { id: 'entrance-west', x: -23, z: -522.5, y: ENTRANCE_TERRACE_Y, grand: true },
-  { id: 'entrance-east', x: 23, z: -522.5, y: ENTRANCE_TERRACE_Y, grand: true },
+  { id: 'entrance-west', x: -23, z: -522.5, y: WONDER_PIER_TERRACE_Y, grand: true },
+  { id: 'entrance-east', x: 23, z: -522.5, y: WONDER_PIER_TERRACE_Y, grand: true },
   { id: 'midway-west', x: -12.2, z: -578, grand: false },
   { id: 'midway-east', x: 12.2, z: -578, grand: false },
 ];
@@ -231,8 +232,8 @@ function createPrizeWheelTexture(): THREE.CanvasTexture {
   ctx.clearRect(0, 0, 256, 256);
   const segs = PRIZE_WHEEL_COLORS.length;
   for (let i = 0; i < segs; i++) {
-    const a0 = (i / segs) * Math.PI * 2;
-    const a1 = ((i + 1) / segs) * Math.PI * 2;
+    const a0 = -Math.PI / 2 + ((i - 0.5) / segs) * Math.PI * 2;
+    const a1 = a0 + (Math.PI * 2) / segs;
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, r, a0, a1);
@@ -837,23 +838,25 @@ export function AmusementPark() {
     }
     animMats.archLantern.emissiveIntensity = 2.0 + Math.sin(t * 2.8) * 0.7;
 
+    const now = coastalNow();
+    const { wheelStart, wheelFrom, wheelTo, neonUntil } = simState.coastal;
+    const celebrating = now < neonUntil;
     for (let i = 0; i < 6; i++) {
       const wave = 0.5 + 0.5 * Math.sin(t * 7.6 - i * 1.05);
-      animMats.boothChase[i].emissiveIntensity = 0.4 + Math.pow(wave, 2.5) * 3.3;
+      animMats.boothChase[i].emissiveIntensity = 0.4 + Math.pow(wave, 2.5) * (celebrating ? 7.2 : 3.3);
       // Pulsing neon booth trim
-      animMats.boothNeon[i].emissiveIntensity = 1.35 + 0.95 * Math.sin(t * 3.1 + i * 1.15);
+      animMats.boothNeon[i].emissiveIntensity = (celebrating ? 4.4 : 1.35) + 0.95 * Math.sin(t * 3.1 + i * 1.15);
     }
 
     // =========================================================================
     // 7. ANIMATED MIDWAY ACTIVITIES (Prize Wheel, Arcade CRTs, Ice Cream Cone, Churros, Sky Bar)
     // =========================================================================
     if (prizeWheelRef.current) {
-      // Lively carnival spin with subtle periodic acceleration bursts
-      const spinPhase = t * 2.4 + Math.sin(t * 0.7) * 1.25;
-      prizeWheelRef.current.rotation.z = -spinPhase;
+      const progress = wheelStart > 0 ? THREE.MathUtils.clamp((now - wheelStart) / PRIZE_WHEEL.duration, 0, 1) : 1;
+      const spinPhase = THREE.MathUtils.lerp(wheelFrom, wheelTo, 1 - (1 - progress) ** 3);
+      prizeWheelRef.current.rotation.z = spinPhase;
       if (prizeClickerRef.current) {
-        // Clicker bounces rapidly against the 12 rim pegs
-        const pegKick = Math.pow(Math.abs(Math.sin(spinPhase * 6.0)), 4.0);
+        const pegKick = progress < 1 ? Math.abs(Math.sin(spinPhase * 6)) ** 4 : 0;
         prizeClickerRef.current.rotation.z = -pegKick * 0.42;
       }
     }
@@ -1023,23 +1026,23 @@ export function AmusementPark() {
         {/* GRAND TRAVERTINE & TIMBER ENTRANCE TRANSITION APRON (Bridging Island II Road -> Teak Pier) */}
         <group position={[0, 0, 600]}>
           {/* Honed Travertine Welcome Terrace beneath WONDER PIER Arch (z = -529.5..-513) */}
-          <mesh position={[0, ENTRANCE_TERRACE_Y - 0.55, -521.25]} receiveShadow castShadow>
+          <mesh position={[0, WONDER_PIER_TERRACE_Y - 0.55, -521.25]} receiveShadow castShadow>
             <boxGeometry args={[59, 1.1, 16.5]} />
             <meshStandardMaterial map={travertineTex} color="#f5efe6" roughness={0.58} metalness={0.08} />
           </mesh>
           {/* Central Dark-Slate Promenade Carpet Inlay + Brass Borders on Terrace */}
-          <mesh position={[0, ENTRANCE_TERRACE_Y + 0.015, -521.25]} receiveShadow>
+          <mesh position={[0, WONDER_PIER_TERRACE_Y + 0.015, -521.25]} receiveShadow>
             <boxGeometry args={[16.2, 0.03, 16.5]} />
             <meshStandardMaterial color="#1e293b" roughness={0.5} metalness={0.2} />
           </mesh>
           {[-8.25, 8.25].map((bx) => (
-            <mesh key={`apron_brass_${bx}`} position={[bx, ENTRANCE_TERRACE_Y + 0.03, -521.25]}>
+            <mesh key={`apron_brass_${bx}`} position={[bx, WONDER_PIER_TERRACE_Y + 0.03, -521.25]}>
               <boxGeometry args={[0.26, 0.05, 16.5]} />
               <meshStandardMaterial color="#fbbf24" emissive="#d97706" emissiveIntensity={0.65} metalness={0.85} roughness={0.2} />
             </mesh>
           ))}
           {/* Decorative Travertine Curb Trim along Terrace North & South Edges */}
-          <mesh position={[0, ENTRANCE_TERRACE_Y + 0.03, -513.1]}>
+          <mesh position={[0, WONDER_PIER_TERRACE_Y + 0.03, -513.1]}>
             <boxGeometry args={[59.2, 0.08, 0.35]} />
             <meshStandardMaterial color="#fbbf24" emissive="#d97706" emissiveIntensity={0.45} metalness={0.82} roughness={0.22} />
           </mesh>
@@ -1057,7 +1060,7 @@ export function AmusementPark() {
         </group>
 
         {/* ORNATE ART-DECO "WONDER PIER" ENTRANCE MARQUEE ARCH (z = -519 world, seated on Travertine Terrace) */}
-        <group position={[0, ENTRANCE_TERRACE_Y, 81]}>
+        <group position={[0, WONDER_PIER_TERRACE_Y, 81]}>
           {[-12.2, 12.2].map((ax, colIdx) => (
             <group key={ax} position={[ax, 0, 0]}>
               {/* Stepped Art-Deco Plinth */}
@@ -1370,18 +1373,24 @@ export function AmusementPark() {
             {/* 5. RING TOSS: Spinning Colorful 12-Segment Prize Wheel + Bouncing Clicker + Bottle Stacks */}
             {booth.label === 'RING TOSS' && (
               <group>
-                {/* Roof-Mounted Giant Spinning Carnival Prize Wheel */}
-                <group position={[0, 6.75, 1.85]}>
+                <group position={[0, 2.22, 5]}>
                   {/* Wheel Stand Pedestal */}
-                  <mesh position={[0, -1.3, -0.22]}>
-                    <boxGeometry args={[0.45, 1.6, 0.35]} />
+                  <mesh position={[0, -1.1, -0.22]}>
+                    <boxGeometry args={[0.45, 2.2, 0.4]} />
                     <meshStandardMaterial color="#fbbf24" metalness={0.8} roughness={0.22} />
                   </mesh>
                   {/* Spinning Colorful Wheel Disc & Rim Pegs */}
                   <group ref={prizeWheelRef}>
                     <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
                       <cylinderGeometry args={[1.65, 1.65, 0.22, 24]} />
-                      <meshStandardMaterial map={prizeWheelTex} emissive="#ffffff" emissiveMap={prizeWheelTex} emissiveIntensity={0.32} roughness={0.28} />
+                      <meshStandardMaterial color="#452737" metalness={0.42} roughness={0.36} />
+                    </mesh>
+                    <mesh position={[0, 0, 0.115]}>
+                      <planeGeometry args={[3.43, 3.43]} />
+                      <meshStandardMaterial map={prizeWheelTex} alphaTest={0.5} emissive="#ffffff" emissiveMap={prizeWheelTex} emissiveIntensity={0.42} roughness={0.28} />
+                    </mesh>
+                    <mesh position={[0, 0, 0.125]} material={animMats.boothNeon[idx]}>
+                      <torusGeometry args={[1.65, 0.045, 6, 48]} />
                     </mesh>
                     {Array.from({ length: 12 }, (_, pegIdx) => {
                       const pAng = (pegIdx / 12) * Math.PI * 2;

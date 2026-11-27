@@ -1,6 +1,17 @@
 import { useEffect, useRef } from 'react';
 import { aiming } from '../game/aim';
-import { simState } from '../game/store';
+import { simState, type GameHudSnapshot } from '../game/store';
+
+export function shouldShowReticle(hud: GameHudSnapshot, toolsActive: boolean) {
+  if (hud.activeRide || hud.swimming) return false;
+  return simState.cameraView === 1 || aiming.ads || (hud.firingTimer ?? 0) > 0 ||
+    toolsActive || (hud.gameMode ?? simState.gameMode) === 'BATTLE_ROYALE';
+}
+
+function crossPath(gap: number, size: number) {
+  const line = size * 0.37;
+  return `M ${-gap - line} 0 H ${-gap} M ${gap} 0 H ${gap + line} M 0 ${-gap - line} V ${-gap} M 0 ${gap} V ${gap + line}`;
+}
 
 export function Reticle() {
   const { reticle, reticleSize, reticleColor } = simState.controlSettings;
@@ -10,13 +21,8 @@ export function Reticle() {
   useEffect(() => {
     let raf = 0;
     const tick = () => {
-      const gap = reticle === 'Dynamic Spread' ? 3 + aiming.spread * 0.63 : 3.8;
-      const line = reticleSize * 0.37;
-      if (crossRef.current) {
-        crossRef.current.setAttribute(
-          'd',
-          `M ${-gap - line} 0 H ${-gap} M ${gap} 0 H ${gap + line} M 0 ${-gap - line} V ${-gap} M 0 ${gap} V ${gap + line}`
-        );
+      if (reticle === 'Dynamic Spread' && crossRef.current) {
+        crossRef.current.setAttribute('d', crossPath(3 + aiming.spread * 0.63, reticleSize));
       }
       if (hitRef.current) {
         const op = aiming.feedback > 0 ? Math.min(1, aiming.feedback * 8) : 0;
@@ -29,8 +35,7 @@ export function Reticle() {
   }, [reticle, reticleSize]);
 
   const gap = reticle === 'Dynamic Spread' ? 3 + aiming.spread * 0.63 : 3.8;
-  const line = reticleSize * 0.37;
-  const cross = `M ${-gap - line} 0 H ${-gap} M ${gap} 0 H ${gap + line} M 0 ${-gap - line} V ${-gap} M 0 ${gap} V ${gap + line}`;
+  const cross = crossPath(gap, reticleSize);
   return (
     <svg className="wh-reticle" aria-hidden="true" viewBox="-30 -30 60 60" width="60" height="60" color={reticleColor}>
       <g fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round">

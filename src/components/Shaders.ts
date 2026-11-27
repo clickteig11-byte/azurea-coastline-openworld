@@ -1,3 +1,5 @@
+import { COASTAL_ATOLLS } from '../game/worldMath';
+
 export const skyVertexShader = /* glsl */ `
   varying vec3 vWorldPos;
   void main() {
@@ -344,6 +346,11 @@ export const waterFragmentShader = /* glsl */ `
     return pow(clamp(ridge1 * 0.60 + ridge2 * 0.48, 0.0, 1.0), 4.8);
   }
 
+  float atollShore(vec2 delta, float radius, float phase) {
+    float angle = atan(delta.x, delta.y);
+    return length(delta) / (radius * (1.0 + 0.075 * sin(angle * 3.0 + phase) + 0.044 * cos(angle * 5.0)));
+  }
+
   void main() {
     vec2 p = vWorldPos.xz;
     vec3 viewDir = normalize(uCameraPos - vWorldPos);
@@ -395,10 +402,13 @@ export const waterFragmentShader = /* glsl */ `
       + 5.0 * cos(angle * 2.0)) * (1.0 - 0.34 * northFac);
 
     float shore = dist - roadRadius - beach;
-    float deep = canal ? 0.12 : min(smoothstep(-7.0, 62.0, shore), smoothstep(0.84, 1.32, site));
+    float solis = atollShore(p - vec2(${COASTAL_ATOLLS.solis.x}.0, ${COASTAL_ATOLLS.solis.z}.0), ${COASTAL_ATOLLS.solis.radius}.0, ${COASTAL_ATOLLS.solis.phase});
+    float azurea = atollShore(p - vec2(${COASTAL_ATOLLS.azurea.x}.0, ${COASTAL_ATOLLS.azurea.z}.0), ${COASTAL_ATOLLS.azurea.radius}.0, ${COASTAL_ATOLLS.azurea.phase});
+    float satellite = min(solis, azurea);
+    float deep = canal ? 0.12 : min(min(smoothstep(-7.0, 62.0, shore), smoothstep(0.84, 1.32, site)), smoothstep(0.89, 1.32, satellite));
     float shallowShelf = 1.0 - smoothstep(-4.0, 34.0, shore);
     float islandTwoShallow = 1.0 - smoothstep(0.84, 1.18, site);
-    float coastalShallow = canal ? 0.85 : max(shallowShelf, islandTwoShallow);
+    float coastalShallow = canal ? 0.85 : max(max(shallowShelf, islandTwoShallow), 1.0 - smoothstep(0.90, 1.27, satellite));
 
     vec3 sunN = normalize(uSunDir);
     float daySun = 1.0 - smoothstep(0.15, 0.85, uMoonVis);
@@ -464,7 +474,7 @@ export const waterFragmentShader = /* glsl */ `
       reflectedSky,
       fresnel * 0.80
     );
-    col += uSunColor * (solarPath * 0.24 + ggxSpec * 0.046 * (0.42 + wind * 0.78) + tightGlint + diamondSparkle)
+    col += uSunColor * (solarPath * 0.15 + min(ggxSpec, 2.8) * 0.023 * (0.42 + wind * 0.78) + tightGlint + diamondSparkle)
       * (0.14 + 0.86 * daySun);
 
     // Neon Ferris Wheel & Coaster water reflections — strictly twilight/sunset/midnight so daytime shallows stay pure turquoise!
@@ -491,9 +501,10 @@ export const waterFragmentShader = /* glsl */ `
     float shoreDist = shore + tideSwash;
     float headlandBand = abs(shoreDist) / 15.0;
     float islandTwoBand = abs(site - 0.965) / 0.15;
-    float tideLine = min(headlandBand, islandTwoBand);
+    float satelliteBand = abs(satellite - 0.918 + tideSwash * 0.004) / 0.14;
+    float tideLine = min(min(headlandBand, islandTwoBand), satelliteBand);
 
-    float breakCoord = headlandBand < islandTwoBand ? shore * 0.58 : site * 52.0;
+    float breakCoord = satelliteBand == tideLine ? satellite * 34.0 : headlandBand < islandTwoBand ? shore * 0.58 : site * 52.0;
     float surfWaveA = sin(breakCoord + wind * 4.8 + 1.80 * uTime);
     float surfWaveB = sin(breakCoord * 1.62 - windFine * 3.4 + 2.45 * uTime);
     float foamWeb = smoothstep(0.30, 0.78, windFine * 0.58 + windMicro * 0.42);
@@ -525,7 +536,7 @@ export const waterFragmentShader = /* glsl */ `
       }
     }
 
-    col = mix(col, uFoam, clamp(shoreFoam + whitecap + wakeFoam, 0.0, 0.88));
+    col = mix(col, uFoam, clamp(shoreFoam * 0.63 + whitecap + wakeFoam, 0.0, 0.72));
 
     float haze = smoothstep(380.0, 1620.0, cameraDistance);
     col = mix(col, horizon, haze);
@@ -694,7 +705,8 @@ export const terrainFragmentShader = /* glsl */ `
     float grassSheenMask = 0.0;
     float windGustVal = 0.0;
 
-    if (p.y < -330.0) {
+    bool satelliteSand = length(p - vec2(430.0, 340.0)) < 105.0 || length(p - vec2(-430.0, -290.0)) < 93.0;
+    if (p.y < -330.0 || satelliteSand) {
       float grain = fbm(p * 1.8);
       float macroN = fbm(p * 0.05);
       float bladeN1 = noise(p * 18.0);
@@ -704,18 +716,22 @@ export const terrainFragmentShader = /* glsl */ `
       windGustVal = windWave;
 
       float sandRipple = sin(p.x * 2.0 + p.y * 1.5 + grain * 2.8) * 0.5 + 0.5;
-      vec3 wetIslandSand = vec3(0.47, 0.37, 0.25);
+      vec3 wetIslandSand = vec3(0.60, 0.48, 0.32);
       vec3 dryIslandSand = vec3(0.89, 0.77, 0.56) + (sandRipple - 0.5) * 0.025;
       vec3 beach = mix(wetIslandSand, dryIslandSand, smoothstep(0.25, 1.35, vWorldPos.y));
       vec3 parkGrass = mix(vec3(0.09, 0.27, 0.07), vec3(0.19, 0.41, 0.13), smoothstep(0.2, 0.8, macroN));
       parkGrass = mix(parkGrass, vec3(0.32, 0.50, 0.17), windWave * 0.30);
       parkGrass *= 0.86 + 0.24 * bladeN1;
-      float grassBlend = smoothstep(1.35, 2.35, vWorldPos.y);
+      if (satelliteSand) {
+        parkGrass = mix(parkGrass, vec3(0.29, 0.46, 0.16), 0.34);
+        n = normalize(mix(n, vec3(0.0, 1.0, 0.0), 0.30));
+      }
+      float grassBlend = smoothstep(1.35, satelliteSand ? 5.8 : 2.35, vWorldPos.y);
       albedo = mix(beach, parkGrass, grassBlend);
       grassSheenMask = grassBlend;
       specStrength = mix(0.44 * (1.0 - smoothstep(0.25, 1.05, vWorldPos.y)), 0.10, grassBlend);
       specPower = mix(64.0, 18.0, grassBlend);
-      n = normalize(n + vec3((bladeN2 - 0.5) * 0.22 + windWave * 0.07, 0.0, (bladeN1 - 0.5) * 0.22) * grassBlend);
+      n = normalize(n + vec3((bladeN2 - 0.5) * 0.22 + windWave * 0.07, 0.0, (bladeN1 - 0.5) * 0.22) * grassBlend * (satelliteSand ? 0.45 : 1.0));
 
       // Paved Promenade Boulevard from North Bay Bridge (z = -402) to Wonder Ocean Pier Entrance (z = -520)
       float roadDist = abs(p.x);
@@ -911,7 +927,7 @@ export const terrainFragmentShader = /* glsl */ `
       } else {
         // Glossy Wave-Washed Wet Shoreline Sand (h < 0.92)
         float washPulse = 0.08 * sin(uTime * 0.85 + macroN * 4.0);
-        vec3 wetSand = vec3(0.49, 0.38, 0.26) + (bladeN2 - 0.5) * 0.028;
+        vec3 wetSand = vec3(0.59, 0.46, 0.30) + (bladeN2 - 0.5) * 0.028;
 
         // Warm Wind-Rippled Golden Riviera Beach Sand with Quartz Glints
         float ripple = sin(p.x * 2.2 + p.y * 1.45 + noise(p * 0.35) * 3.4) * 0.5 + 0.5;
@@ -937,10 +953,12 @@ export const terrainFragmentShader = /* glsl */ `
         cliffRock = mix(cliffRock, vec3(0.33, 0.31, 0.27), smoothstep(0.62, 0.88, noise(p * 1.4)) * 0.45);
 
         float noisyH = h + (medN - 0.5) * 0.28;
+        float rippleSlope = (ripple - 0.5) * 0.026 * (1.0 - smoothstep(1.2, 2.2, noisyH));
+        n = normalize(n + vec3(rippleSlope + (bladeN2 - 0.5) * 0.016, 0.0, rippleSlope * 0.68));
         if (noisyH < 0.88 + washPulse) {
           float wetToDry = smoothstep(0.26, 0.88 + washPulse, noisyH);
           albedo = mix(wetSand, drySand, wetToDry);
-          specStrength = mix(0.62, 0.08, wetToDry);
+          specStrength = mix(0.30, 0.08, wetToDry);
           specPower = mix(78.0, 32.0, wetToDry);
         } else if (noisyH < 2.18) {
           float sandToGrass = smoothstep(1.58, 2.16, noisyH);
@@ -973,7 +991,7 @@ export const terrainFragmentShader = /* glsl */ `
     // Convert procedural sRGB albedo into linear color space for accurate theme lighting & ACES tone mapping
     albedo = pow(max(albedo, vec3(0.0)), vec3(2.2));
 
-    float shadow = mix(0.46, 1.0, getShadowMask());
+    float shadow = mix(satelliteSand ? 0.64 : 0.46, 1.0, getShadowMask());
     // Smooth wrap-softened directional sunlight + sky hemisphere so slopes never look blocky/faceted
     float ndl = max(dot(n, sunDir), 0.0);
     float wrapDiff = max(0.0, (dot(n, sunDir) + 0.38) / 1.38);

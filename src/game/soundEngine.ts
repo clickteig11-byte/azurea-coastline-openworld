@@ -183,6 +183,43 @@ class SoundEngine {
     this.tone(ctx, 210 + clamped * 140, 'square', 0.005, 0.09 + clamped * 0.08, 0.06 + clamped * 0.06);
   }
 
+  public playCoastal(kind: 'duck' | 'spring' | 'ball' | 'photo' | 'wheel' | 'hydro' | 'chirp' | 'honk') {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (kind === 'hydro' || kind === 'photo' || kind === 'chirp') {
+      this.playSurface(kind === 'hydro' ? 'water' : 'step', kind === 'hydro' ? 1.4 : 0.8);
+    }
+    if (kind === 'duck') {
+      const oscillator = ctx.createOscillator();
+      const filter = ctx.createBiquadFilter();
+      const gain = ctx.createGain();
+      const now = ctx.currentTime;
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.setValueAtTime(151, now);
+      oscillator.frequency.exponentialRampToValueAtTime(81, now + 0.51);
+      filter.type = 'bandpass';
+      filter.Q.value = 4.8;
+      filter.frequency.setValueAtTime(880, now);
+      filter.frequency.exponentialRampToValueAtTime(310, now + 0.52);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.linearRampToValueAtTime(0.24, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.58);
+      oscillator.connect(filter).connect(gain).connect(ctx.destination);
+      oscillator.start(now);
+      oscillator.stop(now + 0.6);
+      this.tone(ctx, 76, 'triangle', 0.06, 0.52, 0.11);
+      return;
+    }
+    const cues = {
+      spring: [145, 310, 480], ball: [310, 190], photo: [1340, 920],
+      wheel: [460, 540, 635, 740, 860, 1020], hydro: [115, 260, 490],
+      chirp: [694, 318], honk: [214, 287],
+    };
+    const accent = kind === 'wheel' ? 0.105 : 0.045;
+    cues[kind].forEach((hz, index) => this.tone(ctx, hz, kind === 'photo' ? 'square' : 'triangle',
+      index * accent, kind === 'honk' ? 0.32 : kind === 'photo' ? 0.038 : 0.15, kind === 'spring' ? 0.11 : 0.063));
+  }
+
   public playSurface(kind: 'water' | 'landing' | 'step', energy: number): void {
     const ctx = this.ensureContext();
     if (!ctx) return;

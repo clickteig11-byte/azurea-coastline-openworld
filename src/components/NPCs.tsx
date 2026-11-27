@@ -4,8 +4,8 @@ import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { animateHumanoid, createHumanoidRig, type HumanoidRig } from '../game/humanoid';
-import { getTerrainHeight, getTravelHeight, getWaveHeight } from '../game/worldMath';
+import { animateHumanoid, createHumanoidRig, retargetMixamoClips, type HumanoidRig, type RigPosture } from '../game/humanoid';
+import { getTerrainHeight, getTravelHeight, getWaveHeight, SURF_VILLAGE } from '../game/worldMath';
 import { simState, COASTAL_CHARACTERS } from '../game/store';
 import { pedestrianContact } from '../game/vehicleContact';
 import { injureBot, injurePlayer } from '../game/combat';
@@ -13,6 +13,7 @@ import { launchTumble, stepTumble, type Tumble } from '../game/motion';
 import { damageWorld, emitEnvironment, traceWorld } from '../game/worldDamage';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture } from './Textures';
+import { COASTAL_PLAZAS } from './City';
 
 // ============================================================================
 // Pre-allocated scratch objects (zero per-frame GC allocations)
@@ -121,13 +122,11 @@ function getHumanPalette(seedIndex: number, isCombatBot = false): HumanOutfitPal
 
 // ============================================================================
 // Animated pedestrian population
-const PED_COUNT = 16;
-
 const pedShadowGeo = new THREE.PlaneGeometry(0.9, 0.9);
 pedShadowGeo.rotateX(-Math.PI / 2);
 
 interface PedestrianAgent {
-  kind: 'STRIP' | 'CROSSWALK' | 'BELLAGIO';
+  kind: 'STRIP' | 'CROSSWALK' | 'COASTAL_X';
   modelUrl: string;
   paletteIndex: number;
   x: number;
@@ -140,9 +139,6 @@ interface PedestrianAgent {
   maxBound: number;
   dir: 1 | -1;
   laneCoord: number;
-  ringAngle: number;
-  ringRadius: number;
-  ringDir: 1 | -1;
   dodgeX: number;
   dodgeZ: number;
   dodgeAlert: number;
@@ -242,9 +238,6 @@ function createPedestrians(): PedestrianAgent[] {
       maxBound: 140,
       dir,
       laneCoord: laneX,
-      ringAngle: 0,
-      ringRadius: 0,
-      ringDir: 1,
       dodgeX: 0,
       dodgeZ: 0,
       dodgeAlert: 0,
@@ -272,14 +265,39 @@ function createPedestrians(): PedestrianAgent[] {
       maxBound: 20.5,
       dir,
       laneCoord: zCross,
-      ringAngle: 0,
-      ringRadius: 0,
-      ringDir: 1,
       dodgeX: 0,
       dodgeZ: 0,
       dodgeAlert: 0,
     });
   }
+
+  const coastalRoute = (kind: 'STRIP' | 'COASTAL_X', laneCoord: number, minBound: number, maxBound: number, fraction: number) => {
+    const index = list.length;
+    const dir = index % 2 === 0 ? 1 : -1;
+    const alongZ = kind === 'STRIP';
+    const axisPos = THREE.MathUtils.lerp(minBound, maxBound, fraction);
+    list.push({
+      kind, laneCoord, minBound, maxBound, axisPos, dir,
+      modelUrl: dir === 1 ? COASTAL_CHARACTERS.CIVILIAN_WOMAN.url : COASTAL_CHARACTERS.CIVILIAN_MAN.url,
+      paletteIndex: index,
+      x: alongZ ? laneCoord : axisPos,
+      z: alongZ ? axisPos : laneCoord,
+      yaw: alongZ ? (dir > 0 ? 0 : Math.PI) : dir * Math.PI / 2,
+      speed: 1.25 + (index % 4) * 0.15,
+      phase: index * 1.37,
+      dodgeX: 0, dodgeZ: 0, dodgeAlert: 0,
+    });
+  };
+
+  [-14, -7, 7, 14].forEach((x, i) => coastalRoute('STRIP', x, -635, -510, (i + 1) / 5));
+  for (const x of [SURF_VILLAGE.westX, SURF_VILLAGE.eastX]) {
+    for (const fraction of [0.3, 0.7]) coastalRoute('STRIP', x, SURF_VILLAGE.minZ + 5, SURF_VILLAGE.maxZ - 5, fraction);
+  }
+  for (const { x, z, radius } of COASTAL_PLAZAS) {
+    for (const side of [-1, 1]) coastalRoute('COASTAL_X', z + side * 9, x - radius * 0.48, x + radius * 0.48, side > 0 ? 0.3 : 0.7);
+  }
+  for (const z of [264, 273]) coastalRoute('COASTAL_X', z, -50, -29, 0.4);
+  for (const x of [303, 309]) coastalRoute('STRIP', x, 26, 47, 0.6);
 
   return list;
 }
@@ -922,12 +940,10 @@ export function LivingWorldNPCs() {
     [shadowTex]
   );
 
-  // 16 Smooth-Shaded PBR Human Citizen Refs & Skeletal Stride Rigs
+  // Pedestrian groups and skeletal stride rigs
   const citizenGroupRefs = useRef<Array<THREE.Group | null>>([]);
   const citizenModelMountRefs = useRef<Array<THREE.Group | null>>([]);
-  const citizenStrideRigs = useRef<Array<HumanoidRig | null>>(
-    Array.from({ length: PED_COUNT }, () => null)
-  );
+  const citizenStrideRigs = useRef<Array<HumanoidRig | null>>([]);
 
   // 8 Armed Battle Royale Combat Bot Refs & Skeletal Stride Rigs
   const botGroupRefs = useRef<Array<THREE.Group | null>>([]);
@@ -1121,7 +1137,7 @@ export function LivingWorldNPCs() {
      * preserving all original PBR normal/roughness/albedo textures while tinting each sub-mesh with
      * a unique outfit & skin palette and capturing rest-pose quaternions for smooth stride animation.
      */
-    const prepareHuman = (gltf: Awaited<ReturnType<typeof loadCachedGLTF>>, palette: HumanOutfitPalette, height: number) => {
+    const prepareHuman = (gltf: Awaited<ReturnType<typeof loadCachedGLTF>>, palette: HumanOutfitPalette, height: number, posture: RigPosture) => {
       const clone = SkeletonUtils.clone(gltf.scene);
       clone.traverse((child) => {
         const mesh = child as THREE.Mesh;
@@ -1149,11 +1165,24 @@ export function LivingWorldNPCs() {
       clone.position.y -= bounds.min.y * scale;
       const wrapper = new THREE.Group();
       wrapper.add(clone);
-      const rig = createHumanoidRig(wrapper, clone, gltf.animations);
+      const rig = createHumanoidRig(wrapper, clone, gltf.animations, posture);
       return { wrapper, rig };
     };
 
-    // 1. Populate 16 Smooth-Shaded High-Res PBR Citizens (~70% ReadyPlayerMe, ~30% Michelle)
+    const retargetMissingClips = (target: HumanoidRig) => {
+      const retarget = (url: string, names: string[]) => {
+        loadCachedGLTF(url).then(({ scene, animations }) => {
+          if (disposed) return;
+          const source = createHumanoidRig(new THREE.Group(), scene, animations);
+          retargetMixamoClips(target, source, animations, names);
+        }).catch(() => {});
+      };
+      const locomotion = (['idle', 'walk', 'run'] as const).filter((name) => !target.clips[name]);
+      if (locomotion.length) retarget(COASTAL_CHARACTERS.XBOT_CYBER.url, locomotion);
+      if (!target.clips.emote) retarget('/models/michelle.glb', ['SambaDance']);
+    };
+
+    // Populate Midtown and coastal pedestrians
     pedestrians.forEach((ped, idx) => {
       loadCachedGLTF(ped.modelUrl)
         .then((gltf) => {
@@ -1164,7 +1193,11 @@ export function LivingWorldNPCs() {
             mount.remove(mount.children[0]);
           }
           const palette = getHumanPalette(ped.paletteIndex, false);
-          const { wrapper, rig } = prepareHuman(gltf, palette, 1.61 + (idx * 37 % 23) * 0.01);
+          const feminine = ped.modelUrl === COASTAL_CHARACTERS.CIVILIAN_WOMAN.url ||
+            /human_(commuter|pool_guest|server)\.glb$/.test(ped.modelUrl);
+          const { wrapper, rig } = prepareHuman(gltf, palette, 1.61 + (idx * 37 % 23) * 0.01,
+            feminine ? 'feminine' : 'athletic');
+          retargetMissingClips(rig);
           mount.add(wrapper);
           citizenStrideRigs.current[idx] = rig;
         })
@@ -1203,7 +1236,8 @@ export function LivingWorldNPCs() {
             mount.remove(mount.children[0]);
           }
           const palette = getHumanPalette(16 + idx, true);
-          const { wrapper, rig } = prepareHuman(gltf, palette, 1.7 + (idx * 11 % 18) * 0.01);
+          const { wrapper, rig } = prepareHuman(gltf, palette, 1.7 + (idx * 11 % 18) * 0.01, 'athletic');
+          retargetMissingClips(rig);
           mount.add(wrapper);
           botStrideRigs.current[idx] = rig;
 
@@ -1347,11 +1381,13 @@ export function LivingWorldNPCs() {
     };
 
     // ------------------------------------------------------------------------
-    // 1. Update 16 Smooth-Shaded PBR Human Citizens (Skeletal Stride + Sidewalks/Crosswalks/Dodge)
+    // 1. Update pedestrians
     // Pause distant Midtown pedestrian simulation while on the Lobby screen to prevent CPU throttling
     // ------------------------------------------------------------------------
     civilianTargets.length = 0;
-    for (let i = 0; i < (simState.startMenuOpen ? 0 : PED_COUNT); i++) {
+    const reaction = simState.coastal.reaction;
+    const reacting = performance.now() / 1000 < reaction.until;
+    for (let i = 0; i < (simState.startMenuOpen ? 0 : pedestrians.length); i++) {
       const p = pedestrians[i];
       const crossingClosed = (simState.startMenuOpen || simState.gameMode === 'GRAND_PRIX') && p.kind === 'CROSSWALK';
       if (citizenGroupRefs.current[i]) citizenGroupRefs.current[i]!.visible = !crossingClosed;
@@ -1391,52 +1427,29 @@ export function LivingWorldNPCs() {
         }
         continue;
       }
+      const cheering = reacting && Math.hypot(p.x - reaction.x, p.z - reaction.z) < 26;
       const speedBoost = 1 + p.dodgeAlert * 0.85;
-      p.phase += dt * p.speed * speedBoost * 4.4;
-
-      let baseX = p.x;
-      let baseZ = p.z;
-
-      if (p.kind === 'STRIP') {
-        p.axisPos += p.dir * p.speed * speedBoost * dt;
-        if (p.axisPos >= p.maxBound) {
-          p.axisPos = p.maxBound;
-          p.dir = -1;
-        } else if (p.axisPos <= p.minBound) {
-          p.axisPos = p.minBound;
-          p.dir = 1;
-        }
-        baseX = p.laneCoord;
-        baseZ = p.axisPos;
-        p.yaw = p.dir > 0 ? 0 : Math.PI;
-      } else if (p.kind === 'CROSSWALK') {
-        p.axisPos += p.dir * p.speed * speedBoost * dt;
-        if (p.axisPos >= p.maxBound) {
-          p.axisPos = p.maxBound;
-          p.dir = -1;
-        } else if (p.axisPos <= p.minBound) {
-          p.axisPos = p.minBound;
-          p.dir = 1;
-        }
-        baseX = p.axisPos;
-        baseZ = p.laneCoord;
-        p.yaw = p.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-      } else {
-        // BELLAGIO ring
-        const angularVel = (p.speed / p.ringRadius) * p.ringDir;
-        p.ringAngle += angularVel * dt;
-        baseX = Math.cos(p.ringAngle) * p.ringRadius;
-        baseZ = -10 + Math.sin(p.ringAngle) * p.ringRadius;
-        const tx = -Math.sin(p.ringAngle) * p.ringDir;
-        const tz = Math.cos(p.ringAngle) * p.ringDir;
-        p.yaw = Math.atan2(tx, tz);
+      const walkingSpeed = cheering ? 0 : p.speed * speedBoost;
+      p.phase += dt * walkingSpeed * 4.4;
+      p.axisPos += p.dir * walkingSpeed * dt;
+      if (p.axisPos >= p.maxBound) {
+        p.axisPos = p.maxBound;
+        p.dir = -1;
+      } else if (p.axisPos <= p.minBound) {
+        p.axisPos = p.minBound;
+        p.dir = 1;
       }
+
+      const alongZ = p.kind === 'STRIP';
+      const baseX = alongZ ? p.laneCoord : p.axisPos;
+      const baseZ = alongZ ? p.axisPos : p.laneCoord;
+      p.yaw = alongZ ? (p.dir > 0 ? 0 : Math.PI) : p.dir * Math.PI / 2;
 
       // Reactive dodge/sidestep when player's car or player approaches within 8.5m
       const dxThreat = baseX + p.dodgeX - threatX;
       const dzThreat = baseZ + p.dodgeZ - threatZ;
       const distSq = dxThreat * dxThreat + dzThreat * dzThreat;
-      if (distSq < 8.5 * 8.5 && distSq > 1e-4) {
+      if (!cheering && distSq < 8.5 * 8.5 && distSq > 1e-4) {
         const dist = Math.sqrt(distSq);
         const urgency = (8.5 - dist) / 8.5;
         const nx = dxThreat / dist;
@@ -1460,7 +1473,8 @@ export function LivingWorldNPCs() {
       p.x = baseX + p.dodgeX;
       p.z = baseZ + p.dodgeZ;
 
-      const groundY = getTerrainHeight(p.x, p.z);
+      if (cheering) p.yaw = Math.atan2(threatX - p.x, threatZ - p.z);
+      const groundY = getTravelHeight(p.x, p.z);
       if (!simState.startMenuOpen) civilianTargets.push({
         x: p.x, y: groundY, z: p.z,
         impact(damage, direction, point) {
@@ -1484,7 +1498,9 @@ export function LivingWorldNPCs() {
       const dzCamCit = camPos.z - p.z;
       if (rig && dxCamCit * dxCamCit + dzCamCit * dzCamCit < 85 * 85) {
         animateHumanoid(rig, {
-          dt, time: elapsed + i * 0.57, phase: p.phase, speed: p.speed * speedBoost,
+          dt, time: elapsed + i * 0.57, phase: p.phase, speed: walkingSpeed,
+          emote: cheering ? 1 : 0,
+          emoteStyle: 'WAVE',
           lookYaw: p.dodgeAlert * 0.45, lateral: p.dodgeAlert * 0.35,
         });
       }

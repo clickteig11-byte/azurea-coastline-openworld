@@ -1,15 +1,16 @@
 import { Lobby, persistChips, restoreChips } from './Lobby';
 import { PlaySettings } from './PlaySettings';
-import { Reticle } from './Reticle';
+import { Reticle, shouldShowReticle } from './Reticle';
 import { BUILD_COST, BUILD_MATERIALS, BUILD_TYPES, construction } from '../game/building';
-import { aiming } from '../game/aim';
+import { coastalNow, coastalReaction, interactCoast } from '../game/coastalPlay';
+import { POSTCARDS } from '../game/quirky';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Car,
   Plane,
   Ship,
   Footprints,
-  Compass,
+  Camera,
   Volume2,
   VolumeX,
   Crosshair,
@@ -39,6 +40,8 @@ import {
   Sparkles,
 } from 'lucide-react';
 import {
+  boardAmusementRide,
+  exitAmusementRide,
   CHARACTER_PRESETS,
   CharacterArchetype,
   CharacterCustomization,
@@ -56,7 +59,11 @@ import {
   WEAPON_SPECS,
 } from '../game/store';
 import { GRAND_PRIX_START, nearestRaceProgress } from '../game/grandPrix';
-import { AMUSEMENT_PARK_RIDES, coastBeachWidth, coastRoadRadius, getTerrainHeight, getTravelHeight, NORTH_BAY_BRIDGE, VehicleMode, type AmusementRideId } from '../game/worldMath';
+import {
+  AMUSEMENT_PARK_RIDES, atollDistance, COASTAL_ATOLLS, CONSTRUCTION_ISLAND, LANDMARKS,
+  MAIN_ISLAND_BOUNDS, NORTH_BAY_BRIDGE, OCEAN_AMUSEMENT_PIER, coastBeachWidth, coastRoadRadius,
+  getTerrainHeight, getTravelHeight, islandTwoRadius, type VehicleMode,
+} from '../game/worldMath';
 import { soundEngine } from '../game/soundEngine';
 import { MobileControls } from './MobileControls';
 
@@ -68,24 +75,54 @@ interface Props {
 export type MetropolisGameMode = GamePlayMode;
 
 const RADAR_SIZE = 128;
-const RADAR_CENTER = RADAR_SIZE / 2; // 64
-const RADAR_SCALE = 52 / 309;
+const RADAR_CENTER = RADAR_SIZE / 2;
+const RADAR_WORLD_Z = MAIN_ISLAND_BOUNDS.recommendedTerrainCenterZ;
+const RADAR_SCALE = 49 / Math.max(
+  RADAR_WORLD_Z - OCEAN_AMUSEMENT_PIER.zEnd,
+  ...Object.values(COASTAL_ATOLLS).map(({ x, z, radius }) => Math.hypot(x, z - RADAR_WORLD_Z) + radius * 1.12),
+);
 
-function worldToRadar(x: number, z: number): [number, number] {
-  const rx = Math.max(7, Math.min(RADAR_SIZE - 7, RADAR_CENTER + x * RADAR_SCALE));
-  const rz = Math.max(7, Math.min(RADAR_SIZE - 7, RADAR_CENTER + z * RADAR_SCALE));
-  return [rx, rz];
+function worldToRadar(x: number, z: number, markerLimit = Infinity): [number, number] {
+  const dx = x * RADAR_SCALE;
+  const dz = (z - RADAR_WORLD_Z) * RADAR_SCALE;
+  const distance = Math.hypot(dx, dz);
+  const scale = distance > markerLimit ? markerLimit / distance : 1;
+  return [RADAR_CENTER + dx * scale, RADAR_CENTER + dz * scale];
+}
+
+function radarOutline(pointAt: (angle: number) => [number, number]) {
+  return Array.from({ length: 84 }, (_, index) => {
+    const point = pointAt(index / 84 * Math.PI * 2);
+    return worldToRadar(...point).join(',');
+  }).join(' ');
 }
 
 function radarCoast(beach: boolean) {
-  return Array.from({ length: 84 }, (_, index) => {
-    const angle = index / 84 * Math.PI * 2;
+  return radarOutline((angle) => {
     const distance = coastRoadRadius(angle) + (beach ? coastBeachWidth(angle) : 0);
-    return worldToRadar(Math.sin(angle) * distance, Math.cos(angle) * distance).join(',');
-  }).join(' ');
+    return [Math.sin(angle) * distance, Math.cos(angle) * distance];
+  });
 }
+
 const radarShoreline = radarCoast(true);
 const radarCoastalRoad = radarCoast(false);
+const radarIslandTwo = radarOutline((angle) => {
+  const x = Math.sin(angle) * CONSTRUCTION_ISLAND.radiusX;
+  const z = Math.cos(angle) * CONSTRUCTION_ISLAND.radiusZ;
+  const radius = islandTwoRadius(x, z + CONSTRUCTION_ISLAND.z);
+  return [x / radius, CONSTRUCTION_ISLAND.z + z / radius];
+});
+const radarAtolls = Object.entries(COASTAL_ATOLLS).map(([id, atoll]) => ({
+  id,
+  outline: radarOutline((angle) => {
+    const dx = Math.sin(angle) * atoll.radius;
+    const dz = Math.cos(angle) * atoll.radius;
+    const radius = atollDistance(atoll.x + dx, atoll.z + dz, atoll);
+    return [atoll.x + dx / radius, atoll.z + dz / radius];
+  }),
+}));
+const [pierLeft, pierTop] = worldToRadar(-OCEAN_AMUSEMENT_PIER.halfWidth, OCEAN_AMUSEMENT_PIER.zEnd);
+const [pierRight, pierBottom] = worldToRadar(OCEAN_AMUSEMENT_PIER.halfWidth, OCEAN_AMUSEMENT_PIER.zStart);
 
 function formatLapTime(seconds: number): string {
   const safe = Math.max(0, seconds);
@@ -216,6 +253,7 @@ interface LandmarkDestination {
   spawnCarZ: number;
   spawnFootX: number;
   spawnFootZ: number;
+  warpLookAt?: readonly [number, number];
 }
 
 export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
@@ -463,6 +501,23 @@ export const WORLD_LANDMARK_DESTINATIONS: LandmarkDestination[] = [
   },
 ];
 
+for (const [id, label, spawn] of [
+  ['solis', 'Solis Lighthouse Atoll', { spawnFootX: 469, spawnFootZ: 344, spawnCarX: 469, spawnCarZ: 357 }],
+  ['azureaatoll', 'Azurea Stunt Atoll', {
+    spawnFootX: -436, spawnFootZ: -329, spawnCarX: -423, spawnCarZ: -331,
+    warpLookAt: [-447, -356],
+  }],
+] as const) {
+  const landmark = LANDMARKS.find((item) => item.id === id);
+  if (!landmark) continue;
+  const [x, , z] = landmark.position;
+  WORLD_LANDMARK_DESTINATIONS.push({
+    id, shortLabel: label, menuLabel: label, fullTitle: label,
+    cityBadge: 'COASTAL ATOLL', note: landmark.subtitle, color: landmark.color, forceMode: 'FOOT',
+    x, z, ...spawn,
+  });
+}
+
 const WORLD_TOUR_STOPS = WORLD_LANDMARK_DESTINATIONS.filter((d) => d.isWorldWonder);
 
 export function HUD({ hud, onSelectMode }: Props) {
@@ -471,7 +526,11 @@ export function HUD({ hud, onSelectMode }: Props) {
   const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('empire');
   const [mobileTeleportOpen, setMobileTeleportOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [controlsOpen, setControlsOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(simState.controlsOpen);
+  const updateControlsOpen = (open: boolean) => {
+    simState.controlsOpen = open;
+    setControlsOpen(open);
+  };
   const [worldIntro, setWorldIntro] = useState(false);
   const chipsRestoredRef = useRef(false);
   const controlSettings = simState.controlSettings;
@@ -532,7 +591,16 @@ export function HUD({ hud, onSelectMode }: Props) {
     );
   });
 
-  const [pointerLocked, setPointerLocked] = useState(false);
+  const [pointerLocked, setPointerLocked] = useState(() => typeof document !== 'undefined' && Boolean(document.pointerLockElement));
+  const [showPointerHint, setShowPointerHint] = useState(false);
+  const cameraView = simState.cameraView;
+  const toggleCamera = () => {
+    simState.cameraView = 1 - simState.cameraView;
+    simState.orbitYaw = simState.orbitPitch = 0;
+    if (simState.cameraView === 1) requestGamePointerLock();
+    else if (document.pointerLockElement && simState.mode !== 'FOOT') document.exitPointerLock?.();
+    setUiTick((n) => n + 1);
+  };
 
   useEffect(() => {
     simState.touchControlsEnabled = touchUi;
@@ -545,7 +613,10 @@ export function HUD({ hud, onSelectMode }: Props) {
   }, []);
 
   useEffect(() => {
-    const onSyncUi = () => setUiTick((t) => t + 1);
+    const onSyncUi = () => {
+      setControlsOpen(simState.controlsOpen);
+      setUiTick((t) => t + 1);
+    };
     window.addEventListener('toggle-customizer', onSyncUi);
     window.addEventListener('customizer-updated', onSyncUi);
     window.addEventListener('toggle-start-menu', onSyncUi);
@@ -563,13 +634,21 @@ export function HUD({ hud, onSelectMode }: Props) {
   }, []);
 
   useEffect(() => {
-    simState.controlsOpen = controlsOpen;
-    return () => { simState.controlsOpen = false; };
+    if (!controlsOpen) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      updateControlsOpen(false);
+      if (document.pointerLockElement) document.exitPointerLock?.();
+    };
+    window.addEventListener('keydown', onEscape, true);
+    return () => window.removeEventListener('keydown', onEscape, true);
   }, [controlsOpen]);
 
   const s = simState as any;
   const isStartMenuOpen = Boolean(s.startMenuOpen);
-  const activeGameMode: GamePlayMode = (s.gameMode as GamePlayMode) || 'FREE_ROAM';
+  const activeGameMode = hud.gameMode ?? simState.gameMode;
 
   const handleToggleMute = () => {
     updateControls({ audioMuted: !muted });
@@ -581,7 +660,7 @@ export function HUD({ hud, onSelectMode }: Props) {
     if (next) {
       simState.customizerOpen = false;
       setMobileTeleportOpen(false);
-      setControlsOpen(false);
+      updateControlsOpen(false);
     }
     window.dispatchEvent(new CustomEvent('toggle-start-menu'));
     setUiTick((t) => t + 1);
@@ -591,7 +670,7 @@ export function HUD({ hud, onSelectMode }: Props) {
     const prev = Boolean(simState.customizerOpen);
     s.startMenuOpen = false;
     setMobileTeleportOpen(false);
-    setControlsOpen(false);
+    updateControlsOpen(false);
     window.dispatchEvent(new CustomEvent('toggle-customizer'));
     if (Boolean(simState.customizerOpen) === prev) {
       simState.customizerOpen = !prev;
@@ -729,8 +808,9 @@ export function HUD({ hud, onSelectMode }: Props) {
       const footX = matched.spawnFootX;
       const footZ = matched.spawnFootZ;
 
-      const carYaw = Math.atan2(matched.x - carX, matched.z - carZ);
-      const footYaw = Math.atan2(matched.x - footX, matched.z - footZ);
+      const [lookX, lookZ] = matched.warpLookAt ?? [matched.x, matched.z];
+      const carYaw = Math.atan2(lookX - carX, lookZ - carZ);
+      const footYaw = Math.atan2(lookX - footX, lookZ - footZ);
 
       const footY = Math.max(getTravelHeight(footX, footZ), 0) + 0.08;
       simState.playerPos.set(footX, footY, footZ);
@@ -914,7 +994,7 @@ export function HUD({ hud, onSelectMode }: Props) {
   const split = simState.sectorTimes[lastSector] === undefined || simState.bestSectors[lastSector] === undefined ?
     null : simState.sectorTimes[lastSector] - simState.bestSectors[lastSector];
 
-  const [playerRx, playerRz] = worldToRadar(activePos.x, activePos.z);
+  const [playerRx, playerRz] = worldToRadar(activePos.x, activePos.z, 48);
   const [cpRx, cpRz] = worldToRadar(activeCp.position[0], activeCp.position[2]);
 
   const fwdX = Math.sin(activeYaw);
@@ -922,8 +1002,8 @@ export function HUD({ hud, onSelectMode }: Props) {
   const rightX = fwdZ;
   const rightZ = -fwdX;
 
-  const coneLen = 24;
-  const coneHalfWidth = 11;
+  const coneLen = 13;
+  const coneHalfWidth = 6;
   const coneLeftX = playerRx + fwdX * coneLen - rightX * coneHalfWidth;
   const coneLeftZ = playerRz + fwdZ * coneLen - rightZ * coneHalfWidth;
   const coneRightX = playerRx + fwdX * coneLen + rightX * coneHalfWidth;
@@ -948,11 +1028,10 @@ export function HUD({ hud, onSelectMode }: Props) {
   const [runwayStartX, runwayStartZ] = worldToRadar(-195, 155);
   const [runwayEndX, runwayEndZ] = worldToRadar(-45, 155);
 
-  const playerHp = Math.max(0, Math.min(100, Math.round(hud.playerHp ?? simState.playerHp ?? 100)));
-  const playerShield = Math.max(
-    0,
-    Math.min(100, Math.round(hud.playerShield ?? simState.playerShield ?? 100))
-  );
+  const health = hud.playerHp ?? simState.playerHp;
+  const shield = hud.playerShield ?? simState.playerShield;
+  const playerHp = Math.max(0, Math.min(100, Math.round(health)));
+  const playerShield = Math.max(0, Math.min(100, Math.round(shield)));
   const activeWeaponIdx = hud.activeWeaponIdx ?? simState.activeWeaponIdx ?? 0;
   const activeSpec = WEAPON_SPECS[activeWeaponIdx] ?? WEAPON_SPECS[0];
   const currentAmmo = hud.ammo ?? simState.ammo ?? activeSpec.clipSize;
@@ -995,13 +1074,33 @@ export function HUD({ hud, onSelectMode }: Props) {
   const activeBoatIdx = typeof s.activeBoatIdx === 'number' ? s.activeBoatIdx : 0;
   const activePlaneIdx = typeof s.activePlaneIdx === 'number' ? s.activePlaneIdx : 0;
 
-  const showFootVitals = hud.mode === 'FOOT' || activeGameMode === 'BATTLE_ROYALE';
+  const activeRideId = simState.activeRide ?? hud.activeRide;
+  const activeRide = AMUSEMENT_PARK_RIDES.find((ride) => ride.id === activeRideId);
+  const showModeBanner = activeGameMode !== 'FREE_ROAM';
+  const showRidePicker = !activeRide && !showModeBanner &&
+    (Boolean(hud.nearbyRide) || (activePos.z < -495 && Math.abs(activePos.x) < 60));
+  const showOverlays = !controlsOpen && !isCustomizerOpen && !mobileTeleportOpen;
+  const coastalPrompt = !activeRide && showOverlays ? hud.coastalPrompt : undefined;
+  const discovery = showOverlays ? hud.discovery : undefined;
+  const showFootVitals = activeGameMode === 'BATTLE_ROYALE' ||
+    (activeGameMode === 'FREE_ROAM' ? health < 100 || shield < 100 : hud.mode === 'FOOT');
   const showQuickBar =
     !controlsOpen &&
     !isCustomizerOpen &&
     !simState.parachuting &&
-    !simState.activeRide &&
+    !activeRideId &&
+    !hud.swimming &&
     (hud.mode === 'FOOT' || (activeGameMode === 'BATTLE_ROYALE' && hud.mode === 'CAR'));
+  const showBuildControls = showQuickBar && hud.mode === 'FOOT' && (construction.active || construction.pickaxe);
+  const pointerHintEnabled = showOverlays && !isStartMenuOpen && !touchUi &&
+    (hud.mode === 'FOOT' || cameraView === 1 || Boolean(activeRide));
+
+  useEffect(() => {
+    if (!pointerHintEnabled) return;
+    setShowPointerHint(true);
+    const timeout = window.setTimeout(() => setShowPointerHint(false), 2200);
+    return () => window.clearTimeout(timeout);
+  }, [pointerHintEnabled, pointerLocked, hud.mode, cameraView, activeGameMode, activeRideId]);
 
   const togglePickaxeTool = () => {
     construction.pickaxe = !construction.pickaxe;
@@ -1027,6 +1126,8 @@ export function HUD({ hud, onSelectMode }: Props) {
             type="button"
             onClick={togglePickaxeTool}
             title="Pickaxe (T)"
+            aria-label="Pickaxe"
+            aria-pressed={construction.pickaxe && !construction.active}
             className={`flex shrink-0 items-center gap-1 rounded-xl px-2 py-1 font-semibold transition ${
               compact ? 'text-[11px]' : 'text-xs font-medium'
             } ${
@@ -1036,12 +1137,14 @@ export function HUD({ hud, onSelectMode }: Props) {
             }`}
           >
             <Pickaxe className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
-            <span>Axe</span>
+            {!compact && <span>Axe</span>}
           </button>
           <button
             type="button"
             onClick={toggleBuildTool}
             title="Build Mode (G)"
+            aria-label="Build mode"
+            aria-pressed={construction.active}
             className={`flex shrink-0 items-center gap-1 rounded-xl px-2 py-1 font-semibold transition ${
               compact ? 'text-[11px]' : 'text-xs font-medium'
             } ${
@@ -1051,7 +1154,7 @@ export function HUD({ hud, onSelectMode }: Props) {
             }`}
           >
             <Boxes className={compact ? 'h-3 w-3' : 'h-3.5 w-3.5'} />
-            <span>Build</span>
+            {!compact && <span>Build</span>}
           </button>
           <span className="h-3.5 w-px shrink-0 bg-white/15" />
         </>
@@ -1064,6 +1167,7 @@ export function HUD({ hud, onSelectMode }: Props) {
             key={spec.id}
             type="button"
             onClick={() => equipWeaponSlot(idx)}
+            aria-pressed={isSelected}
             className={`shrink-0 rounded-xl px-2 py-1 transition ${
               compact ? 'text-[10px] font-semibold' : 'text-xs font-medium'
             } ${
@@ -1072,13 +1176,14 @@ export function HUD({ hud, onSelectMode }: Props) {
                 : 'text-neutral-300 hover:bg-white/10 hover:text-white'
             }`}
           >
-            {compact ? spec.id : spec.shortName}
+            {spec.shortName}
           </button>
         );
       })}
 
       <button
         type="button"
+        aria-label={`Fire weapon • ${currentAmmo} of ${maxAmmo} rounds`}
         onClick={() => window.dispatchEvent(new CustomEvent('fire-weapon'))}
         className={`shrink-0 rounded-xl bg-white/10 px-2 py-1 font-medium tabular-nums text-white transition hover:bg-white/20 ${
           compact ? 'text-[10px]' : 'px-2.5 text-xs'
@@ -1139,7 +1244,7 @@ export function HUD({ hud, onSelectMode }: Props) {
   // IN-GAME HUD (Mode-Specific & Mobile-Friendly)
   // =========================================================================
   return (
-    <div className="pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans">
+    <div className="wh-game-hud pointer-events-none fixed inset-0 z-20 select-none overflow-hidden font-sans" data-touch={touchUi && !activeRide} data-riding={Boolean(activeRide)}>
       {worldIntro && <div className="wh-world-fade" onAnimationEnd={() => setWorldIntro(false)} />}
       {/* 0. IMPACT VIGNETTE FLASH */}
       {crashFlashTimer > 0 && (
@@ -1149,8 +1254,8 @@ export function HUD({ hud, onSelectMode }: Props) {
         />
       )}
 
-      {!controlsOpen && !isCustomizerOpen && (hud.mode === 'FOOT' || simState.cameraView === 1 || aiming.ads || activeGameMode === 'BATTLE_ROYALE') && <Reticle />}
-      {hud.mode === 'FOOT' && !controlsOpen && !isCustomizerOpen && !simState.parachuting && (construction.active || construction.pickaxe) && (
+      {!controlsOpen && !isCustomizerOpen && shouldShowReticle(hud, showBuildControls) && <Reticle />}
+      {showBuildControls && (
         <div className={`wh-build-hud ${touchUi ? 'wh-build-touch' : ''}`}>
           <div className="wh-materials">{BUILD_MATERIALS.map((material) => (
             <button key={material} type="button" aria-pressed={construction.material === material} onClick={() => {
@@ -1168,22 +1273,8 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       )}
 
-        {!controlsOpen && !isCustomizerOpen && !touchUi && (hud.mode === 'FOOT' || simState.cameraView === 1 || Boolean(hud.activeRide)) && (
-          <div
-            className={`pointer-events-none fixed left-1/2 top-3 z-30 -translate-x-1/2 rounded-full border px-3 py-1 text-[11px] font-medium shadow-lg backdrop-blur-md transition ${
-              pointerLocked
-                ? 'border-emerald-400/35 bg-emerald-950/65 text-emerald-200'
-                : 'border-white/15 bg-neutral-950/80 text-neutral-100'
-            }`}
-          >
-            {pointerLocked
-              ? `Mouse Locked · [X] ${simState.cameraView === 1 ? '3rd Person' : '1st Person'} · [Esc] Unlock`
-              : `Click view to lock mouse · [X] ${simState.cameraView === 1 ? '3rd Person' : '1st Person'} · [M] Menu`}
-          </div>
-        )}
-
       {/* 2. TOP-LEFT BAR */}
-      <div className="pointer-events-auto fixed left-2.5 top-2.5 z-30 flex max-w-[calc(100vw-7.8rem)] items-center gap-0.5 overflow-x-auto rounded-full border border-white/10 bg-neutral-950/75 px-1.5 py-1 shadow-lg backdrop-blur-md sm:left-3 sm:top-3 sm:max-w-none sm:gap-1 sm:px-2 sm:py-1.5">
+      <div className="wh-hud-glass pointer-events-auto fixed left-2.5 top-2.5 z-40 flex max-w-[calc(100vw-7rem)] items-center gap-0.5 overflow-x-auto rounded-full px-1.5 py-1 sm:left-3 sm:top-3 sm:gap-1 sm:px-2 sm:py-1.5 lg:max-w-none">
         <button
           onClick={() => handleToggleStartMenu(true)}
           className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-xs font-medium text-white transition hover:bg-white/20 sm:px-2.5"
@@ -1194,8 +1285,8 @@ export function HUD({ hud, onSelectMode }: Props) {
 
         <button
           onClick={() => {
-            setControlsOpen((o) => !o);
-            if (!controlsOpen) simState.customizerOpen = false;
+            updateControlsOpen(!simState.controlsOpen);
+            if (simState.controlsOpen) simState.customizerOpen = false;
           }}
           title="Customize Controls & Sensitivity"
           className={`flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-xs font-medium transition sm:px-2.5 ${
@@ -1209,14 +1300,8 @@ export function HUD({ hud, onSelectMode }: Props) {
         </button>
 
         <button type="button" className="shrink-0 rounded-full px-2 py-1 text-xs text-neutral-200 hover:bg-white/10 sm:px-2.5"
-          onClick={() => {
-            simState.cameraView = 1 - simState.cameraView;
-            simState.orbitYaw = simState.orbitPitch = 0;
-            if (simState.cameraView === 1) requestGamePointerLock();
-            else if (document.pointerLockElement && simState.mode !== 'FOOT') document.exitPointerLock?.();
-            setUiTick((n) => n + 1);
-          }}
-          aria-label="Toggle first-person camera">{simState.cameraView === 1 ? '1st' : '3rd'}</button>
+          onClick={toggleCamera}
+          aria-label="Toggle first-person camera">{cameraView === 1 ? '1st' : '3rd'}</button>
 
         <button
           onClick={handleToggleCustomizer}
@@ -1261,16 +1346,16 @@ export function HUD({ hud, onSelectMode }: Props) {
       </div>
 
       {/* 3. TOP-RIGHT FAST-TRAVEL DROPDOWN (Clean single-row capsule across all viewports) */}
-      <div className="pointer-events-auto fixed right-2.5 top-2.5 z-30 sm:right-3 sm:top-3">
+      <div className="pointer-events-auto fixed right-2.5 top-2.5 z-40 sm:right-3 sm:top-3">
         <div className="relative">
           <button
             onClick={() => setMobileTeleportOpen((o) => !o)}
             aria-expanded={mobileTeleportOpen}
-            className="flex items-center gap-1.5 rounded-full border border-white/10 bg-neutral-950/75 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-md transition hover:bg-neutral-900"
+            className="wh-hud-glass flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-white transition hover:bg-slate-900"
           >
             <MapPin className="h-3.5 w-3.5 text-sky-400" />
             <span>Warp</span>
-            <span className="hidden text-sky-300 sm:inline">
+            <span className="hidden max-w-28 truncate text-sky-300 lg:inline">
               · {WORLD_LANDMARK_DESTINATIONS.find((d) => d.id === selectedLandmarkId)?.shortLabel || 'Vegas'}
             </span>
             <ChevronRight
@@ -1283,7 +1368,7 @@ export function HUD({ hud, onSelectMode }: Props) {
           {mobileTeleportOpen && (
             <div className="absolute right-0 mt-2 max-h-80 w-60 overflow-y-auto rounded-2xl border border-white/10 bg-neutral-950/92 p-2 shadow-2xl backdrop-blur-md">
               <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
-                Fast Travel · 12 Landmarks
+                Fast Travel · {WORLD_LANDMARK_DESTINATIONS.length} Landmarks
               </div>
               <div className="flex flex-col gap-0.5">
                 {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
@@ -1312,240 +1397,228 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       </div>
 
-      {/* 4. MODE-SPECIFIC TOP-CENTER HUD STRIPS */}
-      {activeGameMode === 'BATTLE_ROYALE' && (
-        <div className="pointer-events-auto fixed left-1/2 top-14 z-30 -translate-x-1/2 sm:top-16">
-          <div className="flex items-center gap-3 rounded-full border border-white/15 bg-neutral-950/80 px-4 py-1.5 text-xs text-white shadow-xl backdrop-blur-md">
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              <span className="text-neutral-400">Alive</span>
-              <span className="font-semibold tabular-nums">{simState.brResult === 'OUT' ? Math.max(0, aliveCount - 1) : aliveCount}</span>
-            </div>
-            <span className="h-3.5 w-px bg-white/15" />
-            <div className="flex items-center gap-1.5">
-              <Skull className="h-3.5 w-3.5 text-rose-400" />
-              <span className="text-neutral-400">Elims</span>
-              <span className="font-semibold tabular-nums">{eliminations}</span>
-            </div>
-            <span className="h-3.5 w-px bg-white/15" />
-            <div className="flex items-center gap-1.5">
-              <Radio className="h-3.5 w-3.5 text-violet-400" />
-              <span className="hidden text-neutral-400 sm:inline">Storm</span>
-              <span className="font-semibold tabular-nums">{stormRadius}m</span>
-            </div>
-            <span className="h-3.5 w-px bg-white/15" />
-            {simState.brResult && (
-              <>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${
-                    simState.brResult === 'WON'
-                      ? 'bg-emerald-500/25 text-emerald-300'
-                      : 'bg-rose-500/25 text-rose-300'
-                  }`}
-                >
-                  {simState.brResult === 'WON' ? 'VICTORY' : 'ELIMINATED'}
-                </span>
-                <span className="h-3.5 w-px bg-white/15" />
-              </>
-            )}
-            <button
-              onClick={() => window.dispatchEvent(new CustomEvent('br-drop'))}
-              className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-neutral-950 transition hover:bg-neutral-200"
-            >
-              {simState.brResult ? 'Play again' : 'Drop Again (P)'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {activeGameMode === 'GRAND_PRIX' && (
-        <div className="pointer-events-auto fixed left-1/2 top-14 z-30 w-[92vw] max-w-xl -translate-x-1/2 sm:top-16 sm:w-auto">
-          <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl border border-white/15 bg-neutral-950/80 px-4 py-2 text-xs text-white shadow-xl backdrop-blur-md">
-            <span className="font-semibold tabular-nums text-amber-200" aria-label="Race position">P{raceRank}</span>
-            <div className="flex items-center gap-1.5">
-              <Flag className="h-3.5 w-3.5 text-amber-400" />
-              <span className="text-neutral-400">Lap</span>
-              <span className="font-semibold tabular-nums">{lapCount + 1}</span>
-            </div>
-            <span className="h-3.5 w-px bg-white/15" />
-            <div className="flex items-center gap-1.5">
-              <span className="text-neutral-400">Gate</span>
-              <span className="font-semibold tabular-nums">
-                {activeCpIndex + 1} / {totalCheckpoints}
-              </span>
-            </div>
-            <span className="hidden h-3.5 w-px bg-white/15 sm:inline" />
-            <div className="flex items-center gap-1.5">
-              <Navigation className="h-3.5 w-3.5 text-sky-400" />
-              <span className="max-w-[140px] truncate font-medium text-neutral-200">
-                {activeCp.name}
-              </span>
-              <span className="font-semibold tabular-nums text-sky-300">{cpDistMeters}m</span>
-            </div>
-            <span className="h-3.5 w-px bg-white/15" />
-            <div className="flex items-center gap-2 tabular-nums">
-              <span>
-                <span className="text-neutral-400">Time </span>
-                <span className="font-semibold">{formatLapTime(lapTime)}</span>
-              </span>
-              {bestLapTime !== null && (
-                <span>
-                  <span className="text-neutral-400">Best </span>
-                  <span className="font-semibold text-emerald-400">
-                    {formatLapTime(bestLapTime)}
+      <div className="wh-hud-upper">
+        {!activeRide && activeGameMode === 'BATTLE_ROYALE' && (
+          <div className="wh-hud-banner">
+            <div className="wh-hud-glass flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl px-3 py-1.5 text-xs text-white">
+              <div className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="text-neutral-400">Alive</span>
+                <span className="font-semibold tabular-nums">{simState.brResult === 'OUT' ? Math.max(0, aliveCount - 1) : aliveCount}</span>
+              </div>
+              <span className="h-3.5 w-px bg-white/15" />
+              <div className="flex items-center gap-1.5">
+                <Skull className="h-3.5 w-3.5 text-rose-400" />
+                <span className="text-neutral-400">Elims</span>
+                <span className="font-semibold tabular-nums">{eliminations}</span>
+              </div>
+              <span className="h-3.5 w-px bg-white/15" />
+              <div className="flex items-center gap-1.5">
+                <Radio className="h-3.5 w-3.5 text-violet-400" />
+                <span className="hidden text-neutral-400 sm:inline">Storm</span>
+                <span className="font-semibold tabular-nums">{stormRadius}m</span>
+              </div>
+              <span className="h-3.5 w-px bg-white/15" />
+              {simState.brResult && (
+                <>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide ${
+                      simState.brResult === 'WON'
+                        ? 'bg-emerald-500/25 text-emerald-300'
+                        : 'bg-rose-500/25 text-rose-300'
+                    }`}
+                  >
+                    {simState.brResult === 'WON' ? 'VICTORY' : 'ELIMINATED'}
                   </span>
-                </span>
+                  <span className="h-3.5 w-px bg-white/15" />
+                </>
               )}
-              {split !== null && (
-                <span className={split <= 0 ? 'text-emerald-300' : 'text-amber-300'}>
-                  {split > 0 ? '+' : '−'}{Math.abs(split).toFixed(2)}
-                </span>
-              )}
-              <meter className="hidden h-2 w-12 accent-amber-400 sm:inline" aria-label="Drift boost" min={0} max={100} value={driftScore} />
+              <button
+                onClick={() => window.dispatchEvent(new CustomEvent('br-drop'))}
+                className="rounded-full bg-white px-2.5 py-0.5 text-[11px] font-semibold text-neutral-950 transition hover:bg-neutral-200"
+              >
+                {simState.brResult ? 'Play again' : 'Drop Again (P)'}
+              </button>
             </div>
-            <button
-              onClick={resetGrandPrixRace}
-              className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-medium text-white transition hover:bg-white/20"
-            >
-              <RotateCcw className="h-3 w-3" />
-              <span>Restart Race</span>
-            </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {activeGameMode === 'WORLD_TOUR' && (
-        <div className="pointer-events-auto fixed left-1/2 top-14 z-30 w-[92vw] max-w-md -translate-x-1/2 sm:top-16">
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/15 bg-neutral-950/82 px-4 py-2.5 text-white shadow-xl backdrop-blur-md">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <Globe className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-sky-300">
-                  {activeTourStop.cityBadge}
-                </span>
-                <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-neutral-200">
-                  {tourVisitedCount} / {WORLD_TOUR_STOPS.length}
+        {!activeRide && activeGameMode === 'GRAND_PRIX' && (
+          <div className="wh-hud-banner">
+            <div className="wh-hud-glass flex flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl px-3 py-2 text-xs text-white">
+              <span className="font-semibold tabular-nums text-amber-200" aria-label="Race position">P{raceRank}</span>
+              <div className="flex items-center gap-1.5">
+                <Flag className="h-3.5 w-3.5 text-amber-400" />
+                <span className="text-neutral-400">Lap</span>
+                <span className="font-semibold tabular-nums">{lapCount + 1}</span>
+              </div>
+              <span className="h-3.5 w-px bg-white/15" />
+              <div className="flex items-center gap-1.5">
+                <span className="text-neutral-400">Gate</span>
+                <span className="font-semibold tabular-nums">
+                  {activeCpIndex + 1} / {totalCheckpoints}
                 </span>
               </div>
-              <div className="mt-0.5 truncate text-sm font-semibold text-white">
-                {activeTourStop.fullTitle}
+              <span className="hidden h-3.5 w-px bg-white/15 sm:inline" />
+              <div className="flex items-center gap-1.5">
+                <Navigation className="h-3.5 w-3.5 text-sky-400" />
+                <span className="max-w-[140px] truncate font-medium text-neutral-200">
+                  {activeCp.name}
+                </span>
+                <span className="font-semibold tabular-nums text-sky-300">{cpDistMeters}m</span>
               </div>
-              <p className="mt-0.5 line-clamp-1 text-[11px] text-neutral-400">
-                {activeTourStop.note}
-              </p>
+              <span className="h-3.5 w-px bg-white/15" />
+              <div className="flex items-center gap-2 tabular-nums">
+                <span>
+                  <span className="text-neutral-400">Time </span>
+                  <span className="font-semibold">{formatLapTime(lapTime)}</span>
+                </span>
+                {bestLapTime !== null && (
+                  <span>
+                    <span className="text-neutral-400">Best </span>
+                    <span className="font-semibold text-emerald-400">
+                      {formatLapTime(bestLapTime)}
+                    </span>
+                  </span>
+                )}
+                {split !== null && (
+                  <span className={split <= 0 ? 'text-emerald-300' : 'text-amber-300'}>
+                    {split > 0 ? '+' : '−'}{Math.abs(split).toFixed(2)}
+                  </span>
+                )}
+                <meter className="hidden h-2 w-12 accent-amber-400 sm:inline" aria-label="Drift boost" min={0} max={100} value={driftScore} />
+              </div>
+              <button
+                onClick={resetGrandPrixRace}
+                className="flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-medium text-white transition hover:bg-white/20"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Restart Race</span>
+              </button>
             </div>
-            <button
-              onClick={handleNextTourLandmark}
-              className="flex shrink-0 items-center gap-1 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-neutral-950 transition hover:bg-neutral-200"
-            >
-              <span>Next Landmark</span>
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* AMUSEMENT PARK RIDABLE ATTRACTIONS INTERACTIVE BAR */}
-      {!isStartMenuOpen && (hud.activeRide || hud.nearbyRide || selectedLandmarkId === 'wonderisland') && (
-        <div className="pointer-events-auto fixed left-1/2 top-14 z-40 -translate-x-1/2 sm:top-16">
-          <div className="flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-pink-400/35 bg-neutral-950/90 px-3.5 py-2 text-xs text-white shadow-2xl backdrop-blur-md">
-            <span className="rounded-md bg-pink-500/20 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-pink-300">
+        {!activeRide && activeGameMode === 'WORLD_TOUR' && (
+          <div className="wh-hud-banner">
+            <div className="wh-hud-glass flex items-center justify-between gap-3 rounded-2xl px-3 py-2 text-white">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <Globe className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-sky-300">
+                    {activeTourStop.cityBadge}
+                  </span>
+                  <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-neutral-200">
+                    {tourVisitedCount} / {WORLD_TOUR_STOPS.length}
+                  </span>
+                </div>
+                <div className="mt-0.5 truncate text-sm font-semibold text-white">
+                  {activeTourStop.fullTitle}
+                </div>
+                <p className="mt-0.5 line-clamp-1 text-[11px] text-neutral-400">
+                  {activeTourStop.note}
+                </p>
+              </div>
+              <button
+                onClick={handleNextTourLandmark}
+                className="flex shrink-0 items-center gap-1 rounded-xl bg-white px-3 py-2 text-xs font-semibold text-neutral-950 transition hover:bg-neutral-200"
+              >
+                <span>Next Landmark</span>
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showRidePicker && (
+          <div className="wh-hud-banner wh-hud-glass flex flex-wrap items-center justify-center gap-1.5 rounded-2xl px-2.5 py-2 text-white">
+            <span className="px-1 text-[10px] font-semibold uppercase tracking-wider text-fuchsia-200">
               Wonder Ocean Pier Rides
             </span>
             {AMUSEMENT_PARK_RIDES.map((ride) => {
-              const isRiding = hud.activeRide === ride.id;
-              const isNear = hud.nearbyRide === ride.id;
+              const isNear = !coastalPrompt && hud.nearbyRide === ride.id;
               return (
                 <button
                   key={ride.id}
                   type="button"
-                  onClick={() => {
-                    if (isRiding) {
-                      simState.activeRide = null;
-                      simState.playerPos.set(ride.x + 8, getTravelHeight(ride.x + 8, ride.z) + 0.08, ride.z);
-                    } else {
-                      simState.activeRide = ride.id;
-                      simState.mode = 'FOOT';
-                      simState.parachuting = false;
-                      simState.gliding = false;
-                      if (ride.id === 'COASTER') {
-                        simState.cameraView = 1;
-                        simState.orbitYaw = 0;
-                        simState.orbitPitch = 0;
-                        requestGamePointerLock();
-                      }
-                    }
-                    window.dispatchEvent(new CustomEvent('hud-sync'));
-                  }}
-                  className={`rounded-xl border px-2.5 py-1 text-[11px] font-semibold transition ${
-                    isRiding
-                      ? 'border-amber-300 bg-amber-400 text-neutral-950 shadow-md'
-                      : isNear
-                      ? 'border-pink-400/70 bg-pink-500/25 text-white'
-                      : 'border-white/12 bg-white/5 text-neutral-200 hover:bg-white/15'
-                  }`}
+                  onClick={() => boardAmusementRide(ride.id)}
+                  title={ride.name}
+                  className={`wh-hud-chip ${isNear ? 'wh-hud-chip-selected' : ''}`}
                 >
-                  {isRiding ? `Exit ${ride.name.split(' ')[0]} [E]` : `Ride ${ride.name.split(' ')[0]}${isNear ? ' [E]' : ''}`}
+                  {ride.name.split(' ')[0]}{isNear && !touchUi ? ' [E]' : ''}
                 </button>
               );
             })}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* CYCLONE PIER COASTER FRONT-ROW FPV TELEMETRY PILL */}
-      {!isStartMenuOpen && hud.activeRide === 'COASTER' && (
-        <div className="pointer-events-auto fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
-          <div className="flex items-center gap-3 rounded-2xl border border-amber-400/40 bg-neutral-950/88 px-4 py-2 text-xs text-white shadow-2xl backdrop-blur-md">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-rose-500" />
-            <span className="font-mono text-[11px] font-bold uppercase tracking-wider text-amber-300">
-              Cyclone Pier Coaster
-            </span>
-            <span className="text-white/35">·</span>
-            <span className="font-mono text-[11px] font-semibold text-white">
-              {simState.cameraView === 1 ? 'Front-Row FPV' : '3rd Person'}
-            </span>
-            <span className="text-white/35">·</span>
-            <span className="font-mono text-[11px] font-bold text-sky-300">
-              {hud.speedKmh} km/h
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                simState.cameraView = simState.cameraView === 1 ? 0 : 1;
-                simState.orbitYaw = 0;
-                simState.orbitPitch = 0;
-                window.dispatchEvent(new CustomEvent('hud-sync'));
-              }}
-              className="rounded-lg border border-white/15 bg-white/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-white hover:bg-white/20"
-            >
-              [X] {simState.cameraView === 1 ? '3rd Person' : 'Front-Row FPV'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                simState.activeRide = null;
-                simState.playerPos.set(32, getTravelHeight(32, -600) + 0.08, -600);
-                window.dispatchEvent(new CustomEvent('hud-sync'));
-              }}
-              className="rounded-lg border border-rose-400/40 bg-rose-500/20 px-2 py-0.5 font-mono text-[10px] font-semibold text-rose-200 hover:bg-rose-500/35"
-            >
-              [E] Exit
+        {activeRide && (
+          <div className="wh-hud-banner wh-hud-glass flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-2xl px-3 py-2 text-xs text-white">
+            <span className="font-semibold tracking-wide text-amber-200">{activeRide.name}</span>
+            {activeRide.id === 'COASTER' && (
+              <>
+                <span className="font-semibold text-sky-200">{hud.speedKmh} km/h</span>
+                <button type="button" onClick={toggleCamera} className="wh-hud-chip">
+                  {!touchUi && '[X] '}{cameraView === 1 ? '3rd Person' : 'Front-Row FPV'}
+                </button>
+              </>
+            )}
+            <button type="button" onClick={exitAmusementRide} className="wh-hud-chip">
+              {!touchUi && '[E] '}Exit
             </button>
           </div>
-        </div>
+        )}
+
+        {pointerHintEnabled && !activeRide && !showModeBanner && !showRidePicker && !coastalPrompt && !discovery && (
+          <div className="wh-hud-glass wh-pointer-hint rounded-full px-3 py-1 text-[11px] font-medium text-slate-200"
+            data-visible={showPointerHint} aria-hidden={!showPointerHint}>
+            {pointerLocked ? 'Mouse Locked' : 'Click view to lock mouse'}
+            {' · [X] '}{cameraView === 1 ? '3rd Person' : '1st Person'}{pointerLocked ? ' · [Esc] Unlock' : ''}
+          </div>
+        )}
+
+        {coastalPrompt && (
+          <button type="button" className="wh-hud-glass wh-coastal-prompt"
+            disabled={coastalPrompt === 'Wheel spinning'}
+            onClick={() => {
+              if (interactCoast()) setUiTick((n) => n + 1);
+            }}>
+            {!touchUi && coastalPrompt !== 'Wheel spinning' && <kbd>E</kbd>}
+            {coastalPrompt}
+          </button>
+        )}
+
+        {discovery && (
+          <div key={discovery.id} className="wh-hud-glass wh-discovery" role="status">
+            <div className="wh-discovery-stamp" data-kind={discovery.kind} aria-hidden="true">
+              {discovery.kind === 'postcard' ? <Camera size={20} /> : <Sparkles size={20} />}
+            </div>
+            <div className="min-w-0">
+              <div className="wh-discovery-progress">Postcards {hud.postcardCount ?? 0}/{POSTCARDS.length}</div>
+              <strong className="block text-sm leading-tight">{discovery.title}</strong>
+              <p className="mt-0.5 text-xs leading-snug text-slate-300">{discovery.detail}</p>
+            </div>
+            {Boolean(discovery.chips) && (
+              <span className="wh-discovery-chips">+{discovery.chips?.toLocaleString()} chips</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {simState.coastal.flashUntil > coastalNow() && (
+        <div key={simState.coastal.flashUntil} className="wh-camera-flash" aria-hidden="true" />
       )}
 
       {/* CONTROLS & SENSITIVITY PANEL */}
       {controlsOpen && !isCustomizerOpen && (
-        <div className="pointer-events-auto fixed left-3 top-16 z-40 max-h-[calc(100dvh-7rem)] w-72 overflow-y-auto rounded-2xl border border-white/10 bg-neutral-950/90 p-4 font-sans text-white shadow-2xl backdrop-blur-md sm:w-80">
+        <div className="wh-hud-glass wh-controls-drawer pointer-events-auto fixed left-3 top-16 z-40 max-h-[calc(100dvh-7rem)] w-72 overflow-y-auto rounded-2xl p-4 text-white sm:w-80">
           <div className="mb-3 flex items-center justify-between border-b border-white/10 pb-2.5">
             <div className="flex items-center gap-2">
               <SlidersHorizontal className="h-4 w-4 text-sky-400" />
               <span className="text-xs font-semibold tracking-wide">Controls &amp; Sensitivity</span>
             </div>
             <button
-              onClick={() => setControlsOpen(false)}
+              onClick={() => updateControlsOpen(false)}
               className="rounded-full p-1 text-neutral-400 transition hover:bg-white/10 hover:text-white"
               title="Close Controls"
             >
@@ -1553,12 +1626,7 @@ export function HUD({ hud, onSelectMode }: Props) {
             </button>
           </div>
 
-          <PlaySettings settings={controlSettings} update={updateControls} />
-          <p className="mb-3 text-[11px] leading-relaxed text-neutral-300">
-            {touchUi
-              ? 'Drag the right side to orbit. Tap View to switch between first and third person. Hold Gas and steer with the joystick.'
-              : 'WASD moves or steers. Right mouse aims and X switches first or third person. Aircraft use I/K for power, Space to climb and Ctrl to brake or descend.'}
-          </p>
+          <PlaySettings settings={controlSettings} update={updateControls} full touch={touchUi} />
           {/* One-Tap Handling Presets */}
           <div className="mb-4">
             <div className="mb-1.5 text-[10px] font-medium uppercase tracking-wider text-neutral-400">
@@ -1619,114 +1687,6 @@ export function HUD({ hud, onSelectMode }: Props) {
                 );
               })}
             </div>
-          </div>
-
-          {/* Sliders */}
-          <div className="space-y-3.5">
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="text-neutral-300">Steering Sensitivity</span>
-                <span className="font-mono text-[11px] font-semibold text-sky-300">
-                  {Math.round(controlSettings.steeringSensitivity * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={40}
-                max={200}
-                step={5}
-                value={Math.round(controlSettings.steeringSensitivity * 100)}
-                onChange={(e) =>
-                  updateControls({ steeringSensitivity: Number(e.target.value) / 100 })
-                }
-                className="h-1.5 w-full cursor-pointer accent-sky-400"
-              />
-            </div>
-
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="text-neutral-300">Speed &amp; Acceleration</span>
-                <span className="font-mono text-[11px] font-semibold text-sky-300">
-                  {Math.round(controlSettings.throttleSensitivity * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={50}
-                max={180}
-                step={5}
-                value={Math.round(controlSettings.throttleSensitivity * 100)}
-                onChange={(e) =>
-                  updateControls({ throttleSensitivity: Number(e.target.value) / 100 })
-                }
-                className="h-1.5 w-full cursor-pointer accent-sky-400"
-              />
-            </div>
-
-            <div>
-              <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="text-neutral-300">Camera Responsiveness</span>
-                <span className="font-mono text-[11px] font-semibold text-sky-300">
-                  {Math.round(controlSettings.cameraSmoothness * 100)}%
-                </span>
-              </div>
-              <input
-                type="range"
-                min={40}
-                max={200}
-                step={5}
-                value={Math.round(controlSettings.cameraSmoothness * 100)}
-                onChange={(e) =>
-                  updateControls({ cameraSmoothness: Number(e.target.value) / 100 })
-                }
-                className="h-1.5 w-full cursor-pointer accent-sky-400"
-              />
-            </div>
-          </div>
-
-          {/* Toggles */}
-          <div className="mt-4 space-y-2 border-t border-white/10 pt-3">
-            <button
-              onClick={() => updateControls({ steeringAssist: !controlSettings.steeringAssist })}
-              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-xs transition hover:bg-white/10"
-            >
-              <div>
-                <div className="font-medium text-white">Steering &amp; Flight Assist</div>
-                <div className="text-[10px] text-neutral-400">
-                  Smooths high-speed turns &amp; auto-levels planes
-                </div>
-              </div>
-              <span
-                className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                  controlSettings.steeringAssist
-                    ? 'bg-emerald-500/25 text-emerald-300'
-                    : 'bg-white/10 text-neutral-400'
-                }`}
-              >
-                {controlSettings.steeringAssist ? 'ON' : 'OFF'}
-              </span>
-            </button>
-
-            <button
-              onClick={() => updateControls({ invertFlightY: !controlSettings.invertFlightY })}
-              className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-left text-xs transition hover:bg-white/10"
-            >
-              <div>
-                <div className="font-medium text-white">Invert Flight Pitch</div>
-                <div className="text-[10px] text-neutral-400">
-                  Swap W/S nose up &amp; down in aircraft
-                </div>
-              </div>
-              <span
-                className={`ml-2 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                  controlSettings.invertFlightY
-                    ? 'bg-sky-500/25 text-sky-300'
-                    : 'bg-white/10 text-neutral-400'
-                }`}
-              >
-                {controlSettings.invertFlightY ? 'ON' : 'OFF'}
-              </span>
-            </button>
           </div>
 
           {/* Mobile Touch Joystick Size */}
@@ -2106,24 +2066,13 @@ export function HUD({ hud, onSelectMode }: Props) {
         </div>
       )}
 
-      {/* 6. BOTTOM-LEFT: Minimap + Mode-Aware Status + Traversal Switcher
-             Hidden on small screens when touch controls are active so thumbstick has full space */}
-      <div
-        className={`pointer-events-auto fixed bottom-3 left-3 z-30 items-end gap-2.5 ${
-          touchUi ? 'hidden' : 'flex'
-        }`}
-      >
-        {/* Clean circular 128x128 Minimap */}
+      <div className="wh-hud-lower-left">
         <div
-          style={{ width: `${RADAR_SIZE}px`, height: `${RADAR_SIZE}px` }}
-          className="relative hidden shrink-0 overflow-hidden rounded-full border border-white/15 bg-neutral-950/75 shadow-xl backdrop-blur-md sm:block"
+          className="wh-hud-glass wh-radar"
+          role="group"
+          aria-label="World minimap"
         >
-          <svg
-            width={RADAR_SIZE}
-            height={RADAR_SIZE}
-            viewBox={`0 0 ${RADAR_SIZE} ${RADAR_SIZE}`}
-            className="absolute inset-0"
-          >
+          <svg viewBox={`0 0 ${RADAR_SIZE} ${RADAR_SIZE}`} aria-hidden="true">
             <defs>
               <radialGradient id="radarConeGrad" cx="50%" cy="50%" r="50%">
                 <stop offset="0%" stopColor="#ffffff" stopOpacity="0.28" />
@@ -2150,7 +2099,13 @@ export function HUD({ hud, onSelectMode }: Props) {
             />
 
             <polygon points={radarShoreline} fill="#6e8b7a38" stroke="#9fb6a365" strokeWidth="0.75" />
-            <polygon points={radarCoastalRoad} fill="none" stroke="#d3e5dd82" strokeWidth="1.35" />
+            <polygon points={radarCoastalRoad} fill="none" stroke="#d3e5dd82" strokeWidth="0.9" />
+            <polygon points={radarIslandTwo} fill="#507b754f" stroke="#a1c4b5ad" strokeWidth="0.75" />
+            {radarAtolls.map(({ id, outline }) => (
+              <polygon key={id} points={outline} fill="#507b7577" stroke="#a1c4b5c0" strokeWidth="0.75" />
+            ))}
+            <rect x={pierLeft} y={pierTop} width={pierRight - pierLeft} height={pierBottom - pierTop}
+              rx="1.2" fill="#d297bd73" stroke="#f5bde3bb" strokeWidth="0.7" />
             <line x1={aveTopX} y1={aveTopZ} x2={bridgeX} y2={bridgeZ} stroke="#ddac79af" strokeWidth="1.5" />
             <line
               x1={canalStartX}
@@ -2158,7 +2113,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               x2={canalEndX}
               y2={canalEndZ}
               stroke="rgba(56, 189, 248, 0.4)"
-              strokeWidth="4.5"
+              strokeWidth="2"
               strokeLinecap="round"
             />
             <line
@@ -2167,7 +2122,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               x2={runwayEndX}
               y2={runwayEndZ}
               stroke="rgba(163, 163, 163, 0.4)"
-              strokeWidth="4"
+              strokeWidth="1.6"
               strokeLinecap="round"
             />
             <line
@@ -2176,7 +2131,7 @@ export function HUD({ hud, onSelectMode }: Props) {
               x2={aveBotX}
               y2={aveBotZ}
               stroke="rgba(255, 255, 255, 0.25)"
-              strokeWidth="2.5"
+              strokeWidth="1"
               strokeLinecap="round"
             />
             <line
@@ -2196,7 +2151,7 @@ export function HUD({ hud, onSelectMode }: Props) {
             {activeGameMode === 'BATTLE_ROYALE' &&
               simState.botTargets.map((bot) => {
                 if (!bot.alive) return null;
-                const [bx, bz] = worldToRadar(bot.x, bot.z);
+                const [bx, bz] = worldToRadar(bot.x, bot.z, 54);
                 return (
                   <circle
                     key={`radar-bot-${bot.id}`}
@@ -2221,10 +2176,7 @@ export function HUD({ hud, onSelectMode }: Props) {
             />
           </svg>
 
-          <div className="pointer-events-none absolute left-1/2 top-1 -translate-x-1/2 text-[9px] font-semibold text-neutral-400">
-            N
-          </div>
-          <Compass className="pointer-events-none absolute right-2 top-2 h-3 w-3 text-neutral-400/70" />
+          <span className="wh-radar-north" aria-hidden="true">N</span>
 
           {WORLD_LANDMARK_DESTINATIONS.map((lm) => {
             const [mx, mz] = worldToRadar(lm.x, lm.z);
@@ -2232,330 +2184,276 @@ export function HUD({ hud, onSelectMode }: Props) {
               <button
                 key={lm.id}
                 onClick={() => warpToLocation(lm.x, lm.z, lm.forceMode, lm.id)}
-                title={`${lm.cityBadge} — ${lm.fullTitle}`}
-                style={{ left: `${mx}px`, top: `${mz}px`, backgroundColor: lm.color }}
-                className="absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-neutral-950 transition-transform hover:scale-150"
+                type="button"
+                aria-label={`Fast travel to ${lm.fullTitle}`}
+                title={lm.fullTitle}
+                style={{ left: `${mx / RADAR_SIZE * 100}%`, top: `${mz / RADAR_SIZE * 100}%`, backgroundColor: lm.color }}
+                className="wh-radar-dot"
               />
             );
           })}
         </div>
 
-        {/* Mode Switcher + Health/Shield */}
-        <div className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-neutral-950/75 p-2.5 shadow-xl backdrop-blur-md">
-          {/* Health & Shield Bars — On Foot & Battle Royale */}
-          {showFootVitals && (
-            <div className="grid grid-cols-2 gap-2.5">
-              <div>
-                <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
-                  <span className="flex items-center gap-1">
-                    <Heart className="h-3 w-3 text-emerald-400" /> Health
-                  </span>
-                  <span className="tabular-nums">{playerHp}</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  <div
-                    style={{ width: `${playerHp}%` }}
-                    className="h-full rounded-full bg-emerald-400 transition-all duration-150"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
-                  <span className="flex items-center gap-1">
-                    <Shield className="h-3 w-3 text-sky-400" /> Shield
-                  </span>
-                  <span className="tabular-nums">{playerShield}</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                  <div
-                    style={{ width: `${playerShield}%` }}
-                    className="h-full rounded-full bg-sky-400 transition-all duration-150"
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 4 Traversal Mode Buttons */}
-          <div className="flex items-center gap-1">
-            {(
-              [
-                { id: 'FOOT', label: '1 Walk', Icon: Footprints },
-                { id: 'CAR', label: '2 Drive', Icon: Car },
-                { id: 'BOAT', label: '3 Boat', Icon: Ship },
-                { id: 'PLANE', label: '4 Fly', Icon: Plane },
-              ] as const
-            ).map(({ id, label, Icon }) => {
-              const active = hud.mode === id;
-              return (
-                <button
-                  key={id}
-                  onClick={() => onSelectMode(id)}
-                  className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-medium transition ${
-                    active
-                      ? 'bg-white text-neutral-950'
-                      : 'bg-white/5 text-neutral-300 hover:bg-white/15 hover:text-white'
-                  }`}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                  <span>{label}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* 1 Button to cycle current vehicle / outfit */}
-          <div>
-            {hud.mode === 'CAR' && (
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('cycle-car'))}
-                className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-              >
-                <span>{CAR_FLEET_MENU[activeCarIdx]?.label ?? 'Supercar'}</span>
-                <span className="text-[11px] text-neutral-400">[V] Next</span>
-              </button>
-            )}
-
-            {hud.mode === 'BOAT' && (
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('cycle-boat'))}
-                className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-              >
-                <span>{BOAT_FLEET_MENU[activeBoatIdx]?.label ?? 'Boat'}</span>
-                <span className="text-[11px] text-neutral-400">[B] Next</span>
-              </button>
-            )}
-
-            {hud.mode === 'PLANE' && (
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent('cycle-plane'))}
-                className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-              >
-                <span>{PLANE_FLEET_MENU[activePlaneIdx]?.label ?? 'Aircraft'}</span>
-                <span className="text-[11px] text-neutral-400">[B] Next</span>
-              </button>
-            )}
-
-            {hud.mode === 'FOOT' && (
-              <div className="flex w-full flex-col gap-1">
-                <button
-                  onClick={handleToggleCustomizer}
-                  className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-                >
-                  <span>{custom.presetName || 'Riviera Runner'}</span>
-                  <span className="text-[11px] text-neutral-400">[C] Outfit</span>
-                </button>
-                <div className="flex w-full items-center gap-1">
-                  <button
-                    onClick={() => {
-                      simState.lobbyEmoteTimer = 2.6;
-                      window.dispatchEvent(new CustomEvent('hud-sync'));
-                    }}
-                    className="flex flex-1 items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
-                  >
-                    <span className="flex items-center gap-1.5">
-                      <Sparkles className="h-3 w-3 text-amber-300" />
-                      {EMOTE_STYLES.find((item) => item.id === simState.activeEmote)?.label ?? 'Riviera Wave'}
+        {((!touchUi && !activeRide) || showFootVitals) && (
+          <div className="wh-hud-glass wh-traversal-card rounded-2xl p-1.5">
+            {showFootVitals && (
+              <div className="grid grid-cols-2 gap-2 px-1 py-0.5">
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
+                    <span className="flex items-center gap-1">
+                      <Heart className="h-3 w-3 text-emerald-400" /> Health
                     </span>
-                    <span className="text-[11px] text-neutral-400">[Z]</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      const idx = EMOTE_STYLES.findIndex((item) => item.id === simState.activeEmote);
-                      const next = EMOTE_STYLES[(idx + 1) % EMOTE_STYLES.length] ?? EMOTE_STYLES[0];
-                      simState.activeEmote = next.id;
-                      simState.lobbyEmoteTimer = 2.6;
-                      window.dispatchEvent(new CustomEvent('hud-sync'));
-                    }}
-                    title="Cycle Emote"
-                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-[11px] font-medium text-neutral-300 transition hover:bg-white/10 hover:text-white"
-                  >
-                    Next
-                  </button>
+                    <span className="tabular-nums">{playerHp}</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      style={{ width: `${playerHp}%` }}
+                      className="h-full rounded-full bg-emerald-400 transition-all duration-150"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[10px] font-medium text-neutral-300">
+                    <span className="flex items-center gap-1">
+                      <Shield className="h-3 w-3 text-sky-400" /> Shield
+                    </span>
+                    <span className="tabular-nums">{playerShield}</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      style={{ width: `${playerShield}%` }}
+                      className="h-full rounded-full bg-sky-400 transition-all duration-150"
+                    />
+                  </div>
                 </div>
               </div>
             )}
+
+            {!touchUi && !activeRide && (
+              <div className="flex items-center gap-0.5">
+                {(
+                  [
+                    { id: 'FOOT', label: '1 Walk', Icon: Footprints },
+                    { id: 'CAR', label: '2 Drive', Icon: Car },
+                    { id: 'BOAT', label: '3 Boat', Icon: Ship },
+                    { id: 'PLANE', label: '4 Fly', Icon: Plane },
+                  ] as const
+                ).map(({ id, label, Icon }) => {
+                  const active = hud.mode === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => onSelectMode(id)}
+                      type="button"
+                      title={label}
+                      aria-label={label}
+                      aria-pressed={active}
+                      className={`flex items-center gap-1 rounded-full px-1.5 py-1.5 text-xs font-medium transition lg:px-2 ${
+                        active
+                          ? 'bg-white text-neutral-950'
+                          : 'bg-white/5 text-neutral-300 hover:bg-white/15 hover:text-white'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5" />
+                      <span className="hidden lg:inline">{label}</span>
+                    </button>
+                  );
+                })}
+                {hud.mode === 'FOOT' && !hud.swimming && (
+                  <>
+                    <button type="button" className="wh-hud-chip px-1.5" aria-label="Play emote"
+                      title={`${EMOTE_STYLES.find((item) => item.id === simState.activeEmote)?.label} (Z)`}
+                      onClick={() => {
+                        simState.lobbyEmoteTimer = 2.6;
+                        if (!interactCoast(true)) coastalReaction('emote', activePos.x, activePos.z);
+                        setUiTick((n) => n + 1);
+                      }}>
+                      <Sparkles className="h-3.5 w-3.5 text-amber-200" />
+                    </button>
+                    <button type="button" className="wh-hud-chip px-1.5" title="Next emote" aria-label="Next emote"
+                      onClick={() => {
+                        const idx = EMOTE_STYLES.findIndex((item) => item.id === simState.activeEmote);
+                        simState.activeEmote = EMOTE_STYLES[(idx + 1) % EMOTE_STYLES.length].id;
+                        simState.lobbyEmoteTimer = 2.6;
+                        setUiTick((n) => n + 1);
+                      }}>
+                      <ChevronRight className="h-3 w-3" />
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+
+            {!touchUi && !activeRide && hud.mode !== 'FOOT' && (
+              <div>
+                {hud.mode === 'CAR' && (
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('cycle-car'))}
+                    className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
+                  >
+                    <span>{CAR_FLEET_MENU[activeCarIdx]?.label ?? 'Supercar'}</span>
+                    <span className="text-[11px] text-neutral-400">[V] Next</span>
+                  </button>
+                )}
+
+                {hud.mode === 'BOAT' && (
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('cycle-boat'))}
+                    className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
+                  >
+                    <span>{BOAT_FLEET_MENU[activeBoatIdx]?.label ?? 'Boat'}</span>
+                    <span className="text-[11px] text-neutral-400">[B] Next</span>
+                  </button>
+                )}
+
+                {hud.mode === 'PLANE' && (
+                  <button
+                    onClick={() => window.dispatchEvent(new CustomEvent('cycle-plane'))}
+                    className="flex w-full items-center justify-between rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-medium text-neutral-200 transition hover:bg-white/10 hover:text-white"
+                  >
+                    <span>{PLANE_FLEET_MENU[activePlaneIdx]?.label ?? 'Aircraft'}</span>
+                    <span className="text-[11px] text-neutral-400">[B] Next</span>
+                  </button>
+                )}
+
+              </div>
+            )}
           </div>
-        </div>
+        )}
       </div>
 
       {/* 7. BOTTOM-RIGHT: Vehicle Integrity + Speedometer + Battle Royale Weapon Bar */}
-      <div
-        className={`pointer-events-auto fixed z-30 flex flex-col items-end gap-1.5 ${
-          touchUi ? 'right-2.5 top-[max(3.55rem,env(safe-area-inset-top))] max-sm:[&>div]:scale-[0.86] max-sm:[&>div]:origin-top-right' : 'bottom-3 right-3'
-        }`}
-      >
-        {/* Vehicle Integrity Readout & Quick Repair Pill (whenever driving/sailing/flying) */}
-        {hud.mode !== 'FOOT' && (
-          <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-neutral-950/75 px-3 py-1.5 shadow-xl backdrop-blur-md">
-            <div className="h-1.5 w-20 overflow-hidden rounded-full bg-white/15">
-              <div
-                style={{ width: `${vehicleHp}%` }}
-                className={`h-full rounded-full transition-all duration-150 ${vehicleBarColor}`}
-              />
-            </div>
-            <span
-              className={`text-xs font-semibold tabular-nums ${
-                vehicleWrecked || vehicleHp < 30
-                  ? 'text-rose-400'
-                  : vehicleHp < 60
-                  ? 'text-amber-300'
-                  : 'text-emerald-300'
-              }`}
-            >
-              {vehicleHp}%
-            </span>
-            {(vehicleHp < 95 || vehicleWrecked) && (
-              <button
-                type="button"
-                onClick={() => window.dispatchEvent(new CustomEvent('repair-vehicle'))}
-                className="flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/35 hover:text-white"
-              >
-                <Wrench className="h-3 w-3" />
-                <span>Repair (H)</span>
-              </button>
-            )}
-          </div>
-        )}
-
-        {hud.mode === 'PLANE' && hud.aircraftDamage && hud.aircraftDamage.state !== 'sound' && (
-          <div role="status" className="pointer-events-none rounded-lg border border-amber-300/35 bg-slate-950/85 px-2.5 py-1 text-[10px] font-semibold text-amber-200">
-            {hud.aircraftDamage.state === 'wrecked'
-              ? hud.aircraftDamage.settled ? 'WRECKED' : 'ENGINE FAILURE'
-              : hud.aircraftDamage.state === 'burning' ? 'ENGINE FIRE'
-              : hud.aircraftDamage.state === 'failing' ? 'CONTROL DEGRADED' : 'ENGINE SMOKE'}
-            <span className="ml-2 text-slate-300">L {Math.round(hud.aircraftDamage.left)}% · R {Math.round(hud.aircraftDamage.right)}%</span>
-          </div>
-        )}
-        {hud.mode === 'PLANE' && !touchUi && (
-          <p className="rounded-lg bg-slate-950/80 px-2.5 py-1.5 text-[10px] font-medium text-slate-200">
-            {simState.activePlaneIdx === 1 ? 'WASD fly · Space climb · Ctrl descend' :
-              'W/S pitch · A/D bank · I/K power ' + Math.round((hud.aircraftThrottle ?? 0.56) * 100) + '% · Ctrl brake'}
-          </p>
-        )}
-        {/* Clean Digital Speedometer + Car Gear/Drift + Plane Airspeed/Altitude/Throttle */}
-        <div className="flex flex-col items-stretch gap-1.5 rounded-2xl border border-white/10 bg-neutral-950/75 px-3.5 py-2 shadow-xl backdrop-blur-md sm:px-4">
-          <div className="flex items-baseline justify-between gap-3">
-            <div className="flex items-baseline gap-1">
-              <span className="text-lg font-semibold tabular-nums text-white sm:text-xl">
-                {hud.speedKmh}
-              </span>
-              <span className="text-[11px] text-neutral-400 sm:text-xs">km/h</span>
-            </div>
-
-            {hud.mode === 'CAR' && (
-              <>
-                <span className="h-3.5 w-px bg-white/15" />
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
-                    Gear
-                  </span>
-                  <span className="rounded-md bg-white/10 px-1.5 py-0.5 font-mono text-xs font-bold tabular-nums text-sky-300">
-                    {carGear}
-                  </span>
-                </div>
-              </>
-            )}
-
-            {hud.mode === 'PLANE' && (
-              <>
-                <span className="h-3.5 w-px bg-white/15" />
-                <div className="flex items-baseline gap-1">
-                  <span className="text-sm font-medium tabular-nums text-neutral-200">
-                    {hud.altitude}
-                  </span>
-                  <span className="text-xs text-neutral-400">m</span>
-                </div>
-                <span className="h-3.5 w-px bg-white/15" />
-                <div className="flex items-baseline gap-1">
-                  <span className="text-[10px] font-medium uppercase text-neutral-400">THR</span>
-                  <span className="text-xs font-semibold tabular-nums text-sky-300">
-                    {throttlePct}%
-                  </span>
-                </div>
-              </>
-            )}
-          </div>
-
-          {hud.mode === 'CAR' && (
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1 text-[10px] font-medium text-neutral-400">
-                <Zap className={`h-3 w-3 ${driftPct >= 26 ? 'text-amber-400' : 'text-sky-400'}`} />
-                <span>Drift</span>
-              </span>
-              <div className="h-1.5 flex-1 min-w-[74px] overflow-hidden rounded-full bg-white/10">
+      {!activeRide && !controlsOpen && !isCustomizerOpen && (
+        <div className="wh-hud-lower-right">
+          {/* Vehicle Integrity Readout & Quick Repair Pill (whenever driving/sailing/flying) */}
+          {hud.mode !== 'FOOT' && (
+            <div className="wh-hud-glass flex max-w-full flex-wrap items-center justify-end gap-1.5 rounded-2xl px-2 py-1.5">
+              <div className="h-1.5 w-12 overflow-hidden rounded-full bg-white/15 sm:w-20">
                 <div
-                  style={{ width: `${driftPct}%` }}
-                  className={`h-full rounded-full transition-all duration-100 ${
-                    driftPct >= 26 ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.65)]' : 'bg-sky-400'
-                  }`}
+                  style={{ width: `${vehicleHp}%` }}
+                  className={`h-full rounded-full transition-all duration-150 ${vehicleBarColor}`}
                 />
               </div>
-              <span className="w-7 text-right font-mono text-[10px] tabular-nums text-neutral-300">
-                {driftPct}%
+              <span
+                className={`text-xs font-semibold tabular-nums ${
+                  vehicleWrecked || vehicleHp < 30
+                    ? 'text-rose-400'
+                    : vehicleHp < 60
+                    ? 'text-amber-300'
+                    : 'text-emerald-300'
+                }`}
+              >
+                {vehicleHp}%
               </span>
+              {(vehicleHp < 95 || vehicleWrecked) && (
+                <button
+                  type="button"
+                  onClick={() => window.dispatchEvent(new CustomEvent('repair-vehicle'))}
+                  className="flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-2 py-0.5 text-[11px] font-semibold text-emerald-200 transition hover:bg-emerald-500/35 hover:text-white"
+                >
+                  <Wrench className="h-3 w-3" />
+                  <span>Repair (H)</span>
+                </button>
+              )}
             </div>
           )}
 
-          {hud.mode === 'PLANE' && (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-medium text-neutral-400">Throttle</span>
-              <div className="h-1.5 flex-1 min-w-[88px] overflow-hidden rounded-full bg-white/10">
-                <div
-                  style={{ width: `${throttlePct}%` }}
-                  className={`h-full rounded-full transition-all duration-100 ${
-                    throttlePct >= 82 ? 'bg-amber-400' : 'bg-sky-400'
-                  }`}
-                />
+          {hud.mode === 'PLANE' && hud.aircraftDamage && hud.aircraftDamage.state !== 'sound' && (
+            <div role="status" className="pointer-events-none rounded-lg border border-amber-300/35 bg-slate-950/85 px-2.5 py-1 text-[10px] font-semibold text-amber-200">
+              {hud.aircraftDamage.state === 'wrecked'
+                ? hud.aircraftDamage.settled ? 'WRECKED' : 'ENGINE FAILURE'
+                : hud.aircraftDamage.state === 'burning' ? 'ENGINE FIRE'
+                : hud.aircraftDamage.state === 'failing' ? 'CONTROL DEGRADED' : 'ENGINE SMOKE'}
+              <span className="ml-2 text-slate-300">L {Math.round(hud.aircraftDamage.left)}% · R {Math.round(hud.aircraftDamage.right)}%</span>
+            </div>
+          )}
+          {(hud.mode !== 'FOOT' || (!touchUi && activeGameMode !== 'FREE_ROAM')) && (
+            <div className="wh-hud-glass wh-speedometer flex flex-col items-stretch gap-1.5 rounded-2xl px-2.5 py-2 sm:px-3.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-1.5 sm:gap-3">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-lg font-semibold tabular-nums text-white sm:text-xl">
+                    {hud.speedKmh}
+                  </span>
+                  <span className="text-[11px] text-neutral-400 sm:text-xs">km/h</span>
+                </div>
+
+                {hud.mode === 'CAR' && (
+                  <>
+                    <span className="h-3.5 w-px bg-white/15" />
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-neutral-400">
+                        Gear
+                      </span>
+                      <span className="rounded-md bg-white/10 px-1.5 py-0.5 font-mono text-xs font-bold tabular-nums text-sky-300">
+                        {carGear}
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {hud.mode === 'PLANE' && (
+                  <>
+                    <span className="h-3.5 w-px bg-white/15" />
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-sm font-medium tabular-nums text-neutral-200">
+                        {hud.altitude}
+                      </span>
+                      <span className="text-xs text-neutral-400">m</span>
+                    </div>
+                    <span className="h-3.5 w-px bg-white/15" />
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-[10px] font-medium uppercase text-neutral-400">THR</span>
+                      <span className="text-xs font-semibold tabular-nums text-sky-300">
+                        {throttlePct}%
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
+
+              {hud.mode === 'CAR' && (
+                <div className="flex items-center gap-2">
+                  <span className="flex items-center gap-1 text-[10px] font-medium text-neutral-400">
+                    <Zap className={`h-3 w-3 ${driftPct >= 26 ? 'text-amber-400' : 'text-sky-400'}`} />
+                    <span>Drift</span>
+                  </span>
+                  <div className="h-1.5 flex-1 min-w-[74px] overflow-hidden rounded-full bg-white/10">
+                    <div
+                      style={{ width: `${driftPct}%` }}
+                      className={`h-full rounded-full transition-all duration-100 ${
+                        driftPct >= 26 ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.65)]' : 'bg-sky-400'
+                      }`}
+                    />
+                  </div>
+                  <span className="w-7 text-right font-mono text-[10px] tabular-nums text-neutral-300">
+                    {driftPct}%
+                  </span>
+                </div>
+              )}
+
+              {hud.mode === 'PLANE' && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-medium text-neutral-400">Throttle</span>
+                  <div className="h-1.5 flex-1 min-w-[88px] overflow-hidden rounded-full bg-white/10">
+                    <div
+                      style={{ width: `${throttlePct}%` }}
+                      className={`h-full rounded-full transition-all duration-100 ${
+                        throttlePct >= 82 ? 'bg-amber-400' : 'bg-sky-400'
+                      }`}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+          )}
+          {showQuickBar && !(touchUi && activeGameMode === 'BATTLE_ROYALE' && simState.brResult === 'OUT') && (
+            <div className={`wh-hud-glass wh-quickbar ${activeGameMode === 'FREE_ROAM' ? 'wh-quickbar-compact' : ''}`}>
+              {renderQuickBar(touchUi || activeGameMode === 'FREE_ROAM')}
             </div>
           )}
         </div>
-
-        {/* Weapon / Pickaxe / Build Quick-Bar (Desktop) */}
-        {!touchUi && showQuickBar && (
-          <div className="hidden items-center gap-1 rounded-2xl border border-white/10 bg-neutral-950/75 p-1.5 shadow-xl backdrop-blur-md sm:flex">
-            {renderQuickBar(false)}
-          </div>
-        )}
-      </div>
-
-      {/* Touch HP/Shield Pill & On-Foot Quick-Bar (aligned cleanly above mobile controls) */}
-      {touchUi && !isStartMenuOpen && !isCustomizerOpen && !controlsOpen && !(activeGameMode === 'BATTLE_ROYALE' && simState.brResult === 'OUT') && (
-        <>
-          {showFootVitals && (
-            <div className="pointer-events-none fixed bottom-[10.25rem] left-3 z-30 flex items-center gap-2.5 rounded-2xl border border-white/15 bg-neutral-950/80 px-2.5 py-1.5 shadow-xl backdrop-blur-md">
-              <div className="flex items-center gap-1.5">
-                <Heart className="h-3.5 w-3.5 text-emerald-400" />
-                <div className="h-1.5 w-12 overflow-hidden rounded-full bg-white/15">
-                  <div style={{ width: `${playerHp}%` }} className="h-full rounded-full bg-emerald-400 transition-all duration-150" />
-                </div>
-                <span className="text-[11px] font-semibold tabular-nums text-white">{playerHp}</span>
-              </div>
-              <span className="h-3 w-px bg-white/15" />
-              <div className="flex items-center gap-1.5">
-                <Shield className="h-3.5 w-3.5 text-sky-400" />
-                <div className="h-1.5 w-12 overflow-hidden rounded-full bg-white/15">
-                  <div style={{ width: `${playerShield}%` }} className="h-full rounded-full bg-sky-400 transition-all duration-150" />
-                </div>
-                <span className="text-[11px] font-semibold tabular-nums text-white">{playerShield}</span>
-              </div>
-            </div>
-          )}
-
-          {showQuickBar && (
-            <div
-              className={`pointer-events-auto fixed right-3 z-30 flex max-w-[calc(100vw-1.5rem)] items-center gap-1 overflow-x-auto rounded-2xl border border-white/15 bg-neutral-950/80 p-1 shadow-xl backdrop-blur-md ${
-                construction.active || construction.pickaxe
-                  ? 'bottom-[17.5rem] sm:bottom-[13rem]'
-                  : 'bottom-[14.5rem] sm:bottom-[9.25rem]'
-              }`}
-            >
-              {renderQuickBar(true)}
-            </div>
-          )}
-        </>
       )}
 
       {/* 8. MOBILE TOUCH CONTROLS OVERLAY */}

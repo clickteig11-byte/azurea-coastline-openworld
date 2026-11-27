@@ -1,6 +1,27 @@
 # World Horizon — Showcase & Feature Guide
 
-**World Horizon** (`azurea-coastline-openworld`) is a Three.js / React Three Fiber open-world coastal sandbox featuring an expanded Riviera island (+33.8% dry coastal footprint), domain-warped turquoise ocean shaders & world fanfare, two-state AAA ocean swimming & character locomotion, a 4-theme rotating Pavilion Lobby, **Tripo `v3.1-20260211` HD** rigged hero characters (**Chloe Reed** with 5 costumes, **Lola Quinn** with 4 costumes, **Marcus Vance**, **Liam Sterling**, robotics, and Harbor Crew), Kit Colorways, 5 selectable emotes, 26,000-clump instanced 3D meadow grass, responsive supercar driving & pointer-lock 1st/3rd-person shooting, 12 World Wonders, and the animated **Wonder Ocean Pier Amusement Park**.
+**World Horizon** (`azurea-coastline-openworld`) is a Three.js / React Three Fiber open-world coastal sandbox featuring an expanded Riviera island (+33.8% dry coastal footprint), two offshore satellite islands (**Solis Lighthouse Atoll** & **Azurea Stunt Atoll**), Island II **Boardwalk Surf Village**, a whimsical **Quirky Coastal World** (Sir Quacks-a-Lot giant golden duck buoy, retro bounce trampolines, 4 Azurea Postcard vintage photo frames, physics beach balls, leaping dolphin pod, offshore hydro-boost aqua rings, interactive Wonder Pier Prize Wheel, and mirroring Boardwalk Street Performer), sleek glassmorphism HUD & 5-island circular minimap, seated amusement ride poses, 2048px desktop shadows, **Tripo `v3.1-20260211` HD** rigged hero characters, 14 Fast-Travel Landmarks, and the animated **Wonder Ocean Pier Amusement Park**.
+
+---
+
+## Codex `gpt-6.2-sol` Coastal Horizon Overhaul — Sleek HUD, Satellite Atolls, Rigging & Quirky Quality
+
+- **Sleek Zero-Clutter Glassmorphism HUD & 5-Island Minimap**: Top-center docked ride telemetry (zero overlap with bottom-left radar), auto-fading pointer-lock pill, context-aware reticle (hidden during casual 3rd-person exploration, swimming, and amusement rides), auto-hiding full 100/100 Free Roam vitals, deduplicated `Controls & Sensitivity` drawer with `Escape` close, dynamic landmark counter (`14 Landmarks`), upgraded circular radar plotting Main Island, Island II, Wonder Pier, Solis Lighthouse Atoll & Azurea Stunt Atoll, plus Polaroid discovery toasts and camera-flash feedback.
+- **Bigger Map & Richer Destinations**: Two brand-new offshore satellite islands — **Solis Lighthouse Atoll** (rotating Fresnel-beam striped lighthouse, timber yacht jetty, sunset cliff-dive platform, tidepools) and **Azurea Stunt Atoll & Floating Marina Reef** (twin curved marine stunt ramps, floating pontoons, hydro-boost rings) — plus a bustling **Boardwalk Surf Village & Seaside Amphitheater** on Island II flanks, diversified Mediterranean villas & cafés across the main island, and an Art-Deco recessed bronze revolving-door Empire State entrance.
+- **Crisper Graphics, Controls & Seated Character Rigging**: Upgraded `2048×2048` desktop directional shadows, softened beach sand & swimmer waterline speculars, clean fountain mist without floating blobs, daylight sky-mote height fade, Lobby Pavilion grass exclusion, no-gunshot pointer-lock click, 360° ride camera panning & unobstructed seaward Ferris wheel view, safe car exits & smart boat/plane spawns, ergonomic `Shift`/`Ctrl` flight throttle, seated ride poses (`FERRIS`, `COASTER`, `CAROUSEL`, `DROP_TOWER`), relaxed Tripo `v3.1` idle, fixed left-hand-on-hip `Riviera Wave` emote, and sidewalk-grounded coastal NPCs who wave & cheer on player emotes.
+- **Quirky Coastal Personality (`QuirkyWorld.tsx`)**: **"Sir Quacks-a-Lot"** giant golden rubber duck yacht buoy with aviator shades & fountain-spout quack salute, 4 retro striped coastal bounce trampolines (`16m` spring launch), 4 collectible **"Azurea Postcard"** vintage photo frames, 6 physics-kickable giant beach balls + volleyball nets, leaping 5-dolphin pod, glowing hydro-boost aqua rings, interactive spinning Wonder Pier **Prize Wheel**, and a mirroring **Boardwalk Street Performer**.
+
+| Clean Sunset Boardwalk Lobby | Sleek HUD, 5-Island Minimap & Empire State | Solis Lighthouse Atoll & Yacht Jetty | Azurea Stunt Atoll & Hydro Rings |
+| --- | --- | --- | --- |
+| ![Clean Lobby](./screenshots/sol/sol-r2-01-lobby.png) | ![Sleek HUD](./screenshots/sol/sol-r2-02-empire-hud.png) | ![Solis Atoll](./screenshots/sol/sol-r2-03-solis-lighthouse-atoll.png) | ![Azurea Atoll](./screenshots/sol/sol-r2-04-azurea-stunt-atoll.png) |
+
+| Wonder Pier Postcard Frame & Midway | Seated Solaris Sky Wheel (Seaward Cam) | Reticle-Free Cyclone Coaster FPV | Riviera Wave Hip Tuck & Sir Quacks-a-Lot |
+| --- | --- | --- | --- |
+| ![Wonder Pier Postcard](./screenshots/sol/sol-r2-05-wonder-pier-postcard.png) | ![Ferris Seated](./screenshots/sol/sol-r2-06-ferris-seated-seaward.png) | ![Coaster FPV Clean](./screenshots/sol/sol-r2-07-coaster-fpv-clean.png) | ![Wave Emote](./screenshots/sol/sol-r2-09-wave-emote.png) |
+
+| Crystal Solis Tidepools & Sunset Water | South Beach & Sir Quacks-a-Lot Buoy |
+| --- | --- |
+| ![Solis Water](./screenshots/sol/sol-r2-08-swimming-waterline.png) | ![South Beach Duck](./screenshots/sol/sol-r2-09b-south-beach-duck.png) |
 
 ---
 

@@ -479,15 +479,71 @@ export function VegasLandmarks() {
             metalness={0.12}
           />
         </mesh>
-        {/* Grand Fifth Avenue Brass & Marble Entrance Portal */}
-        <mesh position={[13.1, 3.8, 0]}>
-          <boxGeometry args={[0.5, 7.2, 6.4]} />
-          <meshStandardMaterial color="#d97706" metalness={0.85} roughness={0.22} />
-        </mesh>
-        <mesh position={[13.25, 3.4, 0]}>
-          <boxGeometry args={[0.3, 5.8, 4.8]} />
-          <meshStandardMaterial color="#fef3c7" emissive="#fbbf24" emissiveIntensity={1.1} />
-        </mesh>
+        {/* Fifth Avenue entrance */}
+        <group position={[13.65, 0, 0]} rotation={[0, Math.PI / 2, 0]}>
+          <mesh position={[0, 2.92, 0]}>
+            <boxGeometry args={[5.9, 5.84, 0.16]} />
+            <meshStandardMaterial color="#242426" metalness={0.48} roughness={0.4} />
+          </mesh>
+          {[-1.72, 0, 1.72].map((x) => (
+            <group key={x} position={[x, 0, 0.47]}>
+              <mesh position={[0, 1.62, 0]}>
+                <cylinderGeometry args={[0.77, 0.77, 3.14, 20, 1, true, -Math.PI / 2, Math.PI]} />
+                <meshPhysicalMaterial color="#77604b" metalness={0.62} roughness={0.24} transparent opacity={0.58} side={THREE.DoubleSide} />
+              </mesh>
+              {[0.12, 3.14].map((y) => (
+                <mesh key={y} position={[0, y, 0]}>
+                  <cylinderGeometry args={[0.79, 0.79, 0.15, 20]} />
+                  <meshStandardMaterial color="#92704b" metalness={0.84} roughness={0.24} />
+                </mesh>
+              ))}
+              {[0, Math.PI / 2].map((angle) => (
+                <mesh key={angle} position={[0, 1.62, 0]} rotation={[0, angle + 0.36, 0]}>
+                  <boxGeometry args={[1.46, 2.87, 0.065]} />
+                  <meshPhysicalMaterial color="#b09973" metalness={0.3} roughness={0.25} transparent opacity={0.63} />
+                </mesh>
+              ))}
+              <mesh position={[0, 1.64, 0]}>
+                <cylinderGeometry args={[0.055, 0.055, 3.05, 8]} />
+                <meshStandardMaterial color="#d8ae6d" metalness={0.8} roughness={0.28} />
+              </mesh>
+            </group>
+          ))}
+          {[-2.96, 2.96].map((x) => (
+            <group key={x} position={[x, 2.92, 0.39]}>
+              <mesh castShadow>
+                <boxGeometry args={[0.5, 5.84, 0.85]} />
+                <meshStandardMaterial color="#ad8353" metalness={0.77} roughness={0.27} />
+              </mesh>
+              {[-0.14, 0, 0.14].map((rib) => (
+                <mesh key={rib} position={[rib, 0, 0.45]}>
+                  <boxGeometry args={[0.045, 5.58, 0.075]} />
+                  <meshStandardMaterial color="#e8c387" metalness={0.76} roughness={0.24} />
+                </mesh>
+              ))}
+            </group>
+          ))}
+          {Array.from({ length: 25 }, (_, i) => {
+            const x = (i - 12) * 0.217;
+            const height = 1.72 - Math.floor(Math.abs(i - 12) / 3) * 0.25;
+            return (
+              <mesh key={i} position={[x, 3.47 + height / 2, 0.2]}>
+                <boxGeometry args={[0.082, height, 0.16]} />
+                <meshStandardMaterial color="#c89f60" metalness={0.82} roughness={0.28} />
+              </mesh>
+            );
+          })}
+          {[0, 1, 2].map((tier) => (
+            <mesh key={tier} position={[0, 5.1 + tier * 0.19, 1.18 - tier * 0.17]} castShadow>
+              <boxGeometry args={[6.45 - tier * 0.46, 0.22, 2.44 - tier * 0.4]} />
+              <meshStandardMaterial color={tier === 0 ? '#bb965f' : '#57483d'} metalness={0.74} roughness={0.29} />
+            </mesh>
+          ))}
+          <mesh position={[0, 5.0, 1.75]}>
+            <boxGeometry args={[5.5, 0.035, 0.27]} />
+            <meshStandardMaterial color="#e8c984" emissive="#f1bd69" emissiveIntensity={0.72} />
+          </mesh>
+        </group>
         {/* Lower Transition Setback Tier (22m × 6m × 22m) */}
         <mesh position={[0, 13, 0]} castShadow receiveShadow>
           <boxGeometry args={[22, 6, 22]} />

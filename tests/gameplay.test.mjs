@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
 import { test } from 'node:test';
-import { Vector3 } from 'three';
+import { AnimationClip, Bone, Group, QuaternionKeyframeTrack, Vector3 } from 'three';
 
 // Resolve the same extensionless TypeScript imports as Vite.
 registerHooks({
@@ -634,55 +634,54 @@ test('expanded main island bounds, coastal headlands, and overlook invariants ho
   }
 });
 
+function buildFullRig(createHumanoidRig, withClips = false) {
+  const wrapper = new Group();
+  const model = new Group();
+  const hips = new Bone(); hips.name = 'Hips';
+  const spine = new Bone(); spine.name = 'Spine';
+  const spine1 = new Bone(); spine1.name = 'Spine1';
+  const spine2 = new Bone(); spine2.name = 'Spine2';
+  const neck = new Bone(); neck.name = 'Neck';
+  const head = new Bone(); head.name = 'Head';
+  hips.add(spine);
+  spine.add(spine1);
+  spine1.add(spine2);
+  spine2.add(neck);
+  neck.add(head);
+
+  for (const [side, sx] of [['Left', 1], ['Right', -1]]) {
+    const shoulder = new Bone(); shoulder.name = `${side}Shoulder`; shoulder.position.set(sx * 0.08, 0.2, 0);
+    const arm = new Bone(); arm.name = `${side}Arm`; arm.position.set(sx * 0.14, 0, 0);
+    const foreArm = new Bone(); foreArm.name = `${side}ForeArm`; foreArm.position.set(0, -0.28, 0);
+    const hand = new Bone(); hand.name = `${side}Hand`; hand.position.set(0, -0.24, 0);
+    spine2.add(shoulder);
+    shoulder.add(arm);
+    arm.add(foreArm);
+    foreArm.add(hand);
+
+    const upLeg = new Bone(); upLeg.name = `${side}UpLeg`; upLeg.position.set(sx * 0.11, -0.08, 0);
+    const leg = new Bone(); leg.name = `${side}Leg`; leg.position.set(0, -0.42, 0);
+    const foot = new Bone(); foot.name = `${side}Foot`; foot.position.set(0, -0.40, 0);
+    const toe = new Bone(); toe.name = `${side}ToeBase`; toe.position.set(0, -0.05, 0.12);
+    hips.add(upLeg);
+    upLeg.add(leg);
+    leg.add(foot);
+    foot.add(toe);
+  }
+  model.add(hips);
+  wrapper.add(model);
+
+  const clips = withClips
+    ? ['idle', 'walk', 'run'].map((name) => new AnimationClip(name, 1.0, [
+        new QuaternionKeyframeTrack('Hips.quaternion', [0, 1], [0, 0, 0, 1, 0, 0.05, 0, 0.998]),
+        new QuaternionKeyframeTrack('RightArm.quaternion', [0, 1], [0, 0, 0, 1, 0.1, 0, 0, 0.995]),
+      ]))
+    : [];
+  return createHumanoidRig(wrapper, model, clips);
+}
+
 test('two-state swimming animation produces distinct finite treading and freestyle poses and fades clips', async () => {
-  const { AnimationClip, Bone, Group, QuaternionKeyframeTrack } = await import('three');
   const { createHumanoidRig, animateHumanoid } = await import('../src/game/humanoid.ts');
-
-  const buildFullRig = (withClips = false) => {
-    const wrapper = new Group();
-    const model = new Group();
-    const hips = new Bone(); hips.name = 'Hips';
-    const spine = new Bone(); spine.name = 'Spine';
-    const spine1 = new Bone(); spine1.name = 'Spine1';
-    const spine2 = new Bone(); spine2.name = 'Spine2';
-    const neck = new Bone(); neck.name = 'Neck';
-    const head = new Bone(); head.name = 'Head';
-    hips.add(spine);
-    spine.add(spine1);
-    spine1.add(spine2);
-    spine2.add(neck);
-    neck.add(head);
-
-    for (const [side, sx] of [['Left', 1], ['Right', -1]]) {
-      const shoulder = new Bone(); shoulder.name = `${side}Shoulder`; shoulder.position.set(sx * 0.08, 0.2, 0);
-      const arm = new Bone(); arm.name = `${side}Arm`; arm.position.set(sx * 0.14, 0, 0);
-      const foreArm = new Bone(); foreArm.name = `${side}ForeArm`; foreArm.position.set(0, -0.28, 0);
-      const hand = new Bone(); hand.name = `${side}Hand`; hand.position.set(0, -0.24, 0);
-      spine2.add(shoulder);
-      shoulder.add(arm);
-      arm.add(foreArm);
-      foreArm.add(hand);
-
-      const upLeg = new Bone(); upLeg.name = `${side}UpLeg`; upLeg.position.set(sx * 0.11, -0.08, 0);
-      const leg = new Bone(); leg.name = `${side}Leg`; leg.position.set(0, -0.42, 0);
-      const foot = new Bone(); foot.name = `${side}Foot`; foot.position.set(0, -0.40, 0);
-      const toe = new Bone(); toe.name = `${side}ToeBase`; toe.position.set(0, -0.05, 0.12);
-      hips.add(upLeg);
-      upLeg.add(leg);
-      leg.add(foot);
-      foot.add(toe);
-    }
-    model.add(hips);
-    wrapper.add(model);
-
-    const clips = withClips
-      ? ['idle', 'walk', 'run'].map((name) => new AnimationClip(name, 1.0, [
-          new QuaternionKeyframeTrack('Hips.quaternion', [0, 1], [0, 0, 0, 1, 0, 0.05, 0, 0.998]),
-          new QuaternionKeyframeTrack('RightArm.quaternion', [0, 1], [0, 0, 0, 1, 0.1, 0, 0, 0.995]),
-        ]))
-      : [];
-    return createHumanoidRig(wrapper, model, clips);
-  };
 
   const assertAllJointsFinite = (rig) => {
     for (const [name, joint] of Object.entries(rig.joints)) {
@@ -697,7 +696,7 @@ test('two-state swimming animation produces distinct finite treading and freesty
   };
 
   // 1. Idle treading water (upright sculling & cycling legs)
-  const treadRig = buildFullRig(true);
+  const treadRig = buildFullRig(createHumanoidRig, true);
   const restArm = treadRig.joints.RightArm.rest.clone();
   const restLeg = treadRig.joints.LeftUpLeg.rest.clone();
   for (let i = 0; i < 60; i++) {
@@ -716,7 +715,7 @@ test('two-state swimming animation produces distinct finite treading and freesty
   const treadTorsoSnap = treadRig.joints.Spine.bone.quaternion.clone();
 
   // 2. Active freestyle front-crawl (prone horizontal pitch, alternating arms, opposing flutter kick)
-  const freeRig = buildFullRig(true);
+  const freeRig = buildFullRig(createHumanoidRig, true);
   for (let i = 0; i < 60; i++) {
     animateHumanoid(freeRig, { dt: 1 / 60, time: i / 60, phase: i * 0.12, speed: 3.6, swimming: true, swimSpeed: 3.6 });
   }
@@ -739,4 +738,220 @@ test('two-state swimming animation produces distinct finite treading and freesty
   animateHumanoid(freeRig, { dt: 1 / 60, time: 1.07, phase: 7, speed: 5.0, swimming: true, swimSpeed: 5.0, sprinting: true });
   const sprintDelta = ((freeRig.stroke - sprintStrokeBefore) + Math.PI * 2) % (Math.PI * 2);
   assert.ok(sprintDelta > normalDelta * 1.25, 'Sprint swimming must increase stroke cadence');
+});
+
+test('Solis and Azurea rise from sloped shores without extending the main island shelf', async () => {
+  const { COASTAL_ATOLLS, MAIN_ISLAND_BOUNDS, atollDistance } = await import('../src/game/worldMath.ts');
+
+  assert.deepEqual([COASTAL_ATOLLS.solis.x, COASTAL_ATOLLS.solis.z], [430, 340]);
+  assert.deepEqual([COASTAL_ATOLLS.azurea.x, COASTAL_ATOLLS.azurea.z], [-430, -290]);
+  assert.deepEqual(MAIN_ISLAND_BOUNDS, {
+    maxRoadRadius: 312,
+    maxShoreRadius: 368,
+    maxShelfRadius: 435,
+    terrainCutoffRadius: 460,
+    recommendedTerrainWidth: 1360,
+    recommendedTerrainDepth: 1460,
+    recommendedTerrainCenterZ: -140,
+  });
+  for (const [x, z] of [[470, 0], [-470, 0], [0, 470]]) {
+    assert.equal(getTerrainHeight(x, z), -6.5, `Expected deep ocean at (${x}, ${z})`);
+  }
+
+  for (const [name, atoll] of Object.entries(COASTAL_ATOLLS)) {
+    const { x, z, radius } = atoll;
+    assert.ok(getTerrainHeight(x, z) > 2.5, `${name} center must be dry`);
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const shoreRadius = radius / atollDistance(x + dx * radius, z + dz * radius, atoll);
+      const sample = (fraction) => getTerrainHeight(x + dx * shoreRadius * fraction, z + dz * shoreRadius * fraction);
+      const heights = [0.84, 0.92, 1, 1.08, 1.16, 1.24, 1.34].map(sample);
+      assert.ok(heights[0] > 0 && heights[2] < 0, `${name} should meet sea level along (${dx}, ${dz})`);
+      assert.equal(heights.at(-1), -6.5);
+      for (let i = 1; i < heights.length; i++) {
+        const drop = heights[i - 1] - heights[i];
+        assert.ok(drop > 0 && drop < 2.5, `${name} shoreline drop from sample ${i - 1} to ${i} was ${drop}`);
+      }
+    }
+  }
+});
+
+test('both Azurea marine ramps rise continuously and preserve the water outside their footprint', async () => {
+  const { AZUREA_RAMPS, marineRampHeight } = await import('../src/game/worldMath.ts');
+  assert.equal(AZUREA_RAMPS.length, 2);
+  for (const { x, z, length, width, rise } of AZUREA_RAMPS) {
+    const start = marineRampHeight(x, z);
+    assert.ok(start > 0 && start < 0.5);
+    let previous = start;
+    for (let i = 1; i <= 20; i++) {
+      const sampleZ = z + length * i / 20;
+      const height = marineRampHeight(x, sampleZ);
+      assert.ok(height > previous && height - previous < 1, `Abrupt ramp rise at (${x}, ${sampleZ})`);
+      assert.equal(marineRampHeight(x + width / 2, sampleZ), height);
+      assert.equal(marineRampHeight(x + width / 2 + 0.1, sampleZ), undefined);
+      previous = height;
+    }
+    assert.ok(Math.abs(previous - start - rise) < 1e-9);
+    assert.equal(getTravelHeight(x, z + length, previous), previous);
+    assert.equal(marineRampHeight(x, z - 0.1), undefined);
+    assert.equal(marineRampHeight(x, z + length + 0.1), undefined);
+  }
+});
+
+function assertValidJointRotation(joint, label) {
+  assert.ok(joint, `Missing ${label}`);
+  const { quaternion, rotation } = joint.bone;
+  assert.ok([rotation.x, rotation.y, rotation.z, ...quaternion.toArray()].every(Number.isFinite), label);
+  assert.ok(Math.abs(quaternion.lengthSq() - 1) < 1e-6, `${label} rotation must be normalized`);
+  return quaternion;
+}
+
+test('all four amusement rides animate distinct, finite seated joint poses', async () => {
+  const { createHumanoidRig, animateHumanoid } = await import('../src/game/humanoid.ts');
+  const rides = ['FERRIS', 'COASTER', 'CAROUSEL', 'DROP_TOWER'];
+  const keyJoints = ['Spine', 'LeftUpLeg', 'LeftLeg', 'RightArm', 'RightForeArm'];
+  for (const time of [0, 0.65, 10.6, 12.2]) {
+    const poses = rides.map((ridePose) => {
+      const rig = buildFullRig(createHumanoidRig);
+      animateHumanoid(rig, { dt: 1 / 60, time, phase: 0, speed: 0, ridePose, lookPitch: 0.2, lookYaw: -0.3 });
+      assert.ok(Number.isFinite(rig.wrapper.position.y) && rig.wrapper.position.y < 0, `${ridePose} seat height`);
+      for (const [name, joint] of Object.entries(rig.joints)) {
+        assertValidJointRotation(joint, `${ridePose} ${name} at ${time}s`);
+      }
+      for (const name of ['LeftUpLeg', 'LeftLeg', 'RightUpLeg', 'RightLeg']) {
+        const joint = rig.joints[name];
+        assert.ok(joint.bone.quaternion.angleTo(joint.rest) > 0.65, `${ridePose} must bend ${name}`);
+      }
+      return keyJoints.map((name) => rig.joints[name].bone.quaternion);
+    });
+    for (let a = 0; a < rides.length; a++) {
+      for (let b = a + 1; b < rides.length; b++) {
+        assert.ok(poses[a].some((joint, i) => joint.angleTo(poses[b][i]) > 0.12),
+          `${rides[a]} and ${rides[b]} should pose differently at ${time}s`);
+      }
+    }
+  }
+});
+
+test('wave emote gives the left arm and forearm finite, articulated motion', async () => {
+  const { createHumanoidRig, animateHumanoid } = await import('../src/game/humanoid.ts');
+  const rig = buildFullRig(createHumanoidRig);
+  const joints = [rig.joints.LeftArm, rig.joints.LeftForeArm];
+  let blendedPose;
+  let changed = [false, false];
+  for (let frame = 0; frame < 90; frame++) {
+    const time = frame / 60;
+    animateHumanoid(rig, { dt: 1 / 60, time, phase: 0, speed: 0, emote: 2.6 - time, emoteStyle: 'WAVE' });
+    const rotations = joints.map((joint) => assertValidJointRotation(joint, joint.bone.name));
+    if (frame === 28) {
+      assert.ok(rig.emoteBlend > 0.85);
+      blendedPose = rotations.map((rotation, i) => {
+        assert.ok(rotation.angleTo(joints[i].rest) > 0.2, `${joints[i].bone.name} should leave its rest pose`);
+        return rotation.clone();
+      });
+    } else if (blendedPose) {
+      changed = changed.map((moved, i) => moved || rotations[i].angleTo(blendedPose[i]) > 0.04);
+    }
+  }
+  assert.deepEqual(changed, [true, true]);
+});
+
+const {
+  HYDRO_RINGS, POSTCARDS, capturePostcard, crossesHydroRing, kickBeachBall,
+  spinPrizeWheel, stepBeachBall, trampolineLaunchSpeed,
+} = await import('../src/game/quirky.ts');
+
+test('trampoline launch speed reaches the requested height and clamps invalid negatives', () => {
+  const gravity = 21.5;
+  const height = 16;
+  const defaults = trampolineLaunchSpeed();
+  assert.ok(Math.abs(defaults ** 2 / (2 * gravity) - height) < 1e-9);
+  assert.ok(Math.abs(trampolineLaunchSpeed(height * 4, gravity) - 2 * defaults) < 1e-9);
+  assert.ok(trampolineLaunchSpeed(height, gravity * 2) > defaults);
+  assert.equal(trampolineLaunchSpeed(0, gravity), 0);
+  assert.equal(trampolineLaunchSpeed(-1, gravity), 0);
+  assert.equal(trampolineLaunchSpeed(height, 0), 0);
+  assert.equal(trampolineLaunchSpeed(height, -1), 0);
+});
+
+test('beach ball kicks normalize direction, retain momentum and cap the upward impulse', () => {
+  const ball = Object.freeze({ x: 4, y: 2, z: -3, vx: 5, vy: -1, vz: -2, radius: 0.5 });
+  const kicked = kickBeachBall(ball, 3, 4, 10);
+  assert.deepEqual(kicked, kickBeachBall(ball, 30, 40, 10));
+  assert.deepEqual([kicked.x, kicked.y, kicked.z, kicked.radius], [4, 2, -3, 0.5]);
+  assert.ok(Math.abs(kicked.vx - 7.8) < 1e-9);
+  assert.ok(Math.abs(kicked.vz - 7.28) < 1e-9);
+  assert.equal(kicked.vy, 5);
+  assert.equal(kickBeachBall(ball, 1, 0, 100).vy, 9);
+  assert.equal(kickBeachBall({ ...ball, vy: 12 }, 1, 0, 100).vy, 12);
+  const noDirection = kickBeachBall(ball, 0, 0, 10);
+  assert.equal(noDirection.vx, ball.vx * 0.36);
+  assert.equal(noDirection.vz, ball.vz * 0.36);
+});
+
+test('beach ball physics moves, drags, bounces, and settles on the surface', () => {
+  const floor = 1.5;
+  const ball = { x: 0, y: 3, z: 0, vx: 4, vy: 5, vz: -2, radius: 0.5 };
+  assert.deepEqual(stepBeachBall(ball, floor, 0), ball);
+  const airborne = stepBeachBall(ball, floor, 0.1);
+  assert.equal(airborne.x, 0.4);
+  assert.equal(airborne.z, -0.2);
+  assert.ok(Math.abs(airborne.y - 3.415) < 1e-9);
+  assert.ok(Math.abs(airborne.vy - 3.3) < 1e-9);
+  assert.ok(airborne.vx > 0 && airborne.vx < ball.vx);
+  assert.ok(airborne.vz < 0 && airborne.vz > ball.vz);
+
+  const bounced = stepBeachBall({ ...ball, y: 2.1, vy: -6 }, floor, 0.1);
+  assert.equal(bounced.y, floor + ball.radius);
+  assert.ok(bounced.vy > 0 && bounced.vy < 6);
+  const rolling = stepBeachBall({ ...ball, y: floor + ball.radius, vy: 0 }, floor, 1 / 60);
+  assert.equal(rolling.y, floor + ball.radius);
+  assert.equal(rolling.vy, 0);
+  assert.ok(rolling.vx < stepBeachBall(ball, floor, 1 / 60).vx, 'Ground drag should exceed air drag');
+});
+
+test('postcards award chips only on the first capture and complete on the fourth unique card', () => {
+  assert.equal(POSTCARDS.length, 4);
+  let collection = Object.freeze([]);
+  for (const [i, { id }] of POSTCARDS.entries()) {
+    const captured = capturePostcard(collection, id);
+    assert.equal(collection.length, i, 'Capturing a card must leave the prior collection intact');
+    assert.equal(captured.captured, true);
+    assert.equal(captured.chips, 350);
+    assert.equal(captured.count, i + 1);
+    assert.equal(captured.complete, i === 3);
+    collection = Object.freeze(captured.collected);
+    const duplicate = capturePostcard(collection, id);
+    assert.deepEqual(duplicate, { captured: false, chips: 0, count: i + 1, complete: i === 3, collected: collection });
+  }
+  assert.deepEqual(collection, POSTCARDS.map(({ id }) => id));
+});
+
+test('hydro rings detect swept crossings through the aperture at any yaw and height', () => {
+  for (const ring of [HYDRO_RINGS[0], HYDRO_RINGS.find(({ y }) => y > 10)]) {
+    const point = (depth, lateral = 0, vertical = 0) => ({
+      x: ring.x + Math.sin(ring.yaw) * depth + Math.cos(ring.yaw) * lateral,
+      y: ring.y + vertical,
+      z: ring.z + Math.cos(ring.yaw) * depth - Math.sin(ring.yaw) * lateral,
+    });
+    assert.equal(crossesHydroRing(ring, point(-16, -10), point(16, 10)), true, 'Fast diagonal crossing');
+    assert.equal(crossesHydroRing(ring, point(8), point(-8)), true, 'Reverse crossing');
+    assert.equal(crossesHydroRing(ring, point(-8), point(0)), true, 'Segment ends at the ring');
+    assert.equal(crossesHydroRing(ring, point(-8), point(-2)), false, 'Same side of the ring');
+    assert.equal(crossesHydroRing(ring, point(0), point(0)), false, 'Stationary at the ring');
+    assert.equal(crossesHydroRing(ring, point(-8, 5.6), point(8, 5.6)), false, 'Lateral miss');
+    assert.equal(crossesHydroRing(ring, point(-8, 0, 5.6), point(8, 0, 5.6)), false, 'Vertical miss');
+    assert.equal(crossesHydroRing(ring, point(-8, 4), point(8, 4)), true, 'Inside default radius');
+    assert.equal(crossesHydroRing(ring, point(-8, 4), point(8, 4), 3), false, 'Outside custom radius');
+  }
+});
+
+test('prize wheel resolves each reward at the exact random roll thresholds', () => {
+  for (const [roll, result] of [
+    [0, 'jackpot'], [0.219999, 'jackpot'], [0.22, 'speed'],
+    [0.629999, 'speed'], [0.63, 'neon'], [0.999999, 'neon'],
+  ]) {
+    let calls = 0;
+    assert.equal(spinPrizeWheel(() => { calls++; return roll; }), result, `Reward for a roll of ${roll}`);
+    assert.equal(calls, 1);
+  }
 });

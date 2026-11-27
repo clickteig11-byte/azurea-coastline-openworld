@@ -98,6 +98,8 @@ export const LANDMARKS: LandmarkDef[] = [
     position: [-118, 0, -28],
     color: '#eab308',
   },
+  { id: 'solis', name: 'SOLIS LIGHTHOUSE ATOLL', subtitle: 'Sunset Cove · Yacht Jetty', position: [430, 0, 340], color: '#ffad69' },
+  { id: 'azureaatoll', name: 'AZUREA STUNT ATOLL', subtitle: 'Floating Marina Reef · Hydro Ramps', position: [-430, 0, -290], color: '#57e8d7' },
   {
     id: 'wonderisland',
     name: 'AZUREA WONDER PIER',
@@ -106,6 +108,8 @@ export const LANDMARKS: LandmarkDef[] = [
     color: '#ec4899',
   },
 ];
+
+export const WONDER_PIER_TERRACE_Y = 4.76;
 
 export const OCEAN_AMUSEMENT_PIER = {
   zStart: -515,
@@ -362,8 +366,8 @@ export const MAIN_ISLAND_BOUNDS = {
   maxShoreRadius: 368,
   maxShelfRadius: 435,
   terrainCutoffRadius: 460,
-  recommendedTerrainWidth: 980,
-  recommendedTerrainDepth: 1180,
+  recommendedTerrainWidth: 1360,
+  recommendedTerrainDepth: 1460,
   recommendedTerrainCenterZ: -140,
 } as const;
 
@@ -565,9 +569,51 @@ export function getIslandTwoHeight(x: number, z: number): number {
   return 4.6 * (1 - coast) - 6.5 * shelf + detail + scenicKnolls;
 }
 
+export const COASTAL_ATOLLS = {
+  solis: { x: 430, z: 340, radius: 72, height: 7.5, phase: 0.45, lagoon: 0 },
+  azurea: { x: -430, z: -290, radius: 62, height: 5.0, phase: 2.1, lagoon: 1 },
+} as const;
+
+export const SURF_VILLAGE = { minZ: -504, maxZ: -411, westX: -44, eastX: 43, boardwalkY: 4.81 };
+export const SOLIS_JETTY = { x: 472, z: 339, endX: 506, y: 3.05 };
+export const AZUREA_RAMPS = [
+  { x: -437, z: -370, width: 12, length: 27, rise: 7.6 },
+  { x: -459, z: -370, width: 12, length: 27, rise: 6.5 },
+] as const;
+
+type CoastalAtoll = typeof COASTAL_ATOLLS[keyof typeof COASTAL_ATOLLS];
+
+export function atollDistance(x: number, z: number, atoll: CoastalAtoll): number {
+  const dx = x - atoll.x;
+  const dz = z - atoll.z;
+  const angle = Math.atan2(dx, dz);
+  return Math.hypot(dx, dz) / (atoll.radius * (1 + 0.075 * Math.sin(angle * 3 + atoll.phase) + 0.044 * Math.cos(angle * 5)));
+}
+
+function atollHeight(x: number, z: number, atoll: CoastalAtoll): number {
+  const dx = x - atoll.x;
+  const dz = z - atoll.z;
+  if (Math.abs(dx) > atoll.radius * 1.48 || Math.abs(dz) > atoll.radius * 1.48) return -6.5;
+  const distance = atollDistance(x, z, atoll);
+  const beach = 2.8 * (1 - smoothstep(0.52, 1.07, distance)) - 6.5 * smoothstep(0.84, 1.31, distance);
+  const summit = atoll.height * (1 - smoothstep(0.02, 0.61, distance));
+  const lagoon = 6.7 * atoll.lagoon * (1 - smoothstep(0.17, 0.55, Math.hypot(dx - 21, dz + 10) / atoll.radius));
+  return beach + summit - lagoon;
+}
+
+export function marineRampHeight(x: number, z: number): number | undefined {
+  for (const ramp of AZUREA_RAMPS) {
+    const progress = (z - ramp.z) / ramp.length;
+    if (Math.abs(x - ramp.x) <= ramp.width / 2 && progress >= 0 && progress <= 1) {
+      return 0.24 + ramp.rise * progress ** 2.4;
+    }
+  }
+}
+
 export function getTerrainHeight(x: number, z: number): number {
   const main = getMainIslandHeight(x, z);
-  return z < -325 ? Math.max(main, getIslandTwoHeight(x, z)) : main;
+  const islandTwo = z < -325 ? getIslandTwoHeight(x, z) : -6.5;
+  return Math.max(main, islandTwo, atollHeight(x, z, COASTAL_ATOLLS.solis), atollHeight(x, z, COASTAL_ATOLLS.azurea));
 }
 
 export function getBridgeHeight(z: number): number {
@@ -586,6 +632,16 @@ export function registerTravelSurface(sample: (x: number, z: number, feetY: numb
 
 export function getTravelHeight(x: number, z: number, feetY = Infinity): number {
   let surface = getTerrainHeight(x, z);
+  const { minZ, maxZ, westX, eastX, boardwalkY } = SURF_VILLAGE;
+  if (z >= minZ && z <= maxZ && feetY >= boardwalkY - 0.55 &&
+      (Math.abs(x - westX) <= 4.1 || Math.abs(x - eastX) <= 4.1 ||
+       (z >= -491 && z <= -466 && x >= 47 && x <= 73))) surface = Math.max(surface, boardwalkY);
+  const jetty = SOLIS_JETTY;
+  if (x >= jetty.x && x <= jetty.endX && Math.abs(z - jetty.z) <= 2.6 && feetY >= jetty.y - 1.1) {
+    surface = Math.max(surface, jetty.y);
+  }
+  const marineRamp = marineRampHeight(x, z);
+  if (marineRamp !== undefined && feetY >= marineRamp - 0.65) surface = Math.max(surface, marineRamp);
   const ramp = stuntRampHeight(x, z, feetY);
   if (ramp > surface) surface = ramp;
   if (z <= NORTH_BAY_BRIDGE.approach && z >= NORTH_BAY_BRIDGE.landing &&
@@ -616,7 +672,7 @@ export function getTravelHeight(x: number, z: number, feetY = Infinity): number 
 export function isConstructionClosed(x: number, z: number): boolean {
   if (z >= -350) return false;
   if (Math.abs(x) < NORTH_BAY_BRIDGE.halfWidth + 2 && z >= NORTH_BAY_BRIDGE.gate) return false;
-  if (isOnOceanAmusementPier(x, z)) return false;
+  if (isOnOceanAmusementPier(x, z) || atollDistance(x, z, COASTAL_ATOLLS.azurea) < 1.08 || marineRampHeight(x, z) !== undefined) return false;
   return islandTwoRadius(x, z) > 1.05;
 }
 

@@ -19,6 +19,12 @@ import {
   resolveAtmosphereTarget,
 } from './components/World';
 import { VehicleDirector, triggerRouletteSpin } from './components/Vehicles';
+import { CoastalDestinations } from './components/CoastalDestinations';
+import { QuirkyWorld } from './components/QuirkyWorld';
+import { coastalReaction, interactCoast, quack } from './game/coastalPlay';
+import { DUCK } from './game/quirky';
+import { soundEngine } from './game/soundEngine';
+import { traceWorld } from './game/worldDamage';
 import { NorthBay } from './components/NorthBay';
 import { AmusementPark } from './components/AmusementPark';
 import { CoastRoad } from './components/CoastRoad';
@@ -27,7 +33,7 @@ import { CoastalCity } from './components/City';
 import { WorldEffects } from './components/WorldEffects';
 import { LivingWorldNPCs } from './components/NPCs';
 import { HUD } from './components/HUD';
-import { GameHudSnapshot, requestGamePointerLock, simState } from './game/store';
+import { GameHudSnapshot, boardAmusementRide, exitAmusementRide, requestGamePointerLock, simState } from './game/store';
 import { LOBBY_THEMES } from './game/lobbyThemes';
 import { getTerrainHeight, getTravelHeight, VehicleMode } from './game/worldMath';
 
@@ -90,6 +96,9 @@ function CoastalLighting() {
   const quality = useRef({ elapsed: 0, interval: 0.065, average: 0.017 });
   const desktop = typeof window !== 'undefined' && !window.matchMedia('(pointer: coarse)').matches;
 
+  const halfSize = desktop ? 68 : 54;
+  const initialShadowSize = desktop ? 2048 : 512;
+
   useFrame(({ gl, camera, scene }, dt) => {
     const damp = 1 - Math.exp(-6.0 * Math.min(dt, 0.1));
     resolveAtmosphereTarget(atm);
@@ -135,8 +144,14 @@ function CoastalLighting() {
       timing.elapsed = 0;
       const focus = simState.startMenuOpen ? camera.position : simState.mode === 'CAR' ? simState.carPos : simState.mode === 'PLANE' ? simState.planePos :
         simState.mode === 'BOAT' ? simState.boatPos : simState.playerPos;
-      const size = desktop ? 150 : 108;
-      const texel = size / (desktop ? 1024 : 512);
+      const shadow = light.current.shadow;
+      const resolution = desktop ? (simState.controlSettings.graphics === 'Performance' ? 1024 : 2048) : 512;
+      if (shadow.mapSize.x !== resolution) {
+        shadow.mapSize.setScalar(resolution);
+        shadow.map?.dispose();
+        shadow.map = null;
+      }
+      const texel = 2 * halfSize / resolution;
       target.current.position.set(Math.round(focus.x / texel) * texel, Math.min(focus.y, 28), Math.round(focus.z / texel) * texel);
       target.current.updateMatrixWorld();
       light.current.position.copy(target.current.position).addScaledVector(sunDirRef.current, 142);
@@ -148,18 +163,17 @@ function CoastalLighting() {
     }
   });
 
-  const halfSize = desktop ? 75 : 54;
   return (
     <>
       <object3D ref={target} />
       <fog ref={fogRef} attach="fog" args={[initialTheme.fogColor, initialTheme.fogNear, initialTheme.fogFar]} />
       <hemisphereLight ref={hemiRef} args={[initialTheme.hemiSky, initialTheme.hemiGround, initialTheme.hemiIntensity]} />
       <directionalLight ref={light} position={initialSunPos} intensity={initialTheme.dirIntensity}
-        color={initialTheme.dirColor} castShadow shadow-mapSize-width={desktop ? 1024 : 512}
-        shadow-mapSize-height={desktop ? 1024 : 512} shadow-camera-near={10} shadow-camera-far={260}
+        color={initialTheme.dirColor} castShadow shadow-mapSize-width={initialShadowSize}
+        shadow-mapSize-height={initialShadowSize} shadow-camera-near={10} shadow-camera-far={260}
         shadow-camera-left={-halfSize} shadow-camera-right={halfSize} shadow-camera-top={halfSize}
-        shadow-camera-bottom={-halfSize} shadow-normalBias={0.16} shadow-bias={-0.00022}
-        shadow-radius={3.2} shadow-intensity={0.83} />
+        shadow-camera-bottom={-halfSize} shadow-normalBias={0.08} shadow-bias={-0.00022}
+        shadow-radius={2.2} shadow-intensity={0.83} />
       <directionalLight ref={fillRef} position={[35, 24, 55]} intensity={initialTheme.fillIntensity} color={initialTheme.fillColor} />
     </>
   );
@@ -176,6 +190,8 @@ const GameWorld = React.memo(function GameWorld({ onHudUpdate }: { onHudUpdate: 
       <IslandTerrain />
       <CoastRoad />
       <NorthBay />
+      <CoastalDestinations />
+      <QuirkyWorld />
       <AmusementPark />
       <CoastalCity />
       <GrandPrixCourse />
@@ -212,7 +228,7 @@ export function App() {
   });
 
   const switchMode = useCallback((next: VehicleMode) => {
-    simState.activeRide = null;
+    if (simState.activeRide) exitAmusementRide();
     if (next === simState.mode) return;
     const prevPos =
       simState.mode === 'CAR'
@@ -241,18 +257,27 @@ export function App() {
       } else if (simState.mode === 'CAR') {
         simState.parachuting = false;
         simState.gliding = false;
-        // Step out 5.2m perpendicular to the car's heading so the parked car sits to the side and never blocks the camera
-        const exitX = prevPos.x + Math.cos(prevYaw) * 5.2;
-        const exitZ = prevPos.z - Math.sin(prevYaw) * 5.2;
-        const groundY = Math.max(getTravelHeight(exitX, exitZ, prevPos.y) + 0.08, simState.tideOffset);
-        simState.playerPos.set(exitX, groundY, exitZ);
+        const right = new THREE.Vector3(Math.cos(prevYaw), 0, -Math.sin(prevYaw));
+        const behind = new THREE.Vector3(-Math.sin(prevYaw), 0, -Math.cos(prevYaw));
+        const origin = prevPos.clone().add(new THREE.Vector3(0, 1.05, 0));
+        const supports = [right, right.clone().negate(), behind];
+        const exit = supports.map((direction) => {
+          const point = prevPos.clone().addScaledVector(direction, 5.2);
+          point.y = getTravelHeight(point.x, point.z, prevPos.y + 0.65) + 0.08;
+          return { point, direction };
+        }).find(({ point, direction }) => point.y > simState.tideOffset + 0.12 &&
+          Math.abs(point.y - prevPos.y) < 1.65 && !traceWorld(origin, direction, 5.55, 0.35,
+            (hit) => Math.abs(hit.normal.y) < 0.65));
+        if (!exit) return;
+        simState.playerPos.copy(exit.point);
         simState.playerYaw = prevYaw;
         simState.playerVel.set(0, 0, 0);
       } else {
         simState.parachuting = false;
         simState.gliding = false;
-        const groundY = Math.max(getTravelHeight(simState.playerPos.x, simState.playerPos.z, prevPos.y) + 0.08, simState.tideOffset);
-        simState.playerPos.y = groundY;
+        const groundY = getTravelHeight(prevPos.x, prevPos.z, prevPos.y) + 0.08;
+        simState.playerPos.set(prevPos.x, Math.max(groundY, simState.tideOffset), prevPos.z);
+        simState.playerYaw = prevYaw;
         simState.playerVel.set(0, 0, 0);
       }
     } else if (next === 'CAR') {
@@ -267,21 +292,45 @@ export function App() {
     } else if (next === 'BOAT') {
       simState.parachuting = false;
       simState.gliding = false;
-      if (getTerrainHeight(simState.boatPos.x, simState.boatPos.z) > 0.2) {
-        simState.boatPos.set(145, 0.5, -95);
-        simState.boatYaw = -Math.PI / 2;
-        simState.boatSpeed = 0;
+      if (simState.boatPos.distanceTo(prevPos) > 14 ||
+          getTerrainHeight(simState.boatPos.x, simState.boatPos.z) > simState.tideOffset - 0.6) {
+        let spawn: { x: number; z: number; yaw: number } | undefined;
+        for (let distance = 8; distance <= 620 && !spawn; distance += 6) {
+          for (const offset of [0, 0.26, -0.26, 0.52, -0.52, 0.79, -0.79, 1.05, -1.05, 1.57, -1.57, 2.1, -2.1, Math.PI]) {
+            const yaw = prevYaw + offset;
+            const x = prevPos.x + Math.sin(yaw) * distance;
+            const z = prevPos.z + Math.cos(yaw) * distance;
+            if (getTerrainHeight(x, z) > simState.tideOffset - 2.1 ||
+                getTravelHeight(x, z) > simState.tideOffset + 0.6) continue;
+            const origin = new THREE.Vector3(x, simState.tideOffset + 0.55, z);
+            if (traceWorld(origin, new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), 8, 1.1)) continue;
+            spawn = { x, z, yaw };
+            break;
+          }
+        }
+        if (!spawn) return;
+        simState.boatPos.set(spawn.x, simState.tideOffset + 0.35, spawn.z);
+        simState.boatYaw = spawn.yaw;
+        simState.boatSpeed = simState.boatAirVelocity = 0;
+        simState.boatOnRamp = false;
       }
     } else if (next === 'PLANE') {
       simState.parachuting = false;
       simState.gliding = false;
       if (simState.planePos.distanceTo(prevPos) > 45 && simState.aircraftDamage.state !== 'wrecked') {
-        const inMidtown = Math.hypot(prevPos.x, prevPos.z) < 165;
-        const airY = Math.max(getTerrainHeight(prevPos.x, prevPos.z) + (inMidtown ? 104 : 68), inMidtown ? 112 : 76);
+        const inMidtown = Math.hypot(prevPos.x, prevPos.z) < 175;
+        let airY = Math.max(getTerrainHeight(prevPos.x, prevPos.z) + 68, inMidtown ? 152 : 76);
+        for (const distance of [0, 24, 48, 72]) {
+          const probe = new THREE.Vector3(prevPos.x + Math.sin(prevYaw) * distance, 300, prevPos.z + Math.cos(prevYaw) * distance);
+          const roof = traceWorld(probe, new THREE.Vector3(0, -1, 0), 300, 7,
+            (hit) => hit.normal.y > 0.45);
+          if (roof) airY = Math.max(airY, roof.point.y + 18);
+        }
         simState.planePos.set(prevPos.x, airY, prevPos.z);
         simState.planeYaw = prevYaw;
         simState.planePitch = 0.05;
         simState.planeRoll = 0;
+        simState.planeVel.set(0, 0, 0);
         simState.planeSpeed = 48;
       }
     }
@@ -395,34 +444,30 @@ export function App() {
         window.dispatchEvent(new CustomEvent('hud-sync'));
       }
       if (code === 'KeyR' && !e.repeat && !s.startMenuOpen && !(simState.mode === 'FOOT' && construction.active)) triggerRouletteSpin();
-      if (code === 'KeyZ' && !e.repeat && !s.startMenuOpen && simState.mode === 'FOOT') {
+      const playing = !s.startMenuOpen && !simState.customizerOpen && !simState.controlsOpen;
+      if (code === 'KeyZ' && !e.repeat && playing && simState.mode === 'FOOT' && !simState.activeRide) {
         simState.lobbyEmoteTimer = 2.6;
+        if (!interactCoast(true)) coastalReaction('emote', simState.playerPos.x, simState.playerPos.z);
         window.dispatchEvent(new CustomEvent('hud-sync'));
       }
-      if (code === 'KeyE' && !e.repeat) {
+      if (code === 'KeyJ' && !e.repeat && playing && (simState.mode === 'BOAT' || simState.mode === 'CAR')) {
+        const position = simState.mode === 'BOAT' ? simState.boatPos : simState.carPos;
+        soundEngine.playCoastal('honk');
+        coastalReaction('honk', position.x, position.z);
+        if (Math.hypot(position.x - DUCK.x, position.z - DUCK.z) < 55) quack();
+      }
+      if (code === 'KeyE' && !e.repeat && playing) {
         if (simState.activeRide) {
-          const rideId = simState.activeRide;
-          simState.activeRide = null;
-          if (rideId === 'FERRIS') simState.playerPos.set(-14, getTravelHeight(-14, -625) + 0.08, -625);
-          else if (rideId === 'COASTER') simState.playerPos.set(14, getTravelHeight(14, -600) + 0.08, -600);
-          else if (rideId === 'CAROUSEL') simState.playerPos.set(0, getTravelHeight(0, -542) + 0.08, -542);
-          else simState.playerPos.set(0, getTravelHeight(0, -648) + 0.08, -648);
-          simState.playerVel.set(0, 0, 0);
+          exitAmusementRide();
+          return;
+        }
+        if (simState.mode === 'PLANE' && simState.activePlaneIdx === 1) return;
+        if (interactCoast()) {
           window.dispatchEvent(new CustomEvent('hud-sync'));
           return;
         }
-        if (simState.nearbyRide) {
-          simState.activeRide = simState.nearbyRide;
-          simState.mode = 'FOOT';
-          simState.parachuting = false;
-          simState.gliding = false;
-          if (simState.nearbyRide === 'COASTER') {
-            simState.cameraView = 1;
-            simState.orbitYaw = 0;
-            simState.orbitPitch = 0;
-            requestGamePointerLock();
-          }
-          window.dispatchEvent(new CustomEvent('hud-sync'));
+        if (simState.nearbyRide && simState.mode === 'FOOT') {
+          boardAmusementRide(simState.nearbyRide);
           return;
         }
         if (simState.mode !== 'FOOT') {

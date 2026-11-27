@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { AmusementRideId } from './worldMath';
 
 interface Joint {
   bone: THREE.Bone;
@@ -14,6 +15,7 @@ export interface HumanoidRig {
   wrapper: THREE.Group;
   model: THREE.Object3D;
   posture: RigPosture;
+  tripo: boolean;
   joints: Record<string, Joint>;
   legs: LegRig[];
   gait: number;
@@ -47,7 +49,8 @@ export interface Pose {
   recoil?: number;
   harvest?: number;
   emote?: number;
-  emoteStyle?: 'WAVE' | 'DANCE' | 'SPIN' | 'FLEX' | 'SHUFFLE';
+  emoteStyle?: 'WAVE' | 'DANCE' | 'SPIN' | 'FLEX' | 'SHUFFLE' | 'APPLAUSE';
+  ridePose?: AmusementRideId;
   lookPitch?: number;
   lookYaw?: number;
   ground?: GroundMotion;
@@ -130,48 +133,38 @@ export function createHumanoidRig(
   posture: RigPosture = 'athletic'
 ): HumanoidRig {
   const rig: HumanoidRig = {
-    wrapper, model, posture, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, freestyle: 0, stroke: 0, treadPhase: 0,
+    wrapper, model, posture, tripo: false, joints: {}, gait: 0, aim: 0, air: 0, swim: 0, freestyle: 0, stroke: 0, treadPhase: 0,
     emoteElapsed: 0, emoteBlend: 0, clips: {}, legs: [],
   };
   weldSmoothNormals(model);
   wrapper.updateWorldMatrix(true, true);
   const bones: Record<string, THREE.Bone> = {};
-  const aliases: Record<string, string> = { Abdomen: 'Spine', Torso: 'Spine1' };
+  const aliases: Record<string, string> = { Abdomen: 'Spine', Torso: 'Spine1', ShoulderL: 'LeftShoulder', ShoulderR: 'RightShoulder' };
   for (const [suffix, side] of [['L', 'Left'], ['R', 'Right']]) {
     Object.assign(aliases, {
       ['UpperArm' + suffix]: side + 'Arm', ['LowerArm' + suffix]: side + 'ForeArm',
       ['UpperLeg' + suffix]: side + 'UpLeg', ['LowerLeg' + suffix]: side + 'Leg',
-      ['Foot' + suffix]: side + 'Foot', ['Palm' + suffix]: side + 'Hand',
+      ['Foot' + suffix]: side + 'Foot', ['Palm' + suffix]: side + 'Hand', ['Hand' + suffix]: side + 'Hand',
     });
   }
   model.traverse((object) => {
+    if (/tripo/i.test(object.name)) rig.tripo = true;
     if (!(object as THREE.Bone).isBone) return;
     const name = object.name.replace(/^mixamorig:?/, '').replace(/[.]/g, '');
     bones[aliases[name] ?? name] = object as THREE.Bone;
   });
   const clip = (name: string) => {
     const lower = name.toLowerCase();
-    return animations.find(
-      (animation) =>
-        animation.name.toLowerCase() === lower ||
-        animation.name.toLowerCase().endsWith('_' + lower)
-    );
+    return animations.find((animation) => animation.name.toLowerCase().split(/[|_]/).pop() === lower);
   };
   const walk = clip('Walk'), run = clip('Run'), idle = clip('Idle');
   const emote = clip('SambaDance') ?? clip('agree');
-  if (walk && run && idle) {
-    rig.mixer = new THREE.AnimationMixer(model);
-    for (const [name, c] of Object.entries({ idle, walk, run })) {
-      const action = rig.mixer.clipAction(c).setEffectiveWeight(name === 'idle' ? 1 : 0).play();
-      if (name !== 'idle') action.time = ((wrapper.id % 13) / 13) * c.duration;
-      rig.clips[name as 'idle' | 'walk' | 'run'] = action;
-    }
-    if (emote) {
-      rig.clips.emote = rig.mixer.clipAction(emote).setEffectiveWeight(0).play();
-    }
-  } else if (emote) {
-    rig.mixer = new THREE.AnimationMixer(model);
-    rig.clips.emote = rig.mixer.clipAction(emote).setEffectiveWeight(0).play();
+  for (const [name, animation] of [['idle', idle], ['walk', walk], ['run', run], ['emote', emote]] as const) {
+    if (!animation) continue;
+    const mixer = rig.mixer ??= new THREE.AnimationMixer(model);
+    const action = mixer.clipAction(animation).setEffectiveWeight(name === 'idle' ? 1 : 0).play();
+    if (name === 'walk' || name === 'run') action.time = ((wrapper.id % 13) / 13) * animation.duration;
+    rig.clips[name] = action;
   }
   // Snapshot T-pose quaternions & world bases for retargeting before relaxing A/T-pose arms.
   wrapper.getWorldQuaternion(root).invert();
@@ -380,7 +373,7 @@ function pointBone(bone: THREE.Bone, child: THREE.Bone, toward: THREE.Vector3, w
   bone.updateMatrixWorld(true);
 }
 
-function groundLegs(rig: HumanoidRig, ground: GroundMotion, phase: number, speed: number, run: number, weight: number) {
+function groundLegs(rig: HumanoidRig, ground: GroundMotion, phase: number, speed: number, run: number, weight: number, waveStance: number) {
   if (weight < 0.01 || !rig.legs.length) return;
   rig.wrapper.updateWorldMatrix(true, true);
   rig.wrapper.getWorldQuaternion(orientation);
@@ -395,7 +388,7 @@ function groundLegs(rig: HumanoidRig, ground: GroundMotion, phase: number, speed
     const lift = standing ? 0 : Math.pow(Math.sin(swing * Math.PI), 1.32) * (0.085 + run * 0.21) * rig.gait;
     ankleTarget.copy(leg.home);
     ankleTarget.x += distance * forward * ground.x;
-    ankleTarget.z += distance * forward * ground.z;
+    ankleTarget.z += distance * forward * ground.z + waveStance * (index === 0 ? -0.075 : 0.14);
     ankleTarget.applyQuaternion(orientation).add(rigOrigin);
     const surfaceY = ground.heightAt(ankleTarget.x, ankleTarget.z);
     ankleTarget.y = surfaceY + leg.home.y + lift;
@@ -420,8 +413,93 @@ function groundLegs(rig: HumanoidRig, ground: GroundMotion, phase: number, speed
     const pitch = (toe - heel) * rig.gait * ground.z;
     leg.ankle.bone.parent!.getWorldQuaternion(parentOrientation);
     ankleRotation.copy(parentOrientation).invert().multiply(orientation)
+      .multiply(worldCorrection.setFromAxisAngle(axis.set(0, 1, 0), waveStance * (index === 0 ? 0.16 : -0.09)))
       .multiply(worldCorrection.setFromAxisAngle(localPitchAxis, pitch)).multiply(leg.ankle.basis);
     leg.ankle.bone.quaternion.slerp(ankleRotation, weight);
+  }
+}
+
+function animateRide(rig: HumanoidRig, ride: AmusementRideId, time: number, lookPitch: number, lookYaw: number) {
+  const { joints, wrapper } = rig;
+  let seatY = -0.36;
+  let thigh = -1.35, knee = 1.35, splay = 0.08, foot = -0.04;
+  let arm = -0.46, elbow = -0.93, armOut = 0.07, elbowOut = -0.22, wrist = 0.10;
+  let lean = -0.06, bank = 0, headYaw = Math.sin(time * 0.63) * 0.30;
+  let kick = 0;
+
+  switch (ride) {
+    case 'FERRIS':
+      seatY = -0.18;
+      break;
+    case 'COASTER': {
+      const cheer = THREE.MathUtils.smoothstep(Math.sin(time * 2.2), -0.1, 0.75);
+      seatY = -0.40;
+      thigh = -1.46;
+      knee = 1.54;
+      lean = 0.15 - cheer * 0.26;
+      bank = Math.sin(time * 1.15) * 0.13;
+      headYaw = -bank * 0.70;
+      arm = THREE.MathUtils.lerp(-0.76, -2.70, cheer);
+      elbow = THREE.MathUtils.lerp(-0.80, -0.26, cheer);
+      armOut = THREE.MathUtils.lerp(-0.07, 0.48, cheer);
+      elbowOut = THREE.MathUtils.lerp(-0.18, 0.09, cheer);
+      wrist = -0.10;
+      break;
+    }
+    case 'CAROUSEL': {
+      const gallop = Math.sin(time * 3.8);
+      seatY = -0.41 + gallop * 0.028;
+      thigh = -0.88;
+      knee = 1.08;
+      splay = 0.41;
+      foot = 0.08;
+      lean = 0.12 + gallop * 0.045;
+      headYaw = Math.sin(time * 1.1) * 0.13;
+      arm = -0.81;
+      elbow = -1.07;
+      armOut = -0.15;
+      elbowOut = -0.27;
+      wrist = 0.21;
+      break;
+    }
+    case 'DROP_TOWER': {
+      const cycle = THREE.MathUtils.euclideanModulo(time, 14) / 14;
+      const drop = THREE.MathUtils.smoothstep(cycle, 0.70, 0.75) * (1 - THREE.MathUtils.smoothstep(cycle, 0.85, 0.93));
+      seatY = -0.38;
+      thigh = -1.31;
+      knee = 1.05;
+      foot = 0.23;
+      lean = -0.13 + drop * 0.16;
+      headYaw = Math.sin(time * 0.8) * 0.12;
+      arm = THREE.MathUtils.lerp(-0.55, -2.53, drop);
+      elbow = THREE.MathUtils.lerp(-2.18, -0.44, drop);
+      armOut = 0.26 + drop * 0.29;
+      elbowOut = -0.25;
+      kick = drop * Math.sin(time * 11) * 0.16;
+      break;
+    }
+  }
+
+  // The ride already supplies the mount transform. Apply the seated pose in its local frame.
+  wrapper.position.y = seatY;
+  wrapper.position.z = 0;
+  wrapper.rotation.x = 0;
+  wrapper.rotation.z = 0;
+  setPose(joints.Hips, lean * 0.27, 0, bank * 0.3, 1);
+  setPose(joints.Spine, lean, -bank * 0.28, bank, 1);
+  setPose(joints.Spine1, -lean * 0.35, 0, -bank * 0.28, 1);
+  setPose(joints.Spine2, 0, 0, 0, 1);
+  setPose(joints.Neck, 0, headYaw * 0.24, 0, 1);
+  setPose(joints.Head, -lean * 0.6 + lookPitch * 0.24, headYaw + lookYaw * 0.30, -bank * 0.5, 1);
+  for (const [side, sign] of [['Left', 1], ['Right', -1]] as const) {
+    setPose(joints[side + 'UpLeg'], thigh - kick * sign * 0.45, sign * splay * 0.25, sign * splay, 1);
+    setPose(joints[side + 'Leg'], knee + kick * sign, 0, 0, 1);
+    setPose(joints[side + 'Foot'], foot - kick * sign * 0.45, sign * splay * 0.2, -sign * splay * 0.3, 1);
+    setPose(joints[side + 'ToeBase'], 0, 0, 0, 1);
+    setPose(joints[side + 'Shoulder'], -0.04, 0, sign * armOut * 0.10, 1);
+    setPose(joints[side + 'Arm'], arm + (ride === 'CAROUSEL' ? sign * 0.12 : 0), sign * 0.09, sign * armOut, 1);
+    setPose(joints[side + 'ForeArm'], elbow, 0, sign * elbowOut, 1);
+    setPose(joints[side + 'Hand'], wrist, -sign * 0.14, 0, 1);
   }
 }
 
@@ -430,6 +508,12 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
     aim = 0, recoil = 0, emote = 0, lookPitch = 0, lookYaw = 0, ground, swimming = false, swimSpeed = 0,
     sprinting = false, swimWave = 0 } = motion;
   const joints = rig.joints;
+
+  if (motion.ridePose) {
+    rig.gait = rig.aim = rig.air = rig.swim = rig.freestyle = rig.emoteElapsed = rig.emoteBlend = 0;
+    animateRide(rig, motion.ridePose, time, lookPitch, lookYaw);
+    return;
+  }
 
   // Smooth state transitions
   rig.gait = THREE.MathUtils.damp(rig.gait, swimming ? 0 : THREE.MathUtils.clamp(speed / 2.25, 0, 1), 13, dt);
@@ -772,9 +856,9 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
       setPose(joints.RightArm, -2.38 + wave * 0.14, 0.18, -0.58 + wave * 0.26, procEmoteWeight);
       setPose(joints.RightForeArm, -0.48 - wave * 0.42, 0.12, 0.28 * wave, procEmoteWeight);
       setPose(joints.RightHand, wave * 0.28, 0, 0.18 * wave, procEmoteWeight);
-      setPose(joints.LeftShoulder, 0, 0, 0.06, procEmoteWeight);
-      setPose(joints.LeftArm, -0.16 + groove * 0.10, 0.18, 0.34, procEmoteWeight);
-      setPose(joints.LeftForeArm, -0.92 - bounce * 0.12, -0.32, 0, procEmoteWeight);
+      setPose(joints.LeftShoulder, 0, 0, 0.02, procEmoteWeight);
+      setPose(joints.LeftArm, -0.12 + groove * 0.05, 0.16, 0.22, procEmoteWeight);
+      setPose(joints.LeftForeArm, -0.94 - bounce * 0.06, -0.35, -0.32, procEmoteWeight);
     }
   }
 
@@ -975,5 +1059,8 @@ export function animateHumanoid(rig: HumanoidRig, motion: Pose) {
     setPose(joints.RightForeArm, -1.14 + follow * 0.42, 0, 0, blend);
     setPose(joints.LeftForeArm, -0.76, 0, 0, blend);
   }
-  if (ground && swimmingBlend < 0.08) groundLegs(rig, ground, phase, speed, run, groundBlend ** 2);
+  if (ground && swimmingBlend < 0.08) {
+    const waveStance = (motion.emoteStyle ?? 'WAVE') === 'WAVE' ? procEmoteWeight : 0;
+    groundLegs(rig, ground, phase, speed, run, groundBlend ** 2, waveStance);
+  }
 }

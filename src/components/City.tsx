@@ -25,13 +25,13 @@ const profiles = [
   { name: 'Financial', levels: [7, 5, 3], widths: [1, 0.88, 0.67], wall: 'blueGlass', frame: '#a8c0cc', bay: 3.7, floor: 3.45 },
   { name: 'Art Deco', levels: [6, 3, 2, 1], widths: [1, 0.77, 0.57, 0.36], wall: 'deco', frame: '#f0d5a9', bay: 3.1, floor: 3.25 },
   { name: 'Brownstone', levels: [4, 1], widths: [1, 0.77], wall: 'brick', frame: '#b88a72', bay: 3.1, floor: 3.0 },
-  { name: 'Terraces', levels: [3, 2, 2, 1], widths: [1, 0.86, 0.71, 0.47], wall: 'terrace', frame: '#e0d5c3', bay: 3.6, floor: 3.1 },
-  { name: 'Marina House', levels: [4, 2, 1], widths: [1, 0.85, 0.62], wall: 'aquaGlass', frame: '#def0ea', bay: 3.7, floor: 3.1 },
+  { name: 'Mediterranean Villa', levels: [2], widths: [1], wall: 'terrace', frame: '#ce8b65', bay: 3.6, floor: 3.1 },
+  { name: 'Marina Café', levels: [0], widths: [1], wall: 'terrace', frame: '#ec9a72', bay: 3.7, floor: 3.1 },
   { name: 'Atrium', levels: [5, 4, 3], widths: [1, 0.91, 0.76], wall: 'aquaGlass', frame: '#729da5', bay: 3.5, floor: 3.65 },
   { name: 'Market Loft', levels: [3, 1], widths: [1, 0.66], wall: 'brick', frame: '#c49e80', bay: 3.4, floor: 3.1 },
   { name: 'Civic', levels: [4, 2, 2], widths: [1, 0.9, 0.55], wall: 'deco', frame: '#e8d5b9', bay: 3.1, floor: 3.7 },
-  { name: 'Riviera Resort', levels: [4, 3, 2, 1], widths: [1, 0.86, 0.68, 0.48], wall: 'terrace', frame: '#efe0c6', bay: 3.7, floor: 3.3 },
-  { name: 'Oceanfront Tower', levels: [6, 4, 2], widths: [1, 0.84, 0.62], wall: 'aquaGlass', frame: '#d8ece6', bay: 3.8, floor: 3.55 },
+  { name: 'Riviera Boutique Resort', levels: [4], widths: [1], wall: 'terrace', frame: '#efe0c6', bay: 3.7, floor: 3.3 },
+  { name: 'Oceanfront Hotel', levels: [6], widths: [1], wall: 'aquaGlass', frame: '#d8ece6', bay: 3.8, floor: 3.55 },
 ];
 
 export const COASTAL_PLAZAS: { id: string; x: number; z: number; radius: number }[] = [
@@ -350,6 +350,10 @@ function makeCity() {
   cityPlots.forEach(({ x, y, z, w: baseW, d: baseD, style }, index) => {
     const p = profiles[style];
     owner = p.name + ' ' + (index + 1);
+    const villa = style === 3;
+    const cafe = style === 4;
+    const resort = style === 8 || style === 9;
+    const cafeColor = ['#f2a078', '#68bdac', '#d995a8', '#f0c477'][index % 4];
     const base = y + 0.11;
     const faces = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
     let offsetX = 0;
@@ -375,23 +379,51 @@ function makeCity() {
         for (let bay = 0; bay < bays; bay++) {
           const offset = (bay + 0.5) * bayWidth - breadth / 2;
           const variant = (index * 17 + floorNo * 11 + bay * 7 + (bay ^ floorNo)) % 4;
-          const wall = ground ? 'shop' : p.wall + variant;
-          const color = ground ? '#e2d9bf' : ['#ffffff', '#dce3df', '#f4e6cc'][(index + bay * 7 + floorNo * 11) % 3];
-          add(ground ? 'Storefront glazing' : 'Façade panel', wall, color,
+          const storefront = ground && !villa;
+          const wall = storefront ? 'shop' : p.wall + variant;
+          const color = villa ? ['#e2a07c', '#eeb792', '#c77e5e'][index % 3] :
+            cafe ? cafeColor : ground ? '#e2d9bf' : ['#ffffff', '#dce3df', '#f4e6cc'][(index + bay * 7 + floorNo * 11) % 3];
+          add(storefront ? 'Storefront glazing' : 'Façade panel', wall, color,
             at(offset, (height - 0.22) / 2), [bayWidth - 0.025, height - 0.22, 0.22], p.wall === 'brick' || p.wall === 'deco' ? 120 : 74, angle);
-          if (!ground && (style === 3 || style === 4 || style === 8 || style === 9) && (bay + index) % 3 !== 0) {
-            add('Balcony slab', 'concrete', p.frame, at(offset, 0.1, 0.64), [bayWidth - 0.1, 0.2, 1.42], 120, angle);
-            add('Balcony glazing', 'rail', '#96bcbc', at(offset, 0.58, 1.29), [bayWidth - 0.15, 0.65, 0.095], 48, angle);
+        }
+        if (!ground && resort && !sideways) {
+          const segments = 9;
+          const span = breadth * 0.94;
+          const curve = (x: number) => 0.55 + 1.5 * (1 - (2 * x / span) ** 2);
+          for (let segment = 0; segment < segments; segment++) {
+            const left = (segment / segments - 0.5) * span;
+            const right = left + span / segments;
+            const depthChange = curve(right) - curve(left);
+            const arcDepth = (curve(left) + curve(right)) / 2;
+            const across = (left + right) / 2;
+            const yaw = angle - Math.atan2(depthChange, right - left);
+            const width = Math.hypot(right - left, depthChange);
+            add('Balcony deck', 'concrete', p.frame, at(across, 0.1, arcDepth / 2),
+              [right - left + 0.03, 0.2, arcDepth + Math.abs(depthChange) / 2], 120, angle);
+            add('Curved balcony glass', 'rail', '#7fb9bf', at(across, 0.57, arcDepth),
+              [width + 0.02, 0.72, 0.09], 48, yaw);
+            add('Balcony handrail', 'metal', '#c6d8d5', at(across, 0.95, arcDepth),
+              [width + 0.04, 0.07, 0.1], 55, yaw, false);
           }
         }
         for (const a of [-1, 1]) {
           add('Façade pilaster', 'concrete', p.frame, at(a * (breadth / 2 - 0.13), height / 2, 0.08),
             [ground ? 0.48 : 0.31, height, 0.36], 158, angle);
         }
-        if (ground) {
+        if (ground && !villa) {
           const awning = ['#4a7774', '#984c3a', '#d5a55f', '#5f677f'][(index + (sideways ? 1 : 0)) % 4];
-          add('Retail awning', 'fabric', awning, at(0, height - 0.84, 0.68), [breadth * 0.85, 0.18, 1.6], 48, angle);
-          add('Awning valance', 'fabric', awning, at(0, height - 0.99, 1.46), [breadth * 0.85, 0.37, 0.13], 40, angle);
+          if (cafe) {
+            const stripeWidth = breadth * 0.76 / 11;
+            for (let stripe = 0; stripe < 11; stripe++) {
+              const across = (stripe - 5) * stripeWidth;
+              const color = stripe % 2 === 0 ? ['#c24142', '#087f87', '#b84b77', '#b57923'][index % 4] : '#fff1d6';
+              add('Striped canvas awning', 'awning', color, at(across, height - 0.84, 0.75), [stripeWidth + 0.01, 0.52, 1.76], 48, angle, false);
+              add('Striped valance', 'fabric', color, at(across, height - 1.14, 1.6), [stripeWidth + 0.01, 0.22, 0.11], 40, angle, false);
+            }
+          } else {
+            add('Retail awning', 'fabric', awning, at(0, height - 0.84, 0.68), [breadth * 0.85, 0.18, 1.6], 48, angle);
+            add('Awning valance', 'fabric', awning, at(0, height - 0.99, 1.46), [breadth * 0.85, 0.37, 0.13], 40, angle);
+          }
           if (face === 0 || (style === 6 && face === Math.PI / 2)) {
             add('Storefront sign', 'shopSign' + index % shops.length, '#ffffff',
               at(0, height - 0.36, 0.19), [Math.min(9.8, breadth * 0.8), 0.53, 0.065], 55, angle);
@@ -413,7 +445,7 @@ function makeCity() {
     let levelY = base + 3.8;
     p.levels.forEach((count, tier) => {
       if (style === 5) bend = tier * (index % 2 === 0 ? 0.11 : -0.11);
-      if (style === 0 || style === 3) {
+      if (style === 0) {
         offsetX = tier * 0.56 * (index % 2 === 0 ? 1 : -1);
         offsetZ = tier * -0.35;
       }
@@ -425,22 +457,20 @@ function makeCity() {
         levelY += p.floor;
       }
       add('Terrace coping', 'concrete', p.frame, [x + offsetX, levelY + 0.08, z + offsetZ], [w + 0.48, 0.23, d + 0.48], 160, bend);
-      if ((style === 3 || style === 8) && tier < p.levels.length - 1) {
-        for (const side of [-1, 1]) {
-          const gardenX = x + offsetX + side * w * 0.47;
-          add('Terrace planter', 'stone', '#bdb7a3', [gardenX, levelY + 0.22, z + offsetZ], [0.62, 0.36, d * 0.56], 100);
-          for (const dz of [-0.21, 0, 0.21]) {
-            add('Terrace planting', 'plant', '#61794b', [gardenX, levelY + 0.55, z + offsetZ + dz * d], [0.56, 0.61, 0.85], 36, 0, false);
-          }
-        }
-      }
     });
 
     const roofX = x + offsetX;
     const roofZ = z + offsetZ;
     const roofW = baseW * p.widths[p.widths.length - 1];
     const roofD = baseD * p.widths[p.widths.length - 1];
-    if (style === 1 || style === 7) {
+    if (villa || cafe) {
+      const roofHeight = villa ? 3.3 : 1.55;
+      const roofColor = ['#b85537', '#a34932', '#c46a46'][index % 3];
+      add('Pitched clay roof', 'gable', roofColor, [roofX, levelY + roofHeight / 2, roofZ],
+        [roofW + 1.06, roofHeight, roofD + 1.06], 150);
+      add('Rounded clay ridge tiles', 'ridge', '#a74731', [roofX, levelY + roofHeight, roofZ],
+        [0.27, 0.24, roofD + 1.12], 58, 0, false);
+    } else if (style === 1 || style === 7) {
       add('Roof lantern', 'deco2', '#e8d0a4', [roofX, levelY + 1.1, roofZ], [roofW * 0.58, 2.2, roofD * 0.6], 155);
       add('Finial', 'metal', '#a9a894', [roofX, levelY + 4, roofZ], [0.4, 4.8, 0.4], 77);
     } else if (style === 0 || style === 5) {
@@ -449,7 +479,7 @@ function makeCity() {
       for (const dx of [-0.21, 0.21]) add('Helipad marking', 'paint', '#f6e7be', [roofX + size * dx, levelY + 0.423, roofZ], [size * 0.084, 0.014, size * 0.61], 35, 0, false);
       add('Helipad marking', 'paint', '#f6e7be', [roofX, levelY + 0.423, roofZ], [size * 0.4, 0.014, size * 0.082], 35, 0, false);
       add('Vent stack', 'metal', '#899698', [roofX + roofW * 0.43, levelY + 0.71, roofZ + roofD * 0.41], [0.72, 1.2, 0.67], 105);
-    } else if (style === 8 || style === 9 || style === 4) {
+    } else if (resort) {
       // Rooftop Gardens, Timber Shade Pergolas & Turquoise Plunge Pools on Riviera Waterfront Towers
       add('Rooftop terrace deck', 'wood', '#a58460', [roofX, levelY + 0.22, roofZ], [roofW * 0.84, 0.24, roofD * 0.84], 150);
       const pw = roofW * 0.54;
@@ -520,12 +550,35 @@ function makeCity() {
         const tx = plaza.x + sx * (span * 0.42);
         const tz = plaza.z + sz * (span * 0.42);
         add('Plaza palm planter', 'stone', '#c4b8a2', [tx, py + 0.42, tz], [2.4, 0.68, 2.4], 150);
-        add('Plaza palm trunk', 'wood', '#8d6c4d', [tx, py + 3.1, tz], [0.42, 4.9, 0.42], 95);
-        add('Plaza palm canopy', 'plant', '#4a7a42', [tx, py + 5.75, tz], [3.1, 1.45, 3.1], 45, 0, false);
+        for (const [dx, dz, height] of [[-0.62, 0.38, 4.7], [0.58, -0.45, 6.15], [0.16, 0.63, 3.65]]) {
+          const palmX = tx + dx;
+          const palmZ = tz + dz;
+          add('Palm trunk', 'tank', '#997a54', [palmX, py + 0.68 + height / 2, palmZ], [0.25, height, 0.25], 65);
+          for (let leaf = 0; leaf < 6; leaf++) {
+            const angle = leaf * Math.PI / 3 + height;
+            add('Palm frond', 'frond', leaf % 2 === 0 ? '#4c7b46' : '#6c9249',
+              [palmX + 0.83 * Math.sin(angle), py + height + 0.77, palmZ + 0.83 * Math.cos(angle)],
+              [0.52, 0.48, 1.85], 35, angle, false);
+          }
+        }
         add('Plaza planter shrub', 'plant', '#5f844e', [tx, py + 0.96, tz], [1.9, 0.62, 1.9], 35, 0, false);
       }
     }
   });
+
+  owner = 'Beach promenade';
+  for (const [x, z, yaw] of [[-56, 263, 0], [-19, 262, 0], [300, 22, Math.PI / 2], [301, 67, Math.PI / 2]]) {
+    const y = getTerrainHeight(x, z);
+    add('Timber seating deck', 'wood', '#a17b53', [x, y + 0.12, z], [5.8, 0.25, 3.65], 150, yaw);
+    add('Boardwalk bench seat', 'wood', '#c69a69', [x, y + 0.68, z], [2.45, 0.17, 0.67], 85, yaw);
+    add('Boardwalk bench back', 'wood', '#bb8b5c', [x - Math.sin(yaw) * 0.29, y + 0.98, z - Math.cos(yaw) * 0.29], [2.45, 0.52, 0.12], 75, yaw);
+    for (const side of [-1, 1]) {
+      add('Bench support', 'metal', '#465455', [x + side * 0.9 * Math.cos(yaw), y + 0.44, z - side * 0.9 * Math.sin(yaw)], [0.13, 0.43, 0.54], 60, yaw);
+    }
+    add('Umbrella pole', 'tank', '#8f7155', [x, y + 1.52, z], [0.09, 2.65, 0.09], 56, yaw);
+    add('Scalloped sun umbrella', 'umbrella', z > 100 ? '#df735e' : '#3a9ba5',
+      [x, y + 2.82, z], [3.9, 0.72, 3.9], 55, yaw, false);
+  }
 
   // Palm-Lined Boulevard Planter Bays along the Extended East/West Coastal Connector Corridors
   owner = 'Riviera Boulevard Promenade';
@@ -628,6 +681,12 @@ export function CoastalCity() {
       return entries;
     };
 
+    const gableProfile = new THREE.Shape();
+    gableProfile.moveTo(-0.5, -0.5);
+    gableProfile.lineTo(0.5, -0.5);
+    gableProfile.lineTo(0, 0.5);
+    gableProfile.closePath();
+    const gable = new THREE.ExtrudeGeometry(gableProfile, { depth: 1, bevelEnabled: false }).translate(0, 0, -0.5);
     const finishMap: Record<string, WorldFinish> = {
       ...buildVariants('blueGlass', blue, 'glass', 0.26, 0.35),
       ...buildVariants('aquaGlass', aqua, 'glass', 0.25, 0.33),
@@ -640,6 +699,11 @@ export function CoastalCity() {
       concrete: { material: 'masonry', roughness: 0.83, map: concrete },
       stone: { material: 'masonry', roughness: 0.89, map: paving },
       roof: { material: 'masonry', roughness: 0.85, map: roof },
+      gable: { material: 'masonry', geometry: gable, roughness: 0.91 },
+      ridge: { material: 'masonry', geometry: new THREE.CylinderGeometry(0.5, 0.5, 1, 10).rotateX(Math.PI / 2), roughness: 0.86 },
+      awning: { material: 'wood', geometry: new THREE.BoxGeometry(1, 0.18, 1).rotateX(0.39), roughness: 0.94 },
+      umbrella: { material: 'wood', geometry: new THREE.ConeGeometry(0.5, 1, 10), roughness: 0.94 },
+      frond: { material: 'wood', geometry: new THREE.SphereGeometry(0.5, 6, 4).scale(1, 0.4, 1).rotateX(0.35), roughness: 0.94 },
       fabric: { material: 'wood', roughness: 0.94 },
       wood: { material: 'wood', roughness: 0.77 },
       tank: { material: 'wood', roughness: 0.79, geometry: new THREE.CylinderGeometry(0.5, 0.5, 1, 12) },

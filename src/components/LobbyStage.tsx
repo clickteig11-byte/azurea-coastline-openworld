@@ -4,7 +4,10 @@ import * as THREE from 'three';
 import { LOBBY_THEMES } from '../game/lobbyThemes';
 import { simState } from '../game/store';
 
-export const lobbyStage = { x: 262, y: 2.35, z: -178, yaw: 1.72 };
+export const lobbyStage = { x: 262, y: 3.4, z: -178, yaw: 1.72 };
+
+// Local bounds include the deck, the concours car and the cantilevered aircraft.
+export const lobbyStageBounds = { halfWidth: 10.8, rear: -12, front: 6.9 };
 
 const PIER_PILINGS: [number, number][] = [
   [-8.2, -5.6],
@@ -103,7 +106,7 @@ export function LobbyStage() {
 
       {/* Main Architectural Travertine & Teak Waterfront Promenade */}
       <mesh position={[0, -0.32, 0]} receiveShadow>
-        <boxGeometry args={[21.6, 0.6, 13.8]} />
+        <boxGeometry args={[2 * lobbyStageBounds.halfWidth, 0.6, 2 * lobbyStageBounds.front]} />
         <meshStandardMaterial ref={deckSlabMatRef} color="#949da6" roughness={0.76} metalness={0.1} />
       </mesh>
       {Array.from({ length: 12 }, (_, i) => (
@@ -225,7 +228,7 @@ export function LobbyStage() {
       </group>
 
       {/* 4. RIGHT-REAR WATERLINE STATION: Floating Teak Marina Yacht Slip & Mooring Jetty ([4.8, -1.92, -7.2]) */}
-      <group position={[4.85, -1.92, -6.95]}>
+      <group position={[4.85, 0.43 - lobbyStage.y, -6.95]}>
         <mesh receiveShadow>
           <boxGeometry args={[5.4, 0.24, 2.2]} />
           <meshStandardMaterial color="#6e4c30" roughness={0.78} metalness={0.08} />

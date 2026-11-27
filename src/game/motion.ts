@@ -129,3 +129,9 @@ export function computeFootWishVelocity(
     vz: (dirZ * forward + dirX * strafe) * speed * norm,
   };
 }
+
+/** Continuous steering authority on either side of a stopped chassis. */
+export function steeringPolarity(speed: number, throttle: number) {
+  const rolling = Math.min(1, Math.abs(speed) / 2.2);
+  return rolling * Math.sign(speed) + (1 - rolling) * throttle * 0.24;
+}

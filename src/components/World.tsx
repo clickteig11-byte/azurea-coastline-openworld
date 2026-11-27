@@ -35,6 +35,7 @@ import { cityPlots } from './City';
 import { DamageableProp } from './WorldSections';
 import { registerWorldSection } from '../game/worldDamage';
 import { simState } from '../game/store';
+import { lobbyStage, lobbyStageBounds } from './LobbyStage';
 import { LOBBY_THEMES, resolveActiveThemeId, type LobbyThemeConfig } from '../game/lobbyThemes';
 
 export { VegasLandmarks };
@@ -370,14 +371,14 @@ export function IslandTerrain() {
     const geo = new THREE.PlaneGeometry(
       MAIN_ISLAND_BOUNDS.recommendedTerrainWidth,
       MAIN_ISLAND_BOUNDS.recommendedTerrainDepth,
-      248,
-      292
+      640,
+      688
     );
     geo.rotateX(-Math.PI / 2);
     geo.translate(0, 0, MAIN_ISLAND_BOUNDS.recommendedTerrainCenterZ);
     const pos = geo.attributes.position;
     const normals = new Float32Array(pos.count * 3);
-    const eps = 2.6;
+    const eps = 1.35;
 
     // Sample continuous analytical C1-smooth finite-difference normals so steep banks & headlands never look faceted
     for (let i = 0; i < pos.count; i++) {
@@ -600,11 +601,22 @@ function InstancedGrassMeadows({ parentUniforms }: { parentUniforms: Record<stri
       };
     });
 
+    const lobbyCos = Math.cos(lobbyStage.yaw);
+    const lobbySin = Math.sin(lobbyStage.yaw);
+    const lobbyMargin = 4;
+
     for (let i = 0; i < 88000 && mats.length < 22000; i++) {
       const r = 26 + rand() * 320;
       const theta = rand() * Math.PI * 2;
       const x = Math.cos(theta) * r;
       const z = Math.sin(theta) * r;
+
+      const dx = x - lobbyStage.x;
+      const dz = z - lobbyStage.z;
+      const lobbyX = dx * lobbyCos - dz * lobbySin;
+      const lobbyZ = dx * lobbySin + dz * lobbyCos;
+      if (Math.abs(lobbyX) < lobbyStageBounds.halfWidth + lobbyMargin &&
+          lobbyZ > lobbyStageBounds.rear - lobbyMargin && lobbyZ < lobbyStageBounds.front + lobbyMargin) continue;
 
       // Keep clear of roads, sidewalks, parking bays, transit stops, runway, canal, coastal promenade & overlooks
       if (Math.abs(x) < 32.5) continue;

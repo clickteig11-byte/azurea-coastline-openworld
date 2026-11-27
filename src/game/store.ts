@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { AIM_MODES, RETICLES, type AimMode, type Reticle } from './aim';
 import type { LobbyFocusId, LobbyTabId, LobbyThemeId } from './lobbyThemes';
-import type { RouletteOutcome, VehicleMode, AmusementRideId } from './worldMath';
+import { getTravelHeight, type RouletteOutcome, type VehicleMode, type AmusementRideId } from './worldMath';
+import type { Discovery, PostcardId, Prize } from './quirky';
 import type { Tumble } from './motion';
 import { grandPrixGates } from './grandPrix';
 import type { VehicleSweep } from './vehicleContact';
@@ -913,6 +914,11 @@ export interface GameHudSnapshot {
   nearLandmark: string | null;
   activeRide?: AmusementRideId | null;
   nearbyRide?: AmusementRideId | null;
+  swimming?: boolean;
+  firingTimer?: number;
+  discovery?: Discovery;
+  postcardCount?: number;
+  coastalPrompt?: string;
   fps: number;
   gliding: boolean;
   activeCheckpoint?: number;
@@ -1084,6 +1090,25 @@ export const simState = {
   tourVisitedIds: [] as string[],
   activeRide: null as AmusementRideId | null,
   nearbyRide: null as AmusementRideId | null,
+  coastal: {
+    postcards: [] as readonly PostcardId[],
+    discovery: undefined as Discovery | undefined,
+    discoveryUntil: 0,
+    discoveryId: 0,
+    duckUntil: 0,
+    trampolineUntil: 0,
+    hydroUntil: 0,
+    hydroRing: -1,
+    speedUntil: 0,
+    neonUntil: 0,
+    wheelStart: 0,
+    wheelFrom: 0,
+    wheelTo: 0,
+    prize: null as Prize | null,
+    reaction: { x: 0, z: 0, until: 0, id: 0, kind: 'emote' as 'emote' | 'honk' | 'photo' },
+    burst: { x: 0, y: 0, z: 0, until: 0, id: 0, kind: 'spring' as 'spring' | 'ball' | 'jackpot' | 'performer' },
+    flashUntil: 0,
+  },
   gliding: false,
   chips: 2500,
   multiplier: 1,
@@ -1168,6 +1193,8 @@ export const simState = {
   boatVel: new THREE.Vector3(0, 0, 0),
   boatYaw: -Math.PI / 2,
   boatSpeed: 0,
+  boatAirVelocity: 0,
+  boatOnRamp: false,
 
   planePos: new THREE.Vector3(-125, 2.2, 155),
   planeVel: new THREE.Vector3(0, 0, 0),
@@ -1207,4 +1234,21 @@ export function requestGamePointerLock() {
       }
     }
   }
+}
+
+export function boardAmusementRide(ride: AmusementRideId) {
+  Object.assign(simState, { activeRide: ride, nearbyRide: null, mode: 'FOOT',
+    parachuting: false, gliding: false, cameraView: ride === 'COASTER' ? 1 : 0, orbitYaw: 0, orbitPitch: 0 });
+  if (ride === 'COASTER') requestGamePointerLock();
+  window.dispatchEvent(new CustomEvent('hud-sync'));
+}
+
+export function exitAmusementRide() {
+  const ride = simState.activeRide;
+  if (!ride) return;
+  const [x, z] = { FERRIS: [-14, -625], COASTER: [14, -600], CAROUSEL: [0, -542], DROP_TOWER: [0, -648] }[ride];
+  Object.assign(simState, { activeRide: null, cameraView: 0, orbitYaw: 0, orbitPitch: 0 });
+  simState.playerPos.set(x, getTravelHeight(x, z) + 0.08, z);
+  simState.playerVel.set(0, 0, 0);
+  window.dispatchEvent(new CustomEvent('hud-sync'));
 }

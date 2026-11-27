@@ -42,10 +42,12 @@ export function PlaySettings({
   settings,
   update,
   full = false,
+  touch = false,
 }: {
   settings: ControlSettings;
   update: (patch: Partial<ControlSettings>) => void;
   full?: boolean;
+  touch?: boolean;
 }) {
   const [worldSkyMood, setWorldSkyMood] = useState<'AUTO' | LobbyThemeId>(simState.worldTimeTheme);
 
@@ -175,6 +177,14 @@ export function PlaySettings({
             />
           </label>
           <label>
+            <span>Steering &amp; flight assist</span>
+            <input
+              type="checkbox"
+              checked={settings.steeringAssist}
+              onChange={(e) => update({ steeringAssist: e.target.checked })}
+            />
+          </label>
+          <label>
             <span>Invert flight pitch</span>
             <input
               type="checkbox"
@@ -232,9 +242,17 @@ export function PlaySettings({
       </label>
 
       {full && (
-        <p className="wh-settings-hint">
-          WASD move · X camera · Right mouse aim · T pickaxe · G build · 5–8 piece · R rotate · Y material
-        </p>
+        <div className="wh-settings-hint">
+          {touch && <p>Drag the right side to look. Tap View to change camera. Hold Gas and steer with the joystick.</p>}
+          <dl className="wh-control-reference">
+            <dt>On foot</dt>
+            <dd>WASD move · X camera · Right mouse aim · T pickaxe · G build · 5–8 piece · R rotate · Y material</dd>
+            <dt>Fixed-wing</dt>
+            <dd>W/S pitch · A/D bank · I or Shift raises throttle · K or Ctrl lowers throttle · Ctrl also brakes</dd>
+            <dt>Helicopter</dt>
+            <dd>WASD fly · Space climb · Ctrl descend</dd>
+          </dl>
+        </div>
       )}
     </div>
   );

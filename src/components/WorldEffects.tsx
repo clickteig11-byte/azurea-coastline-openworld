@@ -171,7 +171,7 @@ const airMoteVertexShader = /* glsl */ `
     float dist = length(mvPos.xyz);
     float distFade = smoothstep(2.0, 10.0, dist) * (1.0 - smoothstep(32.0, 56.0, dist));
     float pulse = 0.52 + 0.48 * sin(uTime * 1.8 + aPhase * 21.0);
-    vAlpha = distFade * pulse;
+    vAlpha = distFade * pulse * (1.0 - smoothstep(16.0, 24.0, wrapped.y));
     gl_PointSize = clamp((aScale * 180.0) / max(-mvPos.z, 1.0), 1.0, 6.5);
   }
 `;
@@ -404,19 +404,31 @@ function WorldFanfare() {
   // 3. Celebratory Fountain Jets with Rising/Falling Spray Arcs
   const fountainSources = useMemo<FountainSource[]>(() => {
     const parkY = getTerrainHeight(-52, 42) + 0.55;
-    const midWestY = getTerrainHeight(-26, -24) + 0.25;
-    const midEastY = getTerrainHeight(26, -24) + 0.25;
     return [
       { x: -52, y: parkY, z: 42, count: 140, ringRadius: 6.8, heightMin: 6.5, heightMax: 13.5, spread: 4.8, phaseOffset: 0.0 },
-      { x: -26, y: midWestY, z: -24, count: 48, ringRadius: 2.1, heightMin: 4.6, heightMax: 8.6, spread: 2.6, phaseOffset: 1.2 },
-      { x: 26, y: midEastY, z: -24, count: 48, ringRadius: 2.1, heightMin: 4.6, heightMax: 8.6, spread: 2.6, phaseOffset: 2.4 },
       { x: -23, y: 3.95, z: -525, count: 42, ringRadius: 2.2, heightMin: 5.4, heightMax: 9.8, spread: 3.1, phaseOffset: 0.7 },
       { x: 23, y: 3.95, z: -525, count: 42, ringRadius: 2.2, heightMin: 5.4, heightMax: 9.8, spread: 3.1, phaseOffset: 1.9 },
     ];
   }, []);
   const fountainTotal = useMemo(() => fountainSources.reduce((acc, s) => acc + s.count, 0), [fountainSources]);
   const fountainMeshRef = useRef<THREE.InstancedMesh>(null);
-  const dropletGeo = useMemo(() => new THREE.SphereGeometry(0.16, 6, 5), []);
+  const dropletGeo = useMemo(() => new THREE.SphereGeometry(0.075, 6, 5), []);
+
+  const fountainMist = useMemo(() => {
+    const count = fountainSources.length * 12;
+    const geometry = new THREE.BufferGeometry();
+    const position = new Float32Array(count * 3);
+    const opacity = new Float32Array(count);
+    const radius = new Float32Array(count);
+    const tint = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) tint.set([0.64, 0.83, 0.9], i * 3);
+    geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+    geometry.setAttribute('opacity', new THREE.BufferAttribute(opacity, 1));
+    geometry.setAttribute('radius', new THREE.BufferAttribute(radius, 1));
+    geometry.setAttribute('tint', new THREE.BufferAttribute(tint, 3));
+    geometry.setAttribute('kind', new THREE.BufferAttribute(new Float32Array(count), 1));
+    return { geometry, position, opacity, radius };
+  }, [fountainSources]);
 
   // 4. Festive Harbor Pennant / Ribbon Streams + Slender Masts
   const pennantMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -577,12 +589,13 @@ function WorldFanfare() {
       fw.geo.dispose();
       searchlightGeo.dispose();
       dropletGeo.dispose();
+      fountainMist.geometry.dispose();
       pennantGeo.dispose();
       poleGeo.dispose();
       moteGeo.dispose();
       birdGeo.dispose();
     },
-    [fw.geo, searchlightGeo, dropletGeo, pennantGeo, poleGeo, moteGeo, birdGeo]
+    [fw.geo, searchlightGeo, dropletGeo, fountainMist, pennantGeo, poleGeo, moteGeo, birdGeo]
   );
 
   const spawnFwSpark = (
@@ -792,6 +805,19 @@ function WorldFanfare() {
         }
       }
       fMesh.instanceMatrix.needsUpdate = true;
+
+      for (let j = 0; j < fountainMist.opacity.length; j++) {
+        const src = fountainSources[Math.floor(j / 12)];
+        const age = (t * 0.68 + j * 0.618) % 1;
+        const angle = (j % 12) * Math.PI / 6;
+        const drift = src.ringRadius * 0.46 + age * 0.8;
+        fountainMist.position[j * 3] = src.x + Math.cos(angle) * drift;
+        fountainMist.position[j * 3 + 1] = src.y + 0.1 + age * 0.62;
+        fountainMist.position[j * 3 + 2] = src.z + Math.sin(angle) * drift;
+        fountainMist.radius[j] = 0.35 + age * 0.57;
+        fountainMist.opacity[j] = 0.19 * Math.sin(age * Math.PI) * (1 - age);
+      }
+      for (const name of ['position', 'radius', 'opacity']) fountainMist.geometry.getAttribute(name).needsUpdate = true;
     }
 
     // 4. Flutter Festive Harbor Pennants in Coastal Breeze
@@ -815,7 +841,7 @@ function WorldFanfare() {
     moteUniforms.uColor.value.set(
       theme.moonVisibility > 0.45 ? '#bae6fd' : theme.sunsetWarmth > 0.4 ? '#fed7aa' : '#fff7d6'
     );
-    moteUniforms.uOpacity.value = theme.moonVisibility > 0.45 ? 0.36 : 0.48;
+    moteUniforms.uOpacity.value = activeThemeId === 'SUNLIT_RIVIERA' ? 0.08 : theme.moonVisibility > 0.45 ? 0.36 : 0.48;
 
     // 6. Soaring Seabird Flocks
     birdUniforms.uTime.value = t;
@@ -897,9 +923,14 @@ function WorldFanfare() {
           roughness={0.08}
           metalness={0.12}
           transparent
-          opacity={0.78}
+          opacity={0.48}
+          depthWrite={false}
         />
       </instancedMesh>
+
+      <points geometry={fountainMist.geometry} frustumCulled={false} renderOrder={2}>
+        <shaderMaterial vertexShader={vertexShader} fragmentShader={fragmentShader} transparent depthWrite={false} />
+      </points>
 
       {/* 4. Festive Harbor Pennants & Masts */}
       <instancedMesh ref={poleMeshRef} args={[poleGeo, undefined, poles.length]} frustumCulled={false} castShadow>

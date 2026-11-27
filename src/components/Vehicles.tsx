@@ -10,14 +10,16 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { simState, GameHudSnapshot, WEAPON_SPECS, freshAircraftDamage, COASTAL_CHARACTERS, requestGamePointerLock, type AircraftDamageStage, type CoastalCharacter, type CharacterCustomization } from '../game/store';
-import { getTerrainHeight, getTravelHeight, getWaveHeight, sampleHullBuoyancy, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome, AMUSEMENT_PARK_RIDES, sampleAmusementRidePose, type AmusementRideId } from '../game/worldMath';
-import { fixedWingStep } from '../game/flight';
+import { getTerrainHeight, getTravelHeight, getWaveHeight, marineRampHeight, sampleHullBuoyancy, isConstructionClosed, islandTwoRadius, CONSTRUCTION_ISLAND, LANDMARKS, RouletteOutcome, AMUSEMENT_PARK_RIDES, sampleAmusementRidePose, type AmusementRideId } from '../game/worldMath';
+import { coastalBurst, coastalNow, coastalPrompt, hydroBoost, strikeDuck } from '../game/coastalPlay';
+import { crossesHydroRing, HYDRO_RINGS, TRAMPOLINES, trampolineLaunchSpeed, TRAMPOLINE_RADIUS } from '../game/quirky';
+import { aircraftPowerInput, fixedWingStep, hoverStrafe } from '../game/flight';
 import { crossesRaceGate } from '../game/grandPrix';
 import { soundEngine } from '../game/soundEngine';
 import { createShadowTexture, createLimestonePBR, createSkyscraperPBR } from './Textures';
 import { REPAIR_BAY_COORDS } from './World';
 import { animateHumanoid, createHumanoidRig, retargetMixamoClips, strideDistance, type HumanoidRig, type RigPosture } from '../game/humanoid';
-import { computeChassisWeightTransfer, computeFootWishVelocity, rearSlip, shoreReturn, surfaceStep, suspensionStep } from '../game/motion';
+import { computeChassisWeightTransfer, computeFootWishVelocity, rearSlip, shoreReturn, steeringPolarity, surfaceStep, suspensionStep } from '../game/motion';
 import { injureBot, injurePlayer } from '../game/combat';
 import { blastWorld, damageWorld, emitEnvironment, traceGround, traceWorld, type WorldHit } from '../game/worldDamage';
 
@@ -538,6 +540,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
   const boatSprayRef = useRef<THREE.Group>(null);
   const contrailLeftRef = useRef<THREE.Mesh>(null);
   const contrailRightRef = useRef<THREE.Mesh>(null);
+  const hydroSwimHeading = useRef(new THREE.Vector3());
   const playerShadowRef = useRef<THREE.Mesh>(null);
   const swimFxGroupRef = useRef<THREE.Group>(null);
   const swimRippleRefs = useRef<(THREE.Mesh | null)[]>([]);
@@ -695,7 +698,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
   const fireActiveWeapon = () => {
     const foot = simState.mode === 'FOOT';
-    if (!aiming.ready || simState.shotCooldown > 0 || simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen ||
+    if (!aiming.ready || simState.activeRide || simState.shotCooldown > 0 || simState.startMenuOpen || simState.customizerOpen || simState.controlsOpen ||
         foot && (footMotion.current.swim || simState.parachuting || simState.gliding) ||
         simState.gameMode === 'BATTLE_ROYALE' && simState.brResult !== null) return;
     if (foot && construction.active && !simState.parachuting && !simState.gliding) {
@@ -790,6 +793,17 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         bestBot = undefined;
         civilian = undefined;
         to = obstruction.point;
+      }
+    }
+    if (simState.gameMode === 'FREE_ROAM' || simState.gameMode === 'WORLD_TOUR') {
+      const shot = to.clone().sub(muzzle);
+      const distance = shot.length();
+      if (distance > 0.001) {
+        const duck = strikeDuck(muzzle, shot.divideScalar(distance), distance);
+        if (duck !== undefined) {
+          to = muzzle.clone().addScaledVector(shot, duck);
+          hit = bestBot = civilian = undefined;
+        }
       }
     }
     let splashHit = false;
@@ -1014,7 +1028,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         toggleCharacterCustomizer();
       } else if (e.code === 'KeyP' && !e.repeat) {
         triggerBattleRoyaleDrop();
-      } else if (e.code === 'KeyQ' && !e.repeat) {
+      } else if (e.code === 'KeyQ' && !e.repeat && simState.mode !== 'PLANE') {
         construction.active = false;
         construction.pickaxe = false;
         selectWeaponSlot(simState.activeWeaponIdx + 1);
@@ -1112,9 +1126,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (wantsLock && !wasLocked) requestGamePointerLock();
       if (e.button === 0) {
         if (simState.activeRide) return;
-        if (simState.cameraView === 1 && !wasLocked && typeof canvas.requestPointerLock === 'function') {
-          return;
-        }
+        if (wantsLock && !wasLocked) return;
         mouseDownRef.current = true;
         fireActiveWeapon();
       } else if (e.button === 2) {
@@ -1125,7 +1137,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
     const applyLookDelta = (dx: number, dy: number, locked: boolean) => {
       const sensitivity = 0.0042 * simState.controlSettings.mouseSensitivity * (aiming.ads ? 0.49 : 1);
       if (simState.activeRide) {
-        simState.orbitYaw = THREE.MathUtils.clamp(simState.orbitYaw - dx * sensitivity, -1.05, 1.05);
+        simState.orbitYaw = simState.activeRide === 'COASTER'
+          ? THREE.MathUtils.clamp(simState.orbitYaw - dx * sensitivity, -1.05, 1.05)
+          : simState.orbitYaw - dx * sensitivity;
         simState.orbitPitch = THREE.MathUtils.clamp(simState.orbitPitch + dy * sensitivity, -0.55, 0.65);
         return;
       }
@@ -1903,8 +1917,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
     }
 
-    if ((pos.y < getTerrainHeight(pos.x, pos.z) + 11 || vehicle === 'BOAT') &&
-        isConstructionClosed(pos.x, pos.z)) {
+    if (vehicle !== 'BOAT' && getTerrainHeight(pos.x, pos.z) > simState.tideOffset + 0.5 &&
+        pos.y < getTerrainHeight(pos.x, pos.z) + 11 && isConstructionClosed(pos.x, pos.z)) {
       if (!isConstructionClosed(previous.x, previous.z)) pos.copy(previous);
       else {
         const radius = islandTwoRadius(pos.x, pos.z);
@@ -1915,7 +1929,6 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         }
       }
       if (isCar) simState.carSpeed *= -0.15;
-      if (vehicle === 'BOAT') simState.boatSpeed *= -0.25;
       if (isPlane) {
         simState.planeSpeed *= 0.45;
         simState.planeVel.y = Math.max(0, simState.planeVel.y);
@@ -2070,6 +2083,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       fireActiveWeapon();
     }
 
+    const now = coastalNow();
+    const coastalPlay = !isMenuOpen && (simState.gameMode === 'FREE_ROAM' || simState.gameMode === 'WORLD_TOUR');
+    const prizeBoost = coastalPlay && now < simState.coastal.speedUntil;
     let speedKmh = 0;
     let activePos = simState.playerPos;
     let activeYaw = simState.playerYaw;
@@ -2180,15 +2196,20 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         const strafe = right - left;
         const travelYaw = simState.playerYaw + simState.orbitYaw;
         const waterDrag = THREE.MathUtils.smoothstep(wave - groundY, 0.15, 0.95);
-        const moveSpeed = (motion.swim ? boost ? 5.65 : 3.3 : (boost ? 9.6 : 5.0) * (1 - waterDrag * 0.36)) * throttleSens;
+        const moveSpeed = (motion.swim ? boost ? 5.65 : 3.3 : (boost ? 9.6 : 5.0) * (1 - waterDrag * 0.36)) *
+          throttleSens * (prizeBoost ? 1.26 : 1);
         const onGround = !motion.swim && player.y <= groundY + 0.16 && velocity.y <= 0;
         const hasInput = Math.abs(forward) + Math.abs(strafe) > 0.015;
         const response = motion.swim ? 6.8 : onGround ? (hasInput ? 24 : 28) : hasInput ? 3.4 : 0.65;
         const wish = computeFootWishVelocity(travelYaw, forward, strafe, moveSpeed);
         velocity.x = THREE.MathUtils.damp(velocity.x, wish.vx, response, dt);
         velocity.z = THREE.MathUtils.damp(velocity.z, wish.vz, response, dt);
+        if (coastalPlay && motion.swim && now < simState.coastal.hydroUntil) {
+          const carry = 1 - Math.exp(-dt * 6);
+          velocity.addScaledVector(hydroSwimHeading.current, carry * (simState.coastal.hydroUntil - now) * 1.65);
+        }
 
-        const current = motion.swim ? shoreReturn(player.x, player.z, simState.playerYaw, 570, 820) : null;
+        const current = motion.swim ? shoreReturn(player.x, player.z, simState.playerYaw, 980, 1320) : null;
         player.x += (velocity.x + (current?.x ?? 0) * 8) * dt;
         player.z += (velocity.z + (current?.z ?? 0) * 8) * dt;
         applyWorldCollisions(player, previous, 'FOOT');
@@ -2204,6 +2225,14 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
         if (motion.swim) {
           const surface = simState.tideOffset + getWaveHeight(player.x, player.z, t);
+          if (coastalPlay && now >= simState.coastal.hydroUntil) {
+            const ring = HYDRO_RINGS.findIndex((gate) => crossesHydroRing(gate, footStart.current, player));
+            if (ring >= 0) {
+              hydroSwimHeading.current.set(velocity.x, 0, velocity.z).normalize();
+              velocity.addScaledVector(hydroSwimHeading.current, 6);
+              hydroBoost(ring, player.clone().setY(surface), simState.playerYaw);
+            }
+          }
           const swimSpd = Math.hypot(velocity.x, velocity.z);
           const freestyleRatio = THREE.MathUtils.smoothstep(swimSpd, 0.35, 1.75);
           motion.swimFreestyle = THREE.MathUtils.damp(motion.swimFreestyle, freestyleRatio, 6.5, dt);
@@ -2217,7 +2246,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
             soundEngine.playSurface('water', 0.42);
           } else {
             // Chin/shoulders right at waterline when treading; torso & legs half-submerged in water during active freestyle
-            const baseSubmerge = THREE.MathUtils.lerp(1.28, 1.27, motion.swimFreestyle);
+            const baseSubmerge = THREE.MathUtils.lerp(1.18, 1.05, motion.swimFreestyle);
             const buoyBob = THREE.MathUtils.lerp(Math.sin(t * 2.35) * 0.034, Math.sin(t * 4.4) * 0.018, motion.swimFreestyle);
             const target = Math.max(groundY, surface - baseSubmerge - entryDip + buoyBob);
             velocity.y = THREE.MathUtils.damp(velocity.y, (target - player.y) * 12, 9.5, dt);
@@ -2241,7 +2270,16 @@ export function VehicleDirector({ onHudUpdate }: Props) {
             simState.gliding = false;
             motion.airtime = 0;
           } else motion.airtime += dt;
-          if (motion.jumpBuffer > 0 && motion.coyote > 0) {
+          const spring = coastalPlay && now >= simState.coastal.trampolineUntil && contact && TRAMPOLINES.find(({ x, z }) =>
+            (player.x - x) ** 2 + (player.z - z) ** 2 < TRAMPOLINE_RADIUS ** 2 &&
+            Math.abs(player.y - getTravelHeight(x, z)) < 1.15);
+          if (spring) {
+            velocity.y = trampolineLaunchSpeed();
+            motion.coyote = motion.jumpBuffer = 0;
+            simState.coastal.trampolineUntil = now + 1.45;
+            coastalBurst('spring', spring.x, player.y + 0.25, spring.z);
+            soundEngine.playCoastal('spring');
+          } else if (motion.jumpBuffer > 0 && motion.coyote > 0) {
             velocity.y = boost && hasInput ? 8.2 : 7.55;
             motion.coyote = motion.jumpBuffer = 0;
             soundEngine.playSurface('step', 0.65);
@@ -2327,6 +2365,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         sprinting: boost, swimWave: swimWaveNow,
         airborne: isCustomizerOpen || motion.swim ? undefined : simState.parachuting ? 'parachute' as const :
           simState.gliding ? 'glide' as const : motion.airborne ? 'jump' as const : undefined,
+        ridePose: simState.activeRide ?? undefined,
         fallSpeed: simState.playerVel.y, landing: motion.landing, aim: aim && groundedNow ? 1 : 0,
         recoil: simState.firingTimer / 0.13,
         emote: simState.lobbyEmoteTimer,
@@ -2351,7 +2390,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         accessoriesRootRef.current.rotation.x = playerRig?.wrapper.rotation.x ?? 0;
       }
       if (playerShadowRef.current) {
-        playerShadowRef.current.visible = !motion.swim && !simState.parachuting && !simState.gliding && !simState.activeRide;
+        playerShadowRef.current.visible = groundedNow && !state.gl.shadowMap.enabled && !motion.swim && !simState.activeRide;
       }
     }
 
@@ -2384,11 +2423,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           waterY + 0.032 + i * 0.002,
           player.z + fwdZ * forwardBias
         );
-        const radiusScale = 0.45 + phase * (0.98 + freestyleAmt * 0.36);
+        const radiusScale = 0.45 + phase * (0.72 + freestyleAmt * 0.25);
         ring.scale.set(radiusScale, radiusScale * (1 + freestyleAmt * 0.22), 1);
         ring.rotation.set(-Math.PI / 2, 0, -simState.playerYaw + i * 0.9);
         const mat = ring.material as THREE.MeshBasicMaterial;
-        mat.opacity = Math.sin(phase * Math.PI) * (0.15 + freestyleAmt * 0.13);
+        mat.opacity = Math.sin(phase * Math.PI) * (0.065 + freestyleAmt * 0.055);
       }
 
       // 2. Trailing world-space soft foam wake wisps behind kicking heels & stroking arms
@@ -2433,7 +2472,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         const expand = w.baseScale + life * 0.82;
         mesh.scale.set(expand, expand * 1.25, 1);
         const mat = mesh.material as THREE.MeshBasicMaterial;
-        mat.opacity = (1 - life) * (1 - life) * 0.26;
+        mat.opacity = (1 - life) * (1 - life) * 0.105;
       }
 
       // 3. Fine sparkling sea-spray droplets from alternating hand entries & flutter kicks
@@ -2519,14 +2558,14 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const launchDrift = !gridLocked && !isMenuOpen && !simState.vehicleWrecked && ride.grounded &&
         grip > 0.78 && oldSpeed > 8.5 && (space && (Math.abs(inputSteer) > 0.1 || Math.abs(ride.slip) > 0.08) ||
         oldSpeed > 20 && Math.abs(inputSteer) > 0.9 && (brake || Math.abs(ride.slip) > 0.14));
-      const steerScale = Math.min(1, Math.abs(oldSpeed) / 2.2) *
+      const steerScale = steeringPolarity(oldSpeed, throttleInput) *
         THREE.MathUtils.lerp(1, steerAssist ? 0.68 : 0.80, Math.min(1, Math.abs(oldSpeed) / 60));
       // Forza-style drift controller: kick tail cleanly into the turn, hold angle on counter-steer, never fight turn-in!
       const isCounterSteering = launchDrift && Math.abs(ride.slip) > 0.08 && Math.sign(inputSteer) === Math.sign(ride.slip);
       const driftTurnMult = launchDrift ? (isCounterSteering ? 0.62 : 1.52) : 1.0;
       const slipStabilize = !launchDrift ? THREE.MathUtils.clamp(-ride.slip * 0.32, -0.18, 0.18) : 0;
       const steer = gridLocked ? 0 : (inputSteer * driftTurnMult + slipStabilize) *
-        2.75 * steerSens * steerScale * (oldSpeed >= 0 ? 1 : -1) * grip * (ride.grounded ? 1 : 0.21);
+        2.75 * steerSens * steerScale * grip * (ride.grounded ? 1 : 0.21);
       ride.yawRate = THREE.MathUtils.damp(ride.yawRate, steer, launchDrift ? 12.5 : 17.5, dt);
       simState.carYaw += ride.yawRate * dt;
       const slip = rearSlip(oldSpeed, ride.lateral, ride.yawRate, launchDrift, grip, ride.grounded, dt);
@@ -2540,6 +2579,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (ride.driftHeld && !launchDrift) {
         if (ride.driftCharge >= 15 && throttleInput > 0.1 && !brake) {
           ride.boost = Math.max(ride.boost, 0.55 + ride.driftCharge * 0.013);
+          soundEngine.playCoastal('chirp');
           simState.driftScore = Math.max(0, simState.driftScore - ride.driftCharge * 0.2);
         } else {
           simState.driftScore = Math.min(100, simState.driftScore + ride.driftCharge);
@@ -2549,6 +2589,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       ride.driftHeld = launchDrift;
       if (boost && !drifting && simState.driftScore >= 24 && ride.boost <= 0) {
         ride.boost = 0.55 + simState.driftScore * 0.013;
+        soundEngine.playCoastal('chirp');
         simState.driftScore = 0;
       }
       ride.boost = Math.max(0, ride.boost - dt);
@@ -2556,7 +2597,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const driftDriveBonus = drifting && throttleInput > 0.1 ? 6.5 : 0;
       const power = ((simState.vehicleWrecked ? 15 : ride.boost > 0 ? 58 : boost ? 44 : 32) * launchTorque + driftDriveBonus) * integrity * throttleSens;
       const engine = power * throttleInput * (ride.grounded ? grip : 0.075);
-      const braking = brake || throttleInput * oldSpeed < 0 ? (brake ? 44 : 50) : 0;
+      const handbrake = space && !launchDrift && ride.grounded;
+      const braking = brake ? 44 : handbrake ? 37 : throttleInput * oldSpeed < 0 ? 50 : 0;
       let speed = oldSpeed + engine * dt;
       if (braking > 0) speed -= Math.sign(speed) * Math.min(Math.abs(speed), braking * dt);
       const loss = (throttleInput === 0 ? 0.24 : 0.15) + (drifting ? 0.055 : 0) + (1 - grip) * 2.1;
@@ -2659,11 +2701,12 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (brake || space) simState.boatSpeed = THREE.MathUtils.damp(simState.boatSpeed, 0, 5.5, dt);
       else if (marineThrottle * simState.boatSpeed < 0) simState.boatSpeed += marineThrottle * 60 * dt;
       simState.boatSpeed *= Math.pow(simState.vehicleWrecked ? 0.2 : 0.32, dt);
-      if (simState.vehicleWrecked) {
-        simState.boatSpeed = THREE.MathUtils.clamp(simState.boatSpeed, -6, 6);
-      }
+      const hydroActive = coastalPlay && now < simState.coastal.hydroUntil;
+      const maxSpeed = simState.vehicleWrecked ? 6 : hydroActive ? 74 : boost ? 57 : 40;
+      simState.boatSpeed = THREE.MathUtils.clamp(simState.boatSpeed, simState.vehicleWrecked ? -6 : -15, maxSpeed);
       const boatTurnAuthority = 0.42 + 0.58 * Math.min(1, Math.abs(simState.boatSpeed) / 10);
-      simState.boatYaw += (left - right) * 2.4 * boatTurnAuthority * steerSens * dt;
+      const steerDirection = simState.boatSpeed < -0.2 ? -1 : 1;
+      simState.boatYaw += (left - right) * 2.4 * boatTurnAuthority * steerSens * dt * steerDirection;
 
       const prevX = simState.boatPos.x;
       const prevZ = simState.boatPos.z;
@@ -2671,7 +2714,10 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const nextZ = prevZ + Math.cos(simState.boatYaw) * simState.boatSpeed * dt;
       const nextGround = getTerrainHeight(nextX, nextZ);
 
-      if (nextGround > 0.25) {
+      const rampBefore = marineRampHeight(prevX, prevZ);
+      const rampAhead = marineRampHeight(nextX, nextZ);
+      const aboveGround = simState.boatPos.y > nextGround + 0.8;
+      if (nextGround > simState.tideOffset + 0.25 && rampAhead === undefined && !aboveGround) {
         const impactSpeed = Math.abs(simState.boatSpeed);
         const slideXGround = getTerrainHeight(nextX, prevZ);
         const slideZGround = getTerrainHeight(prevX, nextZ);
@@ -2705,9 +2751,34 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const planingLift = isCruise ? 0 : Math.min(0.18, Math.max(0, simState.boatSpeed) * 0.006);
       const waveY = hullWave.heave + simState.tideOffset + planingLift;
       const terrainY = getTerrainHeight(simState.boatPos.x, simState.boatPos.z);
-      simState.boatPos.y = Math.max(waveY + 0.15, terrainY + 0.15);
+      const afloatY = Math.max(waveY + 0.15, terrainY + 0.15);
+      const ramp = marineRampHeight(simState.boatPos.x, simState.boatPos.z);
+      if (ramp !== undefined && previous.y <= Math.max(afloatY, ramp + 0.85)) {
+        simState.boatOnRamp = true;
+        simState.boatAirVelocity = Math.max(0, (ramp - (rampBefore ?? ramp)) / dt);
+        simState.boatPos.y = Math.max(afloatY, ramp + 0.35);
+      } else {
+        simState.boatOnRamp = false;
+        if (previous.y > afloatY + 0.15 || simState.boatAirVelocity > 0) {
+          simState.boatAirVelocity -= 18 * dt;
+          simState.boatPos.y = Math.max(afloatY, previous.y + simState.boatAirVelocity * dt);
+          if (simState.boatPos.y === afloatY && simState.boatAirVelocity < -2) {
+            emitEnvironment('water', simState.boatPos, 0.85);
+            soundEngine.playSurface('water', 0.75);
+          }
+        } else simState.boatPos.y = afloatY;
+        if (simState.boatPos.y <= afloatY) simState.boatAirVelocity = 0;
+      }
+      if (coastalPlay && !hydroActive && !simState.vehicleWrecked) {
+        const ring = HYDRO_RINGS.findIndex((gate) => crossesHydroRing(gate, previous, simState.boatPos));
+        if (ring >= 0) {
+          simState.boatSpeed = Math.min(74, Math.max(28, Math.abs(simState.boatSpeed) + 19)) *
+            (simState.boatSpeed < 0 ? -1 : 1);
+          hydroBoost(ring, simState.boatPos, simState.boatYaw + (simState.boatSpeed < 0 ? Math.PI : 0));
+        }
+      }
 
-      const current = shoreReturn(simState.boatPos.x, simState.boatPos.z, simState.boatYaw, 640, 945);
+      const current = shoreReturn(simState.boatPos.x, simState.boatPos.z, simState.boatYaw, 980, 1320);
       const af = simState.boatSpeed >= 0 ? 1 : -1;
       simState.boatYaw += current.turn * (0.57 + Math.min(1.2, Math.abs(simState.boatSpeed) / 23)) * dt * af;
       simState.boatPos.x += current.x * 10.5 * dt;
@@ -2732,21 +2803,22 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       const turn = (left - right) * steerSens;
       const trimPull = failing ? trim * 0.38 + Math.sin(t * 8) * 0.065 : 0;
       const power = 0.32 + flyDamage.hull * 0.0068;
-      const throttleDelta = Number(keys.has('KeyI')) - Number(keys.has('KeyK'));
+      const throttleDelta = isMenuOpen ? 0 : aircraftPowerInput(boost || keys.has('KeyI'), brake || keys.has('KeyK'));
       simState.planeThrottle = THREE.MathUtils.clamp(simState.planeThrottle + throttleDelta * dt * 0.54, 0, 1);
-      const wind = shoreReturn(plane.x, plane.z, simState.planeYaw, 720, 1220);
+      const wind = shoreReturn(plane.x, plane.z, simState.planeYaw, 1150, 1650);
       const bankCommand = THREE.MathUtils.clamp(turn + wind.turn * 2.4 + trimPull, -1, 1);
 
       if (!wrecked) {
         if (helicopter) {
           const cyclic = (Math.max(fwd, touchThrottle) - back) * throttleSens;
-          const collective = (space ? 1 : 0) - (brake ? 1 : 0);
+          const collective = space ? 1 : throttleDelta;
           const forward = cyclic * power * (boost ? 39 : 28);
           simState.planePitch = THREE.MathUtils.damp(simState.planePitch, -cyclic * 0.29, 4.5, dt);
           simState.planeRoll = THREE.MathUtils.damp(simState.planeRoll, bankCommand * 0.26, 4.8, dt);
           simState.planeYaw += (bankCommand * (onPad ? 0.84 : 1.39) + trimPull * 0.15) * dt;
           const yaw = simState.planeYaw;
-          const sideways = Math.sin(simState.planeRoll) * 6;
+          const sideways = Math.sin(simState.planeRoll) * 6 +
+            hoverStrafe(!isMenuOpen && keys.has('KeyQ'), !isMenuOpen && keys.has('KeyE'), power);
           simState.planeVel.x = THREE.MathUtils.damp(simState.planeVel.x, Math.sin(yaw) * forward + Math.cos(yaw) * sideways, 2.35, dt);
           simState.planeVel.z = THREE.MathUtils.damp(simState.planeVel.z, Math.cos(yaw) * forward - Math.sin(yaw) * sideways, 2.35, dt);
           simState.planeSpeed = Math.hypot(simState.planeVel.x, simState.planeVel.z);
@@ -3118,15 +3190,16 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         t
       );
       const turnHeel = simState.mode === 'BOAT' && !isCruise
-        ? (left - right) * Math.min(1, Math.abs(simState.boatSpeed) / 14) * 0.16
+        ? (left - right) * THREE.MathUtils.clamp(simState.boatSpeed / 14, -1, 1) * 0.14
         : 0;
       const bowLift = simState.mode === 'BOAT' && !isCruise
         ? -Math.min(0.11, Math.max(-0.04, simState.boatSpeed * 0.0028))
         : 0;
       boatRef.current.rotation.set(
-        hullWave.pitch * (isCruise ? 0.55 : 0.92) + bowLift,
+        hullWave.pitch * (isCruise ? 0.55 : 0.92) + bowLift -
+          (simState.mode === 'BOAT' ? THREE.MathUtils.clamp(simState.boatAirVelocity * 0.029, -0.28, 0.46) : 0),
         simState.boatYaw,
-        hullWave.roll * (isCruise ? 0.55 : 0.92) + turnHeel
+        THREE.MathUtils.damp(boatRef.current.rotation.z, hullWave.roll * (isCruise ? 0.55 : 0.92) + turnHeel, 7.5, dt)
       );
     }
     // Spin propellers / submarine thrusters across all 6 Boat Fleet rigs
@@ -3343,7 +3416,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
           accessoriesRootRef.current.rotation.x = 0;
         }
         if (playerShadowRef.current) {
-          playerShadowRef.current.visible = true;
+          playerShadowRef.current.visible = !state.gl.shadowMap.enabled;
         }
       }
     } else if (isCustomizerOpen) {
@@ -3428,6 +3501,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       if (coasterFpvCockpitRef.current) coasterFpvCockpitRef.current.visible = false;
       const isPara = simState.mode === 'FOOT' && simState.parachuting;
       const isRiding = simState.mode === 'FOOT' && Boolean(simState.activeRide);
+      const ferris = isRiding && simState.activeRide === 'FERRIS';
+      const first = simState.cameraView === 1;
       const isCruiseShip = simState.mode === 'BOAT' && activeBoatIdxRef.current === 1;
       const camDist = isPara
         ? 11.5
@@ -3455,7 +3530,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         : simState.mode === 'BOAT'
         ? 4.2
         : 1.95;
-      const lookOffset = isPara ? 0.65 : isCruiseShip ? 2.6 :
+      const lookOffset = ferris ? 1.34 : isPara ? 0.65 : isCruiseShip ? 2.6 :
         simState.mode === 'FOOT' && footMotion.current.swim ? 1.54 : 1.25;
       const subject = new THREE.Vector3(activePos.x, activePos.y + lookOffset, activePos.z);
       const warped = camTarget.current.distanceToSquared(subject) > 70 * 70;
@@ -3464,9 +3539,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       orbit.yaw += yawDelta * (warped ? 1 : 1 - Math.exp(-19 * dt));
       orbit.pitch = warped ? simState.orbitPitch : THREE.MathUtils.damp(orbit.pitch, simState.orbitPitch, 19, dt);
       const carSlipCam = simState.mode === 'CAR' ? suspension.current.slip * 0.55 : 0;
-      const yaw = activeYaw - carSlipCam + orbit.yaw - (simState.mode === 'PLANE' ? simState.planeRoll * 0.27 : 0);
+      const yaw = (ferris ? (first ? -1 : 1) * Math.PI / 2 : activeYaw) - carSlipCam + orbit.yaw - (simState.mode === 'PLANE' ? simState.planeRoll * 0.27 : 0);
       const inFlight = simState.mode === 'PLANE';
-      const first = simState.cameraView === 1;
       const aim = aiming.ads && !construction.active && !construction.pickaxe;
       cameraBlend.current = THREE.MathUtils.damp(cameraBlend.current, first ? 1 : 0, 15, dt);
       adsBlend.current = THREE.MathUtils.damp(adsBlend.current, aim ? 1 : 0, 14, dt);
@@ -3483,8 +3557,23 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       };
 
       let ideal = projectEye(yaw);
+      if (ferris) {
+        // Stay west of both wheel rims. Cross the outer rim plane between spokes,
+        // through the open cabin windows as the gondola travels around the wheel.
+        const angle = t * 0.32;
+        const radialY = Math.sin(angle);
+        const radialZ = Math.cos(angle);
+        const axial = 8.5;
+        const inward = 4.6 + Math.sin(orbit.pitch) * 0.55;
+        const tangent = 3.6 + Math.sin(orbit.yaw) * 0.55;
+        ideal.set(
+          subject.x - axial,
+          subject.y - radialY * inward + radialZ * tangent,
+          subject.z - radialZ * inward - radialY * tangent
+        );
+      }
       let clearance = constrainCamera(subject, ideal, cameraRay);
-      if (simState.mode === 'FOOT' && clearance < 1.7) {
+      if (!ferris && simState.mode === 'FOOT' && clearance < 1.7) {
         // A flank view keeps the character visible in alleys and beside large props.
         for (const offset of [-0.76, 0.76, -1.32, 1.32]) {
           const alternate = projectEye(yaw + offset, Math.min(1.24, elevation + 0.1));
@@ -3525,8 +3614,9 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         state.camera.lookAt(camTarget.current.clone().addScaledVector(right, shoulder));
       }
       if (close > 0.005) {
-        const travelForward = new THREE.Vector3(Math.sin(activeYaw), 0, Math.cos(activeYaw));
-        const eyeHeight = simState.mode === 'FOOT' ? (footMotion.current.swim ? 1.52 : 1.64) :
+        const travelForward = ferris ? new THREE.Vector3(-1, 0, 0) :
+          new THREE.Vector3(Math.sin(activeYaw), 0, Math.cos(activeYaw));
+        const eyeHeight = simState.mode === 'FOOT' ? (isRiding ? (ferris ? 1.34 : 1.16) : footMotion.current.swim ? 1.52 : 1.64) :
           inFlight ? (simState.activePlaneIdx === 1 ? 1.78 : 1.69) : isCruiseShip ? 7 : simState.mode === 'BOAT' ? 1.75 : 1.21;
         const cameraLead = simState.mode === 'FOOT' ? 0.07 : inFlight ? 1.15 : simState.mode === 'BOAT' ? 0.68 : 0.62;
         const verticalBob = simState.mode === 'FOOT' ? Math.sin(footMotion.current.phase * 2) * Math.min(0.033, speedKmh * 0.002) : 0;
@@ -3544,7 +3634,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
 
       // Speed-reactive dynamic FOV (60° -> 73° at high speed/boost)
       if (state.camera instanceof THREE.PerspectiveCamera) {
-        const targetFov = 60 + close * 3 + Math.min(13, (speedKmh / 160) * 13) - adsBlend.current * 20;
+        const driftPunch = simState.mode === 'CAR' ? Math.min(1, suspension.current.boost * 2.2) * 3.5 : 0;
+        const targetFov = 60 + close * 3 + Math.min(13, (speedKmh / 160) * 13) + driftPunch - adsBlend.current * 20;
         if (Math.abs(state.camera.fov - targetFov) > 0.05) {
           state.camera.fov = THREE.MathUtils.lerp(state.camera.fov, targetFov, Math.min(1, 8 * dt));
         }
@@ -3623,7 +3714,7 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       }
 
       let nearbyRide: AmusementRideId | null = null;
-      for (const ride of AMUSEMENT_PARK_RIDES) {
+      if (simState.mode === 'FOOT' && !simState.activeRide) for (const ride of AMUSEMENT_PARK_RIDES) {
         if (Math.hypot(activePos.x - ride.x, activePos.z - ride.z) < ride.boardRadius) {
           nearbyRide = ride.id;
           break;
@@ -3658,6 +3749,11 @@ export function VehicleDirector({ onHudUpdate }: Props) {
         nearLandmark,
         activeRide: simState.activeRide,
         nearbyRide: simState.nearbyRide,
+        swimming: simState.mode === 'FOOT' && footMotion.current.swim,
+        firingTimer: simState.firingTimer,
+        discovery: now < simState.coastal.discoveryUntil ? simState.coastal.discovery : undefined,
+        postcardCount: simState.coastal.postcards.length,
+        coastalPrompt: coastalPlay ? coastalPrompt() : undefined,
         fps: currentFps.current,
         gliding: simState.gliding,
         activeCheckpoint: simState.activeCheckpoint,
@@ -3771,8 +3867,8 @@ export function VehicleDirector({ onHudUpdate }: Props) {
       <group ref={playerRef}>
         <group ref={worldPick} position={[0.29, 1.19, 0.36]} scale={0.89} visible={false}><Pickaxe /></group>
         <mesh ref={playerShadowRef} position={[0, 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <planeGeometry args={[1.6, 1.6]} />
-          <meshBasicMaterial map={shadowTex} transparent depthWrite={false} />
+          <planeGeometry args={[0.65, 0.65]} />
+          <meshBasicMaterial map={shadowTex} transparent opacity={0.21} depthWrite={false} />
         </mesh>
 
         {/* Mounted 3 Customizable Human Archetypes */}
